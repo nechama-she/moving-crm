@@ -6,7 +6,7 @@ import "./LocalPricing.css";
 
 type Settings = { travel_hourly_rate: number | null; travel_in_minimum: boolean; fuel_charge: number | null; minimum_hours: number | null; capacity_per_mover: number | null; full_pack_hourly: number | null; hourly_rates: (number | null)[]; crew_thresholds: (number | null)[]; truck_thresholds: (number | null)[] };
 type LocalRoute = { id?: string; pickup: string; delivery: string };
-type Job = { leadId: string; jobId: string; name: string; order: number; volume: number | null; pickup: string; delivery: string; moveType: string };
+type Job = { leadId: string; jobId: string; name: string; number: string; volume: number | null; pickup: string; delivery: string; moveType: string };
 type Service = { id?: string; name: string; rate_text: string; comments: string };
 type BulkyItemPrices = { handling: string; packing: string; crating: string };
 type Travel = { office_address: string; pickup_address: string; delivery_address: string; office_to_pickup_miles: number; delivery_to_office_miles: number; total_miles: number; total_minutes: number; travel_hours: number; source: string; uses_zip_centers: boolean };
@@ -209,7 +209,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
         body: JSON.stringify({ price: quote.total, estimatedCharges: quote.charges.filter(line => Number(line.totalCost) !== 0 || line.description.startsWith('Calculation pending: ')).map((line, sortOrder) => ({ ...line, sortOrder })) }),
       });
       if (!response.ok) throw new Error(await failure(response));
-      setNotice(`Saved ${money(quote.total)} to Job ${job.order}.`);
+      setNotice(`Saved ${money(quote.total)} to ${job.number}.`);
     } catch (reason) { setError((reason as Error).message); }
     finally { savingRef.current = false; setSaving(false); }
   }
@@ -219,7 +219,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
   }
   if (loading) return <section className="pricing-card" role="status">Loading local pricing...</section>;
   return <div className="local-pricing">
-    {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing Job {job.order}</span><h2>{job.name}</h2><p>{job.pickup} → {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
+    {job && <section className="pricing-card pricing-job-context"><div><span className="eyebrow">Pricing {job.number}</span><h2>{job.name}</h2><p>{job.pickup} → {job.delivery}</p></div><Link to={`/leads/${job.leadId}?job_id=${encodeURIComponent(job.jobId)}`}>Back to lead</Link></section>}
     <section className="pricing-card pricing-overview local-intro"><div><span className="eyebrow">{companyName} — {bookName}</span><h2>Local moving</h2><p>Same-state moves. One hourly rate for every day of the week.</p></div><span className="local-badge">Hourly pricing</span></section>
     {error && <div className="pricing-alert error" role="alert">{error}</div>}
     {notice && <div className="pricing-alert success" role="status">{notice}</div>}

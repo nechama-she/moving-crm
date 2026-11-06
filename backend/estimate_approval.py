@@ -79,7 +79,8 @@ def _clear_changed_approvals(session, context, instances):
             if _changed(session, row, only=_COMPANY_SHOWN):
                 companies.add(row.id)
         elif isinstance(row, CompanyDocument):
-            companies.add(row.company_id)
+            if row.used_in == 'estimate' or _changed(session, row, only={'used_in'}):
+                companies.add(row.company_id)
     jobs.discard(None)
     if not (jobs or leads or companies):
         return

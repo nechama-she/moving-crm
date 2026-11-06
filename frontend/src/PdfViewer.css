@@ -1,0 +1,28 @@
+.pdf-viewer { width: 96vw; max-width: 1500px; height: 94dvh; max-height: 94dvh; padding: 0; border: 1px solid #ddd; border-radius: 16px; color: inherit; background: #fff; }
+.pdf-viewer::backdrop { background: rgb(0 0 0 / 55%); }
+.pdf-viewer[open] { display: flex; flex-direction: column; }
+.pdf-viewer-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; border-bottom: 1px solid #ddd; }
+.pdf-viewer-header h2 { margin: 0; font-size: 22px; }
+.pdf-viewer-header p { margin: 6px 0 0; }
+.pdf-viewer-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pdf-viewer-content { display: flex; flex: 1; min-height: 0; }
+.pdf-viewer-content iframe { flex: 1; width: 100%; min-width: 0; border: 0; background: #eee; }
+.pdf-viewer-content .pdf-pages { flex: 1; min-width: 0; overflow-y: auto; padding: 12px; background: #eee; }
+.pdf-pages > p { margin: 12px; }
+.pdf-page { position: relative; max-width: 900px; margin: 0 auto 12px; box-shadow: 0 1px 4px rgb(0 0 0 / 20%); background: #fff; }
+.pdf-page canvas { display: block; width: 100%; height: auto; }
+/* A signature spot: a yellow tag on the line that opens signing. */
+.pdf-sign-here { position: absolute; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 0; border: 2px solid #f9a825; border-radius: 4px; background: rgb(255 235 59 / 55%); color: #5d4037; font-size: clamp(9px, 1.4vw, 13px); font-weight: 700; cursor: pointer; animation: pdf-sign-here 1.6s ease-in-out infinite; }
+.pdf-sign-here:hover, .pdf-sign-here:focus-visible { background: rgb(255 235 59 / 85%); animation: none; }
+@keyframes pdf-sign-here { 50% { box-shadow: 0 0 0 4px rgb(249 168 37 / 35%); } }
+@media (prefers-reduced-motion: reduce) { .pdf-sign-here { animation: none; } }
+.pdf-viewer-content aside { width: 380px; flex-shrink: 0; overflow-y: auto; padding: 16px; }
+.pdf-viewer-content .signing { margin: 0; }
+.pdf-viewer > p { padding: 0 24px; }
+@media (max-width: 760px) {
+  .pdf-viewer-header { padding: 12px; flex-wrap: wrap; }
+  .pdf-viewer-content { flex-direction: column; overflow-y: auto; }
+  .pdf-viewer-content iframe { flex: 1 0 45dvh; }
+  .pdf-viewer-content .pdf-pages { flex: 1 0 45dvh; padding: 6px; }
+  .pdf-viewer-content aside { width: auto; overflow: visible; }
+}

@@ -45,6 +45,8 @@ type LeadJob = {
   company_name?: string;
   company_color?: string;
   job_order?: number;
+  // The job's number, such as 48213075526-1.
+  number: string;
   foreman_id?: string;
   foreman_name?: string;
   full_name: string;
@@ -607,6 +609,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
               id: String(item.id || ""),
               lead_id: String(item.lead_id || ""),
               job_order: Number(item.job_order || 0),
+              number: String(item.number || ""),
               full_name: String(item.full_name || "Unnamed"),
               move_date: String(item.move_date || ""),
               booked_move_date: String(item.booked_move_date || ""),
@@ -706,6 +709,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
           company_name: String(item.company_name || ""),
           company_color: String(item.company_color || ""),
           job_order: Number(item.job_order || 0),
+          number: String(item.number || ""),
           full_name: String(item.full_name || "Unnamed"),
           move_date: String(item.move_date || ""),
           booked_move_date: String(item.booked_move_date || ""),
@@ -857,6 +861,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
         id: String(item.id || ""),
         lead_id: String(item.lead_id || ""),
         job_order: Number(item.job_order || 0),
+        number: String(item.number || ""),
         full_name: String(item.full_name || "Unnamed"),
         move_date: String(item.move_date || ""),
         booked_move_date: String(item.booked_move_date || ""),
@@ -1580,13 +1585,6 @@ function CompanyCalendar({
     }
     return [...map.entries()].map(([companyName, jobs]) => ({ companyName, jobs }));
   }, [panelDayJobs]);
-  const panelDayJobFallbackOrderById = useMemo(() => {
-    const map = new Map<string, number>();
-    panelDayJobs.forEach((job, idx) => {
-      map.set(job.id, idx + 1);
-    });
-    return map;
-  }, [panelDayJobs]);
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -1823,7 +1821,7 @@ function CompanyCalendar({
                 ) : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    {visibleJobs.map((job, idx) => (
+                    {visibleJobs.map((job) => (
                       <Link
                         key={job.id}
                         to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
@@ -1847,7 +1845,7 @@ function CompanyCalendar({
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
                         <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{formatJobVolumeWeight(job)}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{`Job ${job.job_order || idx + 1}`}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{job.number}</div>
                         {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
                       </Link>
                     ))}
@@ -1933,7 +1931,7 @@ function CompanyCalendar({
             <div style={{ border: "1px dashed #c9c7c5", borderRadius: 4, padding: 18, textAlign: "center", color: "#706e6b" }}>No jobs scheduled</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {(jobsByDay.get(mobileSelectedDay) || []).map((job, index) => {
+              {(jobsByDay.get(mobileSelectedDay) || []).map((job) => {
                 const tone = getCompanyTone(job);
                 return (
                   <Link
@@ -1954,7 +1952,7 @@ function CompanyCalendar({
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                       <strong style={{ fontSize: 14 }}>{job.full_name || "Unnamed"}</strong>
-                      <span style={{ color: tone.text, fontSize: 11, fontWeight: 700 }}>Job {job.job_order || index + 1}</span>
+                      <span style={{ color: tone.text, fontSize: 11, fontWeight: 700 }}>{job.number}</span>
                     </div>
                     <div style={{ color: tone.text, fontSize: 12, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
                     <div style={{ color: "#3e3e3c", fontSize: 12 }}>{job.pickup_zip || "?"} → {job.delivery_zip || "?"}</div>
@@ -2089,7 +2087,7 @@ function CompanyCalendar({
                     >
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                         <strong style={{ fontSize: 13, color: "#0f172a" }}>{job.full_name}</strong>
-                        <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{`Job ${job.job_order || panelDayJobFallbackOrderById.get(job.id) || 1}`}</span>
+                        <span style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 700 }}>{job.number}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#334155" }}>{job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}</div>
                       <div style={{ fontSize: 11, color: getCompanyTone(job).text, fontWeight: 600 }}>{formatJobVolumeWeight(job)}</div>

@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, func
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from models import Base, Company, Lead, LeadJob, LeadPayment, User
+from models import Base, Company, Lead, LeadJob, LeadPayment, User, job_number
 from company_colors import resolve_company_color
 
 

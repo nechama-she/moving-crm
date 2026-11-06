@@ -31,6 +31,7 @@ def _clean_sender_email(value: str | None) -> str | None:
 
 class CompanyLogo(BaseModel):
     dot_number: str | None = Field(default=None, max_length=30)
+    mc_number: str | None = Field(default=None, max_length=30)
     valuation_per_lb: float | None = Field(default=None, ge=0, le=100)
     logo: Optional[str] = Field(default=None, max_length=400000)
 
@@ -85,6 +86,7 @@ class CompanyDocumentInput(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body_html: str = Field(max_length=100000)
     move_type: str = Field(pattern=r'^(Long Distance|Local|All)$')
+    used_in: str = Field(default='estimate', pattern=r'^(estimate|work_order|bill_of_lading)$')
     enabled: bool = True
     revision: int = Field(default=0, ge=0)
 
@@ -93,13 +95,13 @@ class CompanyDocumentInput(BaseModel):
 def company_documents(company_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
     from sqlalchemy import case
     from models import CompanyDocument
-    from company_documents import document_payload, DEFAULT_KEY, company_fields
+    from company_documents import document_payload, DEFAULT_KEY, company_fields, move_fields
     company = db.get(Company, company_id)
     if company is None:
         raise HTTPException(404, 'Company not found')
     rows = db.query(CompanyDocument).filter_by(company_id=company_id).order_by(
         case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title).all()
-    return {'items': [document_payload(row) for row in rows], 'fields': company_fields(company)}
+    return {'items': [document_payload(row) for row in rows], 'fields': company_fields(company) + move_fields()}
 
 
 @router.put('/{company_id}/documents/{document_key}')
@@ -126,7 +128,7 @@ def save_company_document(company_id: str, document_key: str, body: CompanyDocum
         row = CompanyDocument(company_id=company_id, key=document_key)
         db.add(row)
     row.title, row.body_html = body.title.strip(), html
-    row.move_type, row.enabled = body.move_type, body.enabled
+    row.move_type, row.used_in, row.enabled = body.move_type, body.used_in, body.enabled
     row.revision, row.updated_at = body.revision + 1, datetime.utcnow()
     db.commit()
     return document_payload(row)
@@ -211,6 +213,7 @@ def create_company(body: CompanyCreate, user: User = Depends(require_admin), db:
         phone=(body.phone or "").strip(),
         office_address=body.office_address.strip(),
         dot_number=body.dot_number or "",
+        mc_number=(body.mc_number or "").strip(),
         valuation_per_lb=body.valuation_per_lb,
         sender_email=_clean_sender_email(body.sender_email),
         facebook_page_id=page_id,
@@ -274,6 +277,8 @@ def update_company(company_id: str, body: CompanyUpdate, user: User = Depends(re
         company.office_address = body.office_address.strip()
     if body.dot_number is not None:
         company.dot_number = body.dot_number
+    if body.mc_number is not None:
+        company.mc_number = body.mc_number.strip()
     if "valuation_per_lb" in body.model_fields_set:
         company.valuation_per_lb = body.valuation_per_lb
     if body.sender_email is not None:

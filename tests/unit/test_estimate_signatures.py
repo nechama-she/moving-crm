@@ -41,7 +41,7 @@ def test_signature_preserves_reviewed_version_and_cannot_be_overwritten(portal, 
     monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
     monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: json.dumps(snapshot).encode())
     version = mod.prepare_estimate_signature(access, db)['id']
-    body = mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
+    body = mod.SigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
     mod.sign_estimate(version, body, access, db)
     assert mod.prepare_estimate_signature(access, db) == {'id': version, 'signed': True}
     data['estimate']['price'] = 999
@@ -73,7 +73,7 @@ def test_resign_removes_signature_from_saved_pdf(portal, monkeypatch):
     monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
     monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: json.dumps(snapshot).encode())
     version = mod.prepare_estimate_signature(access, db)['id']
-    body = mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
+    body = mod.SigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]])
     mod.sign_estimate(version, body, access, db)
     response = mod.clear_estimate_signature(version, access, db)
     record = db.get(EstimateSignature, version)
@@ -94,7 +94,7 @@ def test_cannot_sign_estimate_changed_since_opening(portal, monkeypatch):
     version = mod.prepare_estimate_signature(access, db)['id']
     data['pickup'] = 'Changed through API'
     with pytest.raises(HTTPException) as error:
-        mod.sign_estimate(version, mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
+        mod.sign_estimate(version, mod.SigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
     assert error.value.status_code == 409
     assert db.get(EstimateSignature, version).signed_at is None
 
@@ -104,7 +104,7 @@ def test_cannot_sign_estimate_changed_since_opening(portal, monkeypatch):
 def test_signature_rejects_blank_or_invalid_drawing(portal, strokes):
     mod, *_ = portal
     with pytest.raises(ValidationError):
-        mod.EstimateSigningInput(name='Jane', consent=True, strokes=strokes)
+        mod.SigningInput(name='Jane', consent=True, strokes=strokes)
 
 
 def test_pending_estimate_cannot_be_prepared_for_signing(portal, monkeypatch):
@@ -127,7 +127,7 @@ def test_signature_records_report_and_appears_on_that_report_row(portal, monkeyp
     assert db.get(EstimateSignature, version).report_id == 'report-2'
     # Unsigned versions are not listed.
     assert signed_estimates(db, lead.id) == []
-    mod.sign_estimate(version, mod.EstimateSigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
+    mod.sign_estimate(version, mod.SigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
     # A signature saved before report_id existed is matched through its snapshot.
     legacy = EstimateSignature(id='legacy', lead_id=lead.id, job_id=access.job_id, pdf=b'old', signer_name='Jane',
                                snapshot=json.dumps({'data': {'spark': {'id': 'report-1'}}, 'rows': []}),

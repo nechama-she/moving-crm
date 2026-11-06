@@ -13,9 +13,10 @@ import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQ
 import QuestionReferenceImages from "./QuestionReferenceImages";
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
 import ManualInventoryModal from "./ManualInventoryModal";
-import EstimateSigning, { type SignResult } from './EstimateSigning';
+import Signing, { type SignResult } from './Signing';
 import EstimateViewer, { type SignatureRemoved } from './EstimateViewer';
 import InventoryViewer from './InventoryViewer';
+import BillOfLadingViewer from './BillOfLadingViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
 import ReportHistory, { type ReportRun } from "./ReportHistory";
@@ -61,6 +62,8 @@ type Details = {
   signature_status?: 'unsigned' | 'signed' | 'changed';
   // Rep pages only: the estimate is signed.
   work_order_available?: boolean;
+  // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
+  bill_of_lading?: { signed: boolean } | null;
   signature_requires_resign?: boolean;
   estimate_needs_update?: boolean;
   new_file_count?: number;
@@ -588,6 +591,7 @@ export default function CustomerMovePage() {
   const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
   const [inventoryPdf, setInventoryPdf] = useState<{ url: string; filename: string; title?: string; description?: string } | null>(null);
   const [workOrderBusy, setWorkOrderBusy] = useState(false);
+  const [billOfLadingOpen, setBillOfLadingOpen] = useState(false);
   // Downloaded PDFs are named "<kind> - <customer> - <company>.pdf".
   function pdfName(kind: string) {
     const clean = (value: string) => value.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
@@ -617,6 +621,7 @@ export default function CustomerMovePage() {
   function openCurrentEstimate(result: SignatureRemoved) {
     setData(previous => previous ? {...previous, signature_status: result.signature_status,
       signature_requires_resign: result.signature_status === 'changed', work_order_available: result.work_order_available,
+      bill_of_lading: result.bill_of_lading,
       report_history: previous.report_history?.map(report => ({...report, signatures: (report.signatures || []).filter(item => item.id !== result.removed_id)}))} : previous);
     void openEstimate(true);
   }
@@ -676,7 +681,7 @@ export default function CustomerMovePage() {
   function showSignature(signature: SignResult) {
     const row = { id: signature.id, name: signature.name, signed_at: signature.signed_at };
     setData(previous => previous ? {...previous, signature_status: 'signed', signature_requires_resign: false,
-      work_order_available: signature.work_order_available,
+      work_order_available: signature.work_order_available, bill_of_lading: signature.bill_of_lading,
       report_history: previous.report_history?.map(report => report.id === signature.report_id
         ? {...report, signatures: [row, ...(report.signatures || []).filter(item => item.id !== signature.id)]} : report)} : previous);
   }
@@ -1320,7 +1325,9 @@ export default function CustomerMovePage() {
                 const servicesDone = data.unanswered_questions?.length === 0;
                 const signed = data.signature_status === 'signed';
                 // Only the first unfinished step gets the big call-to-action; the others show a small text action.
-                const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : 0;
+                // The Bill of Lading step, when the company has one: signed after the estimate.
+                const billOfLading = data.bill_of_lading;
+                const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : billOfLading && !billOfLading.signed ? 4 : 0;
                 const status = (step: number, done: boolean, pending = 'Action required') => <small className="cm-flow-status">{done ? 'Completed' : nextStep === step ? pending : 'Not started'}</small>;
                 // A busy label replaces the action and shows a spinner instead of the arrow.
                 const action = (step: number, label: string, ctaLabel: string, busyLabel = '') => {
@@ -1331,7 +1338,7 @@ export default function CustomerMovePage() {
                   return <span className={`${current ? 'cm-flow-action' : 'cm-flow-link'}${busyLabel ? ' is-busy' : ''}`} aria-live="polite">{busyLabel || (current ? ctaLabel : label)}{icon}</span>;
                 };
                 const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
-                return <ol className="cm-estimate-flow" aria-label="Complete your estimate">
+                return <ol className={`cm-estimate-flow${billOfLading ? ' has-four' : ''}`} aria-label="Complete your estimate">
                 <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add', !sectionReady('inventory') ? 'Loading...' : '')}</button></li>
                 <li>
                   <button
@@ -1362,9 +1369,12 @@ export default function CustomerMovePage() {
                 </li>
                 <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign' : 'Sign',
                   pdfBusy ? 'Preparing PDF...' : sparkBusy ? 'Analyzing inventory...' : calculatingPrice ? 'Updating price...' : answersSaving ? 'Saving...' : pricingLoading || busy ? 'Loading...' : '')}</button></li>
+                {billOfLading && <li><button type="button" className={`cm-flow-step${nextStep === 4 ? ' is-current' : ''}`} disabled={!signed} onClick={() => setBillOfLadingOpen(true)}><span className="cm-flow-head"><span className="cm-flow-number">4</span><span className="cm-flow-label">Bill of Lading{status(4, billOfLading.signed)}</span>{signed && <CompletionIcon complete={billOfLading.signed} label={billOfLading.signed ? 'Bill of Lading signed' : 'Signature required'}/>}</span>{action(4, billOfLading.signed ? 'View' : 'Sign', 'Sign')}</button></li>}
               </ol>;
               })()}
               {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
+              {billOfLadingOpen && <BillOfLadingViewer base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
+                onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onClose={() => setBillOfLadingOpen(false)} />}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
               {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
@@ -1432,7 +1442,7 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
-              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <EstimateSigning key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
+              {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer key={preparedEstimate} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={showSignature} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from company_documents import clean_html, default_body, estimate_documents, new_company_document, company_fields, resolve_parameters
+from company_documents import clean_html, default_body, documents_for, new_company_document, company_fields, resolve_parameters
 
 
 def test_document_formatting_and_links_are_sanitized():
@@ -49,14 +49,20 @@ def test_estimate_documents_are_company_and_move_specific():
         db.add_all([Company(id='a', name='A & Sons'), Company(id='b', name='B Movers')])
         db.flush()
         db.add_all([new_company_document('a'), new_company_document('b')])
-        lead = Lead(id='lead', company_id='a', move_type='Long Distance')
+        lead = Lead(id='lead', full_name='Customer', company_id='a', move_type='Long Distance')
         job = LeadJob(id='job', lead_id='lead', company_id='b')
         db.add(lead); db.flush(); db.add(job); db.commit()
-        documents = estimate_documents(lead, job, db)
+        documents = documents_for(lead, job, db)
         assert len(documents) == 1
         assert 'Thank you for choosing B Movers' in documents[0]['body_html']
         job.company_id = 'a'
-        assert 'Thank you for choosing A &amp; Sons' in estimate_documents(lead, job, db)[0]['body_html']
+        assert 'Thank you for choosing A &amp; Sons' in documents_for(lead, job, db)[0]['body_html']
+        # A document goes only with the paperwork it is used in.
+        from models import CompanyDocument
+        work_order = CompanyDocument(company_id='a', key='crew', title='Crew rules', body_html='<p>Crew rules</p>', used_in='work_order')
+        db.add(work_order); db.commit()
+        assert [d['title'] for d in documents_for(lead, job, db)] == ['LD Binding Estimate for Moving Services']
+        assert [d['title'] for d in documents_for(lead, job, db, 'work_order')] == ['Crew rules']
         lead.move_type = 'Local'
-        assert estimate_documents(lead, job, db) == []
+        assert documents_for(lead, job, db) == []
     engine.dispose()

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import EstimateSigning, { type SignResult } from './EstimateSigning';
+import Signing, { type SignResult } from './Signing';
 
 // The Re-sign answer: the signature removed, and the estimate's status without it.
-export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean };
-import './EstimateViewer.css';
+export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean;
+  bill_of_lading: { signed: boolean } | null };
+import './PdfViewer.css';
 
 export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved, onSigned }: {
   base: string; headers: Record<string, string>; customerName: string; version: string; filename: string;
@@ -56,10 +57,10 @@ export default function EstimateViewer({ base, headers, customerName, version, u
       setSignedUrl(URL.createObjectURL(await response.blob()));
     } catch (e) { setLoadError((e as Error).message); }
   }
-  return <dialog ref={dialog} className="estimate-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing && !clearing) onClose(); }}>
-    <header className="estimate-viewer-header">
+  return <dialog ref={dialog} className="pdf-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing && !clearing) onClose(); }}>
+    <header className="pdf-viewer-header">
       <div><h2 id="estimate-viewer-title">Your estimate</h2><p>{signed ? 'Your signature has been saved.' : !approved ? (rep ? 'Review this estimate, then approve it for signing.' : 'Your moving team is reviewing this estimate. You can sign it once they approve it.') : 'Review your estimate, then sign here.'}</p></div>
-      <div className="estimate-viewer-actions">
+      <div className="pdf-viewer-actions">
         {url && version && signed && <button className="cm-secondary-btn" disabled={clearing} onClick={() => void resign()} title="Remove the saved signature and sign this estimate again">{clearing ? 'Removing signature...' : 'Re-sign'}</button>}
         {url && version && !signed && !approved && rep && <button className="cm-primary" disabled={approving} onClick={() => void approve()}>{approving ? 'Approving...' : 'Approve for signing'}</button>}
         {url && version && !signed && approved && <button className="cm-primary" onClick={() => setSigning(true)}>Sign estimate</button>}
@@ -69,9 +70,9 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     </header>
     {error && <p role="alert">{error}</p>}
     {loadError && <p role="alert">{loadError} <button className="cm-secondary-btn" onClick={() => void showSigned(version)}>Retry signed PDF</button></p>}
-    <div className="estimate-viewer-content">
+    <div className="pdf-viewer-content">
       {url ? <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
-      {signing && <aside><EstimateSigning base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
+      {signing && <aside><Signing base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
     </div>
   </dialog>;
 }

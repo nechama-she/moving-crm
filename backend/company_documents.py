@@ -8,10 +8,22 @@ import re
 
 DEFAULT_KEY = 'ld-binding-estimate'
 DEFAULT_TITLE = 'LD Binding Estimate for Moving Services'
+BILL_OF_LADING_KEY = 'bill-of-lading'
+BILL_OF_LADING_TITLE = 'Interstate Bill of Lading Contract'
+
+# Details of the move a document can show, filled from the signed estimate.
+MOVE_FIELDS = {
+    'customer_name': 'Customer name', 'customer_phone': 'Customer phone', 'customer_email': 'Customer email',
+    'pickup_address': 'Pickup address', 'delivery_address': 'Delivery address', 'stops': 'Additional stops',
+    'pickup_date': 'Pickup date', 'first_available_delivery_date': 'First available delivery date',
+    'order_number': 'Order number', 'total_estimate': 'Total estimated charges', 'minimum_cuft': 'Minimum cu ft',
+    'minimum_charge': 'Total minimum charge', 'services_ordered': 'Services ordered',
+}
+MOVE_PARAMETER = re.compile(r'\{\{\s*([a-z_]+)\s*\}\}')
 
 FIELD_LABELS = {
     'name': 'Company name', 'phone': 'Phone number', 'sender_email': 'Email address',
-    'office_address': 'Office address', 'dot_number': 'USDOT number', 'id': 'Company ID',
+    'office_address': 'Office address', 'dot_number': 'USDOT number', 'mc_number': 'MC number', 'id': 'Company ID',
     'samrtmoving_branch_id': 'SmartMoving branch ID', 'is_default_company': 'Default company',
     'created_at': 'Company created date', 'logo': 'Logo data', 'color': 'Brand color',
 }
@@ -125,6 +137,10 @@ def default_body():
     return clean_html((Path(__file__).parent / 'data' / 'default_estimate_document.html').read_text(encoding='utf-8'))
 
 
+def bill_of_lading_body():
+    return clean_html((Path(__file__).parent / 'data' / 'bill_of_lading_document.html').read_text(encoding='utf-8'))
+
+
 def seed_documents(connection):
     """Insert defaults only; redeploying never overwrites company edits."""
     from sqlalchemy import select, update
@@ -139,10 +155,36 @@ def seed_documents(connection):
     connection.execute(update(CompanyDocument).where(CompanyDocument.key == DEFAULT_KEY,
         CompanyDocument.body_html == legacy).values(body_html=body,
         revision=CompanyDocument.revision + 1, updated_at=datetime.utcnow()))
+    bill_of_lading = bill_of_lading_body()
+    # The form prints the front itself, so a Bill of Lading document holds the back's terms only: anything saved before
+    # SECTION 1 (the first version's front) is dropped. A copy of the earlier seed's terms, which differed from the printed
+    # ones in a few marks, takes the printed terms; edited terms are kept as saved.
+    start = '<p><strong>SECTION 1:'
+    first_seed = (Path(__file__).parent / 'data' / 'bill_of_lading_document.html').read_text(encoding='utf-8')
+    for printed, seeded in (("inventory list.(b)", "inventory list. (b)"),
+                            ("excess of the carrier's liability", "excess of the carrier&rsquo;s liability"),
+                            ("solely the shipper's responsibility with respect", "solely the shipper&rsquo;s responsibility with respect"),
+                            ("subject to the arbitrator's discretion. ", "subject to the arbitrator&rsquo;s discretion. "),
+                            ("that the Arbitrator's decision", "that the Arbitrator&rsquo;s decision"),
+                            ("as it doesn't exceed", "as it doesn&rsquo;t exceed")):
+        first_seed = first_seed.replace(printed, seeded)
+    first_seed = clean_html(first_seed)
+    for company_id, saved in connection.execute(select(CompanyDocument.company_id, CompanyDocument.body_html).where(
+            CompanyDocument.key == BILL_OF_LADING_KEY, CompanyDocument.body_html.contains(start))).all():
+        terms = saved[saved.index(start):]
+        terms = bill_of_lading if terms == first_seed else terms
+        if terms != saved:
+            connection.execute(update(CompanyDocument).where(CompanyDocument.company_id == company_id,
+                CompanyDocument.key == BILL_OF_LADING_KEY).values(body_html=terms, revision=CompanyDocument.revision + 1,
+                updated_at=datetime.utcnow()))
     for company_id in connection.execute(select(Company.id)).scalars():
         connection.execute(insert(CompanyDocument).values(company_id=company_id, key=DEFAULT_KEY,
             title=DEFAULT_TITLE, body_html=body, move_type='Long Distance', enabled=True,
             revision=1, updated_at=datetime.utcnow()).on_conflict_do_nothing())
+        # Off until a company turns it on: its terms (venue, MC number) are the company's to check first.
+        connection.execute(insert(CompanyDocument).values(company_id=company_id, key=BILL_OF_LADING_KEY,
+            title=BILL_OF_LADING_TITLE, body_html=bill_of_lading, move_type='Long Distance', used_in='bill_of_lading',
+            enabled=False, revision=1, updated_at=datetime.utcnow()).on_conflict_do_nothing())
 
 
 def new_company_document(company_id):
@@ -152,10 +194,29 @@ def new_company_document(company_id):
 
 
 def document_payload(row):
-    return {key: getattr(row, key) for key in ('key', 'title', 'body_html', 'move_type', 'enabled', 'revision')}
+    return {key: getattr(row, key) for key in ('key', 'title', 'body_html', 'move_type', 'used_in', 'enabled', 'revision')}
 
 
-def estimate_documents(lead, job, db):
+# The paperwork a document can go with; each has a part built from the move, followed by its documents.
+DOCUMENT_USES = ('estimate', 'work_order', 'bill_of_lading')
+
+
+def move_fields():
+    """The move details as settings lists them next to the company details; their values come from each move."""
+    return [{'key': key, 'label': 'Move: ' + label, 'value': 'Filled from the move', 'missing': False} for key, label in MOVE_FIELDS.items()]
+
+
+def fill_move_fields(html, values):
+    """Each move detail in the document's text, escaped as text."""
+    def replace(match):
+        key = match.group(1)
+        if key not in MOVE_FIELDS:
+            return match.group(0)
+        return escape(str(values.get(key) or ''), quote=True)
+    return MOVE_PARAMETER.sub(replace, html)
+
+
+def documents_for(lead, job, db, used_in='estimate'):
     from sqlalchemy import case
     from models import Company, CompanyDocument
     from move_types import normalize_move_type
@@ -164,7 +225,8 @@ def estimate_documents(lead, job, db):
         return []
     move_type = normalize_move_type(lead.move_type)
     rows = db.query(CompanyDocument).filter(CompanyDocument.company_id == company.id,
-        CompanyDocument.enabled.is_(True), CompanyDocument.move_type.in_([move_type, 'All'])).order_by(
+        CompanyDocument.enabled.is_(True), CompanyDocument.used_in == used_in,
+        CompanyDocument.move_type.in_([move_type, 'All'])).order_by(
             case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title).all()
     result = []
     for row in rows:
@@ -177,10 +239,11 @@ def estimate_documents(lead, job, db):
     return result
 
 
-def pdf_document_flowables(document, styles):
+def pdf_document_flowables(document, body, heading):
+    """The document's title and text, in the given body and heading styles."""
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
-    normal = ParagraphStyle('CompanyDocumentBody', parent=styles['BodyEstimate'], spaceAfter=7)
+    normal = ParagraphStyle('CompanyDocumentBody', parent=body, spaceAfter=7)
     bullet = ParagraphStyle('CompanyDocumentList', parent=normal, leftIndent=14, firstLineIndent=0)
     blocks = {'p', 'h2', 'h3', 'ul', 'ol', 'li'}
 
@@ -213,7 +276,7 @@ def pdf_document_flowables(document, styles):
                     if isinstance(child, dict) and child['tag'] == 'li':
                         output.extend(walk(child['children'], bullet, f'{index + 1}.' if tag == 'ol' else '-'))
             else:
-                output.extend(walk(node['children'], styles['SectionEstimate'] if tag in {'h2', 'h3'} else style, marker))
+                output.extend(walk(node['children'], heading if tag in {'h2', 'h3'} else style, marker))
         flush()
         return output
-    return [Paragraph(escape(document['title']), styles['SectionEstimate']), Spacer(1, 6), *walk(parse_document(document['body_html']))]
+    return [Paragraph(escape(document['title']), heading), Spacer(1, 6), *walk(parse_document(document['body_html']))]

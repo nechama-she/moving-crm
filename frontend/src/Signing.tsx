@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
-import './EstimateSigning.css';
+import './Signing.css';
 
 type Point = [number, number];
 type SignedEstimate = { id: string; name: string; signed_at: string; report_id?: string | null };
 
 // The sign answer: the new signature, its report, and whether the rep's work order is now available.
-export type SignResult = { id: string; name: string; signed_at: string; report_id: string | null; work_order_available: boolean };
+export type SignResult = { id: string; name: string; signed_at: string; report_id: string | null; work_order_available: boolean;
+  bill_of_lading?: { signed: boolean } | null };
 
-export default function EstimateSigning({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false, reportIds }: {
+export default function Signing({ base, headers, customerName, disabled, version, onClose, onSigned, hideHistory = false, reportIds, path: signingPath = '/estimate-signatures', paper = 'estimate' }: {
   base: string; headers: Record<string, string>; customerName: string; disabled: boolean; version: string; onClose: () => void;
+  /** What is signed: the estimate's copies by default, or another signed paper such as the Bill of Lading. */
+  path?: string;
+  /** The paper's name in the wording, such as "Bill of Lading". */
+  paper?: string;
   onSigned?: (signature: SignResult) => void; hideHistory?: boolean;
   /** Reports shown in report history; signatures for these appear on their report row instead of here. */
   reportIds?: string[];
@@ -22,14 +27,14 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
   const [signed, setSigned] = useState<SignedEstimate[]>([]);
   const urls = useRef<string[]>([]);
   async function request(path: string, body?: unknown) {
-    const response = await fetch(base + '/estimate-signatures' + path, {
+    const response = await fetch(base + signingPath + path, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store',
     });
     if (!response.ok) {
       const result = await response.json().catch(() => ({}));
-      throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || 'Unable to save or load this estimate. Please try again.');
+      throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message || `Unable to save or load this ${paper}. Please try again.`);
     }
     return response;
   }
@@ -73,10 +78,10 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
   const drawn = strokes.some(stroke => stroke.length > 1 && stroke.some(p => p[0] !== stroke[0][0] || p[1] !== stroke[0][1]));
   const unmatched = reportIds ? signed.filter(row => !row.report_id || !reportIds.includes(row.report_id)) : signed;
   if (!version && !unmatched.length && !error) return null;
-  return <section className="estimate-signing" aria-label="Estimate signature">
-    {version && <h3>Sign your estimate</h3>}
+  return <section className="signing" aria-label={`Sign ${paper}`}>
+    {version && <h3>Sign your {paper}</h3>}
     {version && <>
-      <p>This saves your signature with the estimate version you review here. Later changes will not change this signed copy.</p>
+      <p>This saves your signature with the {paper} version you review here. Later changes will not change this signed copy.</p>
       <label>Full name<input value={name} maxLength={200} disabled={busy} autoComplete="name" onChange={e => setName(e.target.value)} /></label>
       <p id="signature-help">Draw your signature below using your finger, mouse, or pen.</p>
       <svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label="Draw your signature" aria-describedby="signature-help"
@@ -87,11 +92,11 @@ export default function EstimateSigning({ base, headers, customerName, disabled,
         {strokes.map((stroke, i) => <polyline key={i} points={stroke.map(([x, y]) => `${x * 600},${y * 180}`).join(' ')} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />)}
       </svg>
       <button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => setStrokes([])}>Clear signature</button>
-      <label className="estimate-signing-consent"><input type="checkbox" checked={consent} disabled={busy || disabled} onChange={e => setConsent(e.target.checked)} />I have reviewed this estimate and agree to sign it electronically.</label>
-      <div className="estimate-signing-actions"><button type="button" className="cm-secondary-btn" disabled={busy || disabled || !consent || !name.trim() || !drawn} onClick={() => void sign()}>{busy ? 'Saving...' : 'Sign and save estimate'}</button>
+      <label className="signing-consent"><input type="checkbox" checked={consent} disabled={busy || disabled} onChange={e => setConsent(e.target.checked)} />I have reviewed this {paper} and agree to sign it electronically.</label>
+      <div className="signing-actions"><button type="button" className="cm-secondary-btn" disabled={busy || disabled || !consent || !name.trim() || !drawn} onClick={() => void sign()}>{busy ? 'Saving...' : `Sign and save ${paper}`}</button>
         <button type="button" className="cm-secondary-btn" disabled={busy} onClick={onClose}>Cancel</button></div>
     </>}
     {error && <p role="alert">{error}</p>}
-    {!hideHistory && !!unmatched.length && <div aria-live="polite"><h4>{reportIds ? 'Earlier signed estimates' : 'Signed estimates'}</h4>{unmatched.map(row => <div key={row.id} className="estimate-signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
+    {!hideHistory && !!unmatched.length && <div aria-live="polite"><h4>{reportIds ? 'Earlier signed estimates' : 'Signed estimates'}</h4>{unmatched.map(row => <div key={row.id} className="signing-history"><span>{row.name} · {new Date(row.signed_at).toLocaleString()}</span><button type="button" className="cm-secondary-btn" disabled={busy} onClick={() => void preview(row.id)}>Download signed PDF</button></div>)}</div>}
   </section>;
 }

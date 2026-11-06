@@ -6,7 +6,10 @@ import './CompanyDocumentsPage.css';
 
 type Company = { id: string; name: string };
 type CompanyField = { key: string; label: string; value: string; missing: boolean };
-type CompanyDocument = { key: string; title: string; body_html: string; move_type: string; enabled: boolean; revision: number };
+type CompanyDocument = { key: string; title: string; body_html: string; move_type: string; used_in: string; enabled: boolean; revision: number };
+
+// The paperwork a document goes with, after the part filled from the move.
+const DOCUMENT_USES: Record<string, string> = { estimate: 'Estimate', work_order: 'Work order', bill_of_lading: 'Bill of Lading' };
 
 export default function CompanyDocumentsPage() {
   const { token } = useAuth();
@@ -140,13 +143,14 @@ export default function CompanyDocumentsPage() {
       {companies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}
     </select></label>
     <div className="company-documents-layout"><nav aria-label="Company documents">
-      {documents.map(row => <button key={row.key} type="button" disabled={busy} aria-current={draft?.key === row.key ? 'page' : undefined} onClick={() => { if (maySwitch()) { setDraft(row); setDirty(false); setPreview(null); setLinkOpen(false); } }}>{row.title}{!row.enabled && ' (disabled)'}</button>)}
-      <button type="button" disabled={!companyId || busy} onClick={() => { if (maySwitch()) { setDraft({ key: crypto.randomUUID(), title: 'New document', body_html: '', move_type: 'Long Distance', enabled: true, revision: 0 }); setDirty(true); setPreview(null); setLinkOpen(false); } }}>Add document</button>
+      {documents.map(row => <button key={row.key} type="button" disabled={busy} aria-current={draft?.key === row.key ? 'page' : undefined} onClick={() => { if (maySwitch()) { setDraft(row); setDirty(false); setPreview(null); setLinkOpen(false); } }}>{row.title} ({DOCUMENT_USES[row.used_in] || 'Estimate'}){!row.enabled && ' (disabled)'}</button>)}
+      <button type="button" disabled={!companyId || busy} onClick={() => { if (maySwitch()) { setDraft({ key: crypto.randomUUID(), title: 'New document', body_html: '', move_type: 'Long Distance', used_in: 'estimate', enabled: true, revision: 0 }); setDirty(true); setPreview(null); setLinkOpen(false); } }}>Add document</button>
     </nav>
     {draft && <section>
       <label>Document name<input value={draft.title} maxLength={200} disabled={busy} onChange={e => update({ title: e.target.value })} /></label>
-      <div className="company-documents-options"><label>Include for<select value={draft.move_type} disabled={busy} onChange={e => update({ move_type: e.target.value })}><option>Long Distance</option><option>Local</option><option value="All">All moves</option></select></label>
-        <label><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={e => update({ enabled: e.target.checked })} /> Include in estimate</label></div>
+      <div className="company-documents-options"><label>Used in<select value={draft.used_in} disabled={busy} onChange={e => update({ used_in: e.target.value })}>{Object.entries(DOCUMENT_USES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>Include for<select value={draft.move_type} disabled={busy} onChange={e => update({ move_type: e.target.value })}><option>Long Distance</option><option>Local</option><option value="All">All moves</option></select></label>
+        <label><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={e => update({ enabled: e.target.checked })} /> Include in {DOCUMENT_USES[draft.used_in]?.toLowerCase() || 'estimate'}</label></div>
       <p>Type <strong>@</strong> to insert a company detail. Keep typing to search, then choose a field. Each suggestion shows this company's saved value.</p>
       {fields.some(field => field.missing && (draft.body_html + draft.title).includes(`{{${field.key}}}`)) && <p role="alert">Missing company details: {fields.filter(field => field.missing && (draft.body_html + draft.title).includes(`{{${field.key}}}`)).map(field => field.label).join(', ')}. <Link to="/settings/companies" target="_blank" rel="noopener noreferrer">Fill them in under Companies</Link> before using this document.</p>}
       <div className="company-documents-toolbar" role="toolbar" aria-label="Document formatting">

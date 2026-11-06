@@ -332,3 +332,7 @@
 .cm-extra-contact{display:flex;gap:8px;align-items:end}.cm-extra-contact label{flex:1}.cm-add-contact{justify-self:start;align-self:start}
 /* The transportation package subtotal, where one discount for its lines is set. */
 .cm-estimate-charges-grid .cm-package-subtotal{background:var(--cm-tint);padding-left:8px;padding-right:8px}
+/* Four steps (with the Bill of Lading): in one row on wide screens, two by two below that. */
+.cm-estimate-flow.has-four{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1000px){.cm-estimate-flow.has-four{grid-template-columns:repeat(2,minmax(0,1fr))}.cm-estimate-flow.has-four>li:nth-child(2)::after{display:none}}
+@media(max-width:700px){.cm-estimate-flow.has-four{grid-template-columns:1fr}.cm-estimate-flow.has-four>li:nth-child(2)::after{display:block}}

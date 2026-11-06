@@ -11,6 +11,7 @@ type Company = {
   phone?: string;
   office_address?: string;
   dot_number?: string;
+  mc_number?: string;
   valuation_per_lb?: number | null;
   sender_email?: string;
   facebook_page_id?: string;
@@ -31,6 +32,7 @@ type CompanyForm = {
   phone: string;
   office_address: string;
   dot_number: string;
+  mc_number: string;
   valuation_per_lb: string;
   sender_email: string;
   facebook_page_id: string;
@@ -50,6 +52,7 @@ const emptyForm: CompanyForm = {
   phone: "",
   office_address: "",
   dot_number: "",
+  mc_number: "",
   valuation_per_lb: "",
   sender_email: "",
   facebook_page_id: "",
@@ -121,6 +124,7 @@ export default function CompaniesPage() {
       phone: company.phone || "",
       office_address: company.office_address || "",
       dot_number: company.dot_number || "",
+      mc_number: company.mc_number || "",
       valuation_per_lb: company.valuation_per_lb == null ? "" : String(company.valuation_per_lb),
       sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
@@ -154,6 +158,7 @@ export default function CompaniesPage() {
         phone: form.phone.trim(),
         office_address: form.office_address.trim(),
         dot_number: form.dot_number.trim(),
+        mc_number: form.mc_number.trim(),
         valuation_per_lb: form.valuation_per_lb.trim() === "" ? null : Number(form.valuation_per_lb),
         sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
@@ -296,6 +301,11 @@ export default function CompaniesPage() {
           <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
             USDOT number
             <input value={form.dot_number} onChange={(e) => updateField("dot_number", e.target.value)} style={inputStyle} inputMode="numeric" placeholder="Enter USDOT number" maxLength={30} />
+          </label>
+          <label style={fieldLabel}>
+            ICC/MC number
+            <input value={form.mc_number} onChange={(e) => updateField("mc_number", e.target.value)} style={inputStyle} placeholder="Enter MC number" maxLength={30} />
+            <small>Printed on the Bill of Lading.</small>
           </label>
           <label style={fieldLabel}>
             Valuation ($ per lb)

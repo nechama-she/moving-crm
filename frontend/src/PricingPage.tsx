@@ -62,7 +62,7 @@ const isDiscountRule = (rule: Rule) => rule.category.startsWith('discount_');
 type JobMaterial = { name: string; quantity?: number };
 type JobContext = {
   lead: { id: string; full_name: string; volume: number | null; weight: number | null };
-  job: { id: string; job_order: number; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string; estimated_materials?: JobMaterial[] };
+  job: { id: string; job_order: number; number: string; company_name: string; pickup_zip: string; delivery_zip: string; pickup_state: string; pickup_zip_code: string; delivery_state: string; delivery_zip_code: string; move_date: string; booked_move_date: string; estimated_materials?: JobMaterial[] };
   plans: PlanSummary[];
   elevator?: { locations: { location: 'pickup' | 'delivery'; uses_elevator: boolean | null }[] } | null;
   long_carry?: { locations: { location: 'pickup' | 'delivery'; distance_feet: number | null }[] } | null;
@@ -642,7 +642,7 @@ export default function PricingPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(formatApiError(body, "Could not save price"));
       }
-      setNotice(`Price saved to Job ${jobContext.job.job_order}: ${money(price)}.`);
+      setNotice(`Price saved to ${jobContext.job.number}: ${money(price)}.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save price"); }
     finally { priceSaveRunning.current = false; setSavingPrice(false); }
   }
@@ -780,7 +780,7 @@ export default function PricingPage() {
 
         <main className="pricing-content">
           {pricingMode === "local" ? (
-            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", order: jobContext.job?.job_order || 1, volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
+            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", number: jobContext.job?.number || "", volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
           ) : jobContext && jobContext.serviceability !== "supported" ? (
             <section className="pricing-card pricing-unavailable">
               <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
@@ -800,7 +800,7 @@ export default function PricingPage() {
               {jobContext ? (
                 <section className="pricing-card pricing-job-context">
                   <div>
-                    <span className="eyebrow">Pricing Job {jobContext.job.job_order}</span>
+                    <span className="eyebrow">Pricing {jobContext.job.number}</span>
                     <h2>{jobContext.lead.full_name}</h2>
                     <p>{jobContext.job.pickup_zip || "Pickup not provided"} → {jobContext.job.delivery_zip || "Delivery not provided"}</p>
                   </div>

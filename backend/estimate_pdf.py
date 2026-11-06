@@ -252,7 +252,9 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signatu
                                 ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
     story = [header,
              Spacer(1, 12), Paragraph(title, styles['Title']),
-             p('Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)')), 'NoteEstimate')]
+             p(' | '.join(filter(None, [data.get('order_number') and f"Order No. {data['order_number']}",
+                                        'Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)'))])),
+               'NoteEstimate')]
     # Every phone and every email: the main one first, then the extras.
     def contacts(kind):
         return '\n'.join(filter(None, [data.get(kind), *[row['value'] for row in data.get('contacts') or [] if row['kind'] == kind]]))
@@ -506,9 +508,9 @@ def build_estimate_pdf(data, rows, work_order=None):
                          p(money(material.get('packing_price')), 'RightEstimate')])
         story.append(table(body, [228, 104, 95, 95], header=True))
     from company_documents import pdf_document_flowables
-    for document in [] if work_order else data.get('documents', []):
+    for document in work_order.get('documents', []) if work_order else data.get('documents', []):
         story.append(PageBreak())
-        story.extend(pdf_document_flowables(document, styles))
+        story.extend(pdf_document_flowables(document, styles['BodyEstimate'], styles['SectionEstimate']))
     def footer(canvas, doc):
         canvas.saveState()
         canvas.setStrokeColor(colors.HexColor('#dce4e8'))

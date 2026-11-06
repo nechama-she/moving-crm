@@ -65,6 +65,8 @@ type LeadJobItem = {
   dispatch_company_id: string;
   dispatch_company_name: string;
   job_order: number;
+  // The job's number: its lead's number and its place among the lead's jobs, such as 48213075526-1.
+  number: string;
   foreman_id: string;
   foreman_name: string;
   notes: string;
@@ -690,6 +692,7 @@ export default function LeadDetail() {
         dispatch_company_id: String(item.dispatch_company_id || ""),
         dispatch_company_name: String(item.dispatch_company_name || ""),
         job_order: Number(item.job_order || 0),
+        number: String(item.number || ""),
         foreman_id: String(item.foreman_id || ""),
         foreman_name: String(item.foreman_name || ""),
         notes: String(item.notes || ""),
@@ -2990,7 +2993,7 @@ export default function LeadDetail() {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {`Job ${job.job_order}`}
+                      {`${job.number}`}
                     </button>
                   );
                 })}

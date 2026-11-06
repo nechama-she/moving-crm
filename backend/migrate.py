@@ -23,10 +23,15 @@ def migrate() -> None:
     with engine.begin() as connection:
         from models import InventoryCatalogSet, EstimateSignature, CompanyDocument
         CompanyDocument.__table__.create(connection, checkfirst=True)
+        # Every document so far went with the estimate. Added before seeding, which writes documents.
+        add_column(connection, 'company_documents', 'used_in', "VARCHAR(30) NOT NULL DEFAULT 'estimate'")
         from company_documents import seed_documents
         seed_documents(connection)
         EstimateSignature.__table__.create(connection, checkfirst=True)
         add_column(connection, 'estimate_signatures', 'report_id', 'TEXT')
+        from models import BillOfLadingSignature
+        BillOfLadingSignature.__table__.create(connection, checkfirst=True)
+        add_column(connection, 'bill_of_lading_signatures', 'spot', 'INTEGER NOT NULL DEFAULT 0')
         InventoryCatalogSet.__table__.create(connection, checkfirst=True)
         from pickup_areas import migrate_pickup_regions
         logger.info("Copied %s pricing pickup area rows", migrate_pickup_regions(connection))
@@ -157,6 +162,26 @@ def migrate() -> None:
         for column, kind in (('third_party_payout_to', 'VARCHAR(255)'), ('third_party_payout_amount', 'NUMERIC(12, 2)'),
                              ('third_party_payout_paid', 'BOOLEAN'), ('third_party_payout_paid_at', 'VARCHAR(40)')):
             add_column(connection, 'leads', column, kind)
+        # Each lead's number: leads from before it get one now, all different, then it is required and unique.
+        add_column(connection, 'leads', 'number', 'VARCHAR(11)')
+        unnumbered = connection.execute(text('SELECT id FROM leads WHERE number IS NULL')).scalars().all()
+        if unnumbered:
+            from models import generate_lead_number
+            taken = set(connection.execute(text('SELECT number FROM leads WHERE number IS NOT NULL')).scalars())
+            numbers = []
+            for lead_id in unnumbered:
+                number = generate_lead_number()
+                while number in taken:
+                    number = generate_lead_number()
+                taken.add(number)
+                numbers.append({'id': lead_id, 'number': number})
+            connection.execute(text('UPDATE leads SET number = :number WHERE id = :id'), numbers)
+        # Only when not done yet: each of these locks the whole table, even when there is nothing to change.
+        if connection.execute(text("SELECT 1 FROM information_schema.columns WHERE table_name = 'leads' "
+                                   "AND column_name = 'number' AND is_nullable = 'YES'")).first():
+            connection.execute(text('ALTER TABLE leads ALTER COLUMN number SET NOT NULL'))
+        if not connection.execute(text("SELECT 1 FROM pg_indexes WHERE tablename = 'leads' AND indexname = 'leads_number_key'")).first():
+            connection.execute(text('CREATE UNIQUE INDEX leads_number_key ON leads (number)'))
         from models import LeadPayment
         from sqlalchemy import inspect as inspect_schema
         payments_table_existed = inspect_schema(connection).has_table('lead_payments')
@@ -168,6 +193,7 @@ def migrate() -> None:
                              ('estimated_hours', 'NUMERIC(5, 2)'), ('travel_hours', 'NUMERIC(5, 2)')):
             add_column(connection, 'lead_jobs', column, kind)
         add_column(connection, 'companies', 'valuation_per_lb', 'NUMERIC(6, 2)')
+        add_column(connection, 'companies', 'mc_number', "VARCHAR(30) NOT NULL DEFAULT ''")
         # Where payments were first made with a payout each, those payouts become the lead's one payout,
         # and the old columns stop being required; they are left in place until they are dropped.
         if connection.execute(text("""SELECT 1 FROM information_schema.columns

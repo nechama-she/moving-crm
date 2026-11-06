@@ -47,7 +47,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadContact, LeadPayment, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess
+from models import Lead, LeadContact, LeadPayment, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess, job_number
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -1064,6 +1064,7 @@ def get_dispatch_calendar(
                 "foreman_id": job.foreman_id or "",
                 "foreman_name": job.foreman.name if job.foreman else "",
                 "job_order": int(job.job_order or 0),
+                "number": job_number(lead, job),
                 "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name,
                 "company_color": resolve_company_color(company_name, company_color),
@@ -1172,6 +1173,7 @@ def get_sales_calendar(
                 "smartmoving_id": lead.smartmoving_id or "",
                 "smartmoving_job_id": job.smartmoving_job_id or "",
                 "job_order": int(job.job_order or 0),
+                "number": job_number(lead, job),
                 "company_id": job.company_id,
                 "company_name": company_name,
                 "company_color": resolve_company_color(company_name, company_color),
@@ -1425,6 +1427,7 @@ def search_dispatch_jobs(
                     "id": job.id,
                     "lead_id": lead.id,
                     "job_order": int(job.job_order or 0),
+                    "number": job_number(lead, job),
                     "company_id": job.dispatch_company_id or job.company_id,
                     "company_name": company_name or "",
                     "company_color": resolve_company_color(company_name, company_color),
@@ -1452,6 +1455,7 @@ def search_dispatch_jobs(
                 Lead.full_name.ilike(pattern)
                 | Lead.leadgen_id.ilike(pattern)
                 | Lead.smartmoving_id.ilike(pattern)
+                | func.concat(Lead.number, '-', LeadJob.job_order).ilike(pattern)
                 | LeadJob.id.ilike(pattern)
                 | LeadJob.pickup_zip.ilike(pattern)
                 | LeadJob.delivery_zip.ilike(pattern)
@@ -1476,6 +1480,7 @@ def search_dispatch_jobs(
                 "id": job.id,
                 "lead_id": lead.id,
                 "job_order": int(job.job_order or 0),
+                "number": job_number(lead, job),
                 "company_id": job.dispatch_company_id or job.company_id,
                 "company_name": company_name or "",
                 "company_color": resolve_company_color(company_name, company_color),
@@ -1560,6 +1565,9 @@ def get_leads(
             | phone_search_condition(Lead.phone, search)
             | Lead.email.ilike(q)
             | Lead.quote_number.ilike(q)
+            # A lead's number, or one of its jobs' numbers (the lead's number and -1, -2...).
+            | Lead.number.ilike(q)
+            | (Lead.number == re.sub(r'-\d+$', '', search.strip()))
             | Lead.contacts.any(LeadContact.value.ilike(q) | phone_search_condition(LeadContact.value, search))
         )
 
