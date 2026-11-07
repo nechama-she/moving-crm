@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Signing, { type SignResult } from './Signing';
+import PdfPages, { useDrawnPages } from './PdfPages';
 
 // The Re-sign answer: the signature removed, and the estimate's status without it.
 export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean;
@@ -20,6 +21,10 @@ export default function EstimateViewer({ base, headers, customerName, version, u
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
+  // On a phone the form opens above the pages: brought into view when it opens.
+  const signForm = useRef<HTMLElement>(null);
+  useEffect(() => { if (signing) signForm.current?.scrollIntoView({ block: 'nearest' }); }, [signing]);
+  const drawPages = useDrawnPages();
   const [savedHere, setSigned] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -71,8 +76,9 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     {error && <p role="alert">{error}</p>}
     {loadError && <p role="alert">{loadError} <button className="cm-secondary-btn" onClick={() => void showSigned(version)}>Retry signed PDF</button></p>}
     <div className="pdf-viewer-content">
-      {url ? <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
-      {signing && <aside><Signing base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
+      {url ? drawPages ? <PdfPages url={signedUrl || url} title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} />
+        : <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
+      {signing && <aside ref={signForm}><Signing base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
     </div>
   </dialog>;
 }

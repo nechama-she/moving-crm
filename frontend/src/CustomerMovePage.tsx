@@ -114,6 +114,10 @@ type PageSection = typeof pageSections[number];
 type SectionState = { loading: boolean; error: string; ready: boolean };
 const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {loading:true, error:'', ready:false}])) as Record<PageSection, SectionState>;
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
+// Customers can see everything and sign, but change nothing: only reps edit, until changes made at the same time by a rep
+// and a customer reach each other. Set to true to let customers edit their move again.
+const CUSTOMER_CAN_EDIT = false;
+
 export default function CustomerMovePage() {
   const {accessId}=useParams();
   const [bootstrap] = useState(() => readCustomerBootstrap(accessId));
@@ -125,6 +129,7 @@ export default function CustomerMovePage() {
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
   const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
+  const readOnly = !repPage && !CUSTOMER_CAN_EDIT;
   const [key]=useState(()=>bootstrap?.key || new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>loadCustomerSession(sessionKey));
   useEffect(() => {
@@ -271,6 +276,7 @@ export default function CustomerMovePage() {
   type PricingChange = { kind: 'additional_protection' | 'material' | 'inventory_boxes' | 'extra_stops' | 'elevator' | 'long_carry' | 'stairs' | 'storage' | 'mode' | 'unpacking' | 'box' | 'bulky' | 'shuttle'; material_item?:import('./CustomerPackingOptions').AdditionalMaterialItem|null; box_quantities?:Record<string,number>; stop_change?:import('./CustomerExtraStopsQuestion').ExtraStopChange; stops?: string[]; has_stops?: boolean; revision?: string; location?: 'pickup' | 'delivery'; flights?: number; carry_feet?: number; access_unknown?: boolean; carry_unknown?: boolean; carry_acknowledged?: boolean; elevator?: boolean; materials?: boolean; available_date?: string; item_id?: string; mode?: 'full' | 'partial' | 'none'; enabled?: boolean; service?: 'packing' | 'crating' | null };
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
+    if (readOnly) return;
     // Box counts are saved on the inventory rows; reload the inventory window the next time it opens.
     if (['inventory_boxes', 'mode'].includes(change.kind)) setInventoryOpened(false);
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
@@ -318,6 +324,7 @@ export default function CustomerMovePage() {
     });
   }
   async function saveStoragePickup(date: string) {
+    if (readOnly) return;
     answerPending.current += 1;
     answerRevision.current += 1;
     setAnswersSaving(true);
@@ -566,6 +573,27 @@ export default function CustomerMovePage() {
     await call('/mileage', {routes: distances});
     return true;
   }
+  // What the inventory's Done does: once the service answers are saved, price the list (or start its report), then
+  // reload the list, volume and price.
+  async function finishInventory() {
+    await answerQueue.current;
+    if (failedAnswers.current.size || failedPricing.current.size) {
+      throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
+    }
+    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
+    // Done changes the list, volume and price; the rest of the page is unchanged.
+    await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
+    setCalculationError('');
+  }
+  // A list without a price (Done never finished, or pricing failed): on opening, Done runs once for the customer.
+  const autoFinished = useRef(false);
+  useEffect(() => {
+    if (autoFinished.current || !data || !sections.inventory.ready || !sections.pricing.ready) return;
+    if (!data.combined_inventory?.length || data.estimate || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
+    autoFinished.current = true;
+    setCalculatingPrice(true);
+    finishInventory().catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
+  });
   async function recalculatePrice() {
     if (priceCalculationRunning.current) return;
     priceCalculationRunning.current = true;
@@ -1096,7 +1124,7 @@ export default function CustomerMovePage() {
                   <div className="cm-route-actions-top">
                     <button type="button" className="slds-button cm-refresh-btn" aria-label="Refresh move details" title="Refresh move details" disabled={busy || sections.move.loading} onClick={()=>void loadSection('move')}>&#8635;</button>
                     {!editingMove && (
-                      <button type="button" className="slds-button cm-edit-button" disabled={!sections.move.ready} onClick={startEditMove}>Edit</button>
+                      <button type="button" className="slds-button cm-edit-button" disabled={!sections.move.ready || readOnly} onClick={startEditMove}>Edit</button>
                     )}
                   </div>
                 </div>
@@ -1164,10 +1192,10 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : data.combined_inventory?.length ? 'Update inventory' : 'Add a list'}</button>
-                  <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
-                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media')} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
-                  <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : readOnly ? 'View inventory' : data.combined_inventory?.length ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored || readOnly} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media') || readOnly} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
+                  <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored || readOnly} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
                   {files.some(f => f.status === 'Try again') && <button className="slds-button cm-primary cm-upload-btn" disabled={busy} onClick={()=>void upload()}>Retry upload</button>}
                 </div>
                 <div className="cm-file-list">
@@ -1192,12 +1220,12 @@ export default function CustomerMovePage() {
                   </div>
                 </section> : null}
                 {sectionNotice('media', 'media')}
-                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={!sectionReady('media') || busy || reportState === 'running'} />
+                <ReportFileGallery newFileIds={(data.editable_files || data.files).filter(file => !(data.report_history?.find(report => report.current)?.files || []).some(previous => previous.id === file.id)).map(file => file.id)} files={data.editable_files || data.files} loadPreview={async id => { const response = await fetch(`${base}/file-preview/${encodeURIComponent(id)}`, { headers, cache: 'no-store' }); return response.ok ? (await response.json()).url : null; }} onRemove={removeReportFile} disabled={!sectionReady('media') || busy || reportState === 'running' || readOnly} />
                 {data.walkthrough && <div className="cm-meeting-summary">
                   <div><strong>Virtual estimate</strong><span>{meetingTime(data.walkthrough)}</span><small>{({requested:'Requested',scheduled:'Confirmed',completed:'Completed',cancelled:'Cancelled'} as Record<string,string>)[data.walkthrough.status] || data.walkthrough.status}</small></div>
                   <div className="cm-walkthrough-actions">
                     {data.walkthrough.status === 'scheduled' && data.participant_url && <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join walkthrough</a>}
-                    <button type="button" className="cm-secondary-btn" onClick={() => { setAvailability(''); setRescheduling(true); meetingDialog.current?.showModal(); }}>{['requested','scheduled'].includes(data.walkthrough.status) ? 'Reschedule' : 'Schedule'}</button>
+                    <button type="button" className="cm-secondary-btn" disabled={readOnly} onClick={() => { setAvailability(''); setRescheduling(true); meetingDialog.current?.showModal(); }}>{['requested','scheduled'].includes(data.walkthrough.status) ? 'Reschedule' : 'Schedule'}</button>
                   </div>
                 </div>}
 
@@ -1208,7 +1236,7 @@ export default function CustomerMovePage() {
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
-                      disabled={!sectionReady('inventory', 'media') || busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded')}
+                      disabled={!sectionReady('inventory', 'media') || busy || startingReport || data.spark?.status === 'queued' || data.spark?.status === 'running' || files.some(file => file.status !== 'Uploaded') || readOnly}
                       onClick={async () => {
                         if (reportStartPending.current || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
                         reportStartPending.current = true;
@@ -1262,7 +1290,7 @@ export default function CustomerMovePage() {
                         <a className="cm-primary" href={data.participant_url} target="_blank" rel="noopener noreferrer">Join video walkthrough</a>
                       )}
                       {['requested','scheduled'].includes(data.walkthrough.status) && (
-                        <button type="button" className="cm-secondary-btn" onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>
+                        <button type="button" className="cm-secondary-btn" disabled={readOnly} onClick={()=>{setAvailability('');setRescheduling(true);}}>Reschedule</button>
                       )}
                     </div>
                   </div>
@@ -1296,7 +1324,7 @@ export default function CustomerMovePage() {
                         <div className="cm-price-refresh-row">
                           <strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(data.estimate.price))}</strong>
                           <button type="button" className="cm-price-refresh" aria-label={calculatingPrice ? 'Recalculating price' : 'Recalculate price'} title={calculatingPrice ? 'Recalculating price...' : 'Recalculate price'} aria-busy={calculatingPrice}
-                            disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued'}
+                            disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || data.spark?.status === 'running' || data.spark?.status === 'queued' || readOnly}
                             onClick={() => void recalculatePrice()}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                           </button>
@@ -1324,7 +1352,7 @@ export default function CustomerMovePage() {
                     type="button"
                     className="cm-secondary-btn cm-rerate-btn"
                     aria-busy={calculatingPrice}
-                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running'}
+                    disabled={calculatingPrice || answersSaving || busy || pricingLoading || reportState === 'running' || readOnly}
                     onClick={() => void recalculatePrice()}
                   >{calculatingPrice ? 'Getting your price...' : 'Get price'}</button>}
                 </div>
@@ -1353,7 +1381,7 @@ export default function CustomerMovePage() {
                 };
                 const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
                 return <ol className={`cm-estimate-flow${billOfLading ? ' has-four' : ''}`} aria-label="Complete your estimate">
-                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, hasInventory ? 'Edit' : 'Add', 'Add', !sectionReady('inventory') ? 'Loading...' : '')}</button></li>
+                <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, readOnly ? 'View' : hasInventory ? 'Edit' : 'Add', readOnly ? 'View' : 'Add', !sectionReady('inventory') ? 'Loading...' : '')}</button></li>
                 <li>
                   <button
                     type="button"
@@ -1378,7 +1406,7 @@ export default function CustomerMovePage() {
                   >
                     <span className="cm-flow-head"><span className="cm-flow-number">2</span><span className="cm-flow-label">Extra services{status(2, servicesDone)}</span>
                     {sectionReady('pricing') && <CompletionIcon complete={servicesDone} label={servicesDone ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}</span>
-                    {action(2, servicesDone ? 'Edit' : 'Add', 'Add', answersSaving ? 'Saving...' : pricingLoading || !sectionReady('pricing') ? 'Loading...' : '')}
+                    {action(2, readOnly ? 'View' : servicesDone ? 'Edit' : 'Add', readOnly ? 'View' : 'Add', answersSaving ? 'Saving...' : pricingLoading || !sectionReady('pricing') ? 'Loading...' : '')}
                   </button>
                 </li>
                 <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign' : 'Sign',
@@ -1419,7 +1447,7 @@ export default function CustomerMovePage() {
                       const subtotal = idx === lastPackage && (repPage || packageDiscount > 0 || choices) ? <div className="cm-estimate-charge-row cm-package-subtotal">
                         <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>Discount: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}
                           {choices && <label className="cm-discount-choice">Discount
-                            <select value={choices.selected || ''} disabled={discountSaving} onChange={event => void chooseDiscount(event.target.value || null)}>
+                            <select value={choices.selected || ''} disabled={discountSaving || readOnly} onChange={event => void chooseDiscount(event.target.value || null)}>
                               <option value="">None</option>
                               {choices.options.map(option => <option key={option.title} value={option.title}>
                                 {`${option.title} (${option.type === 'percent' ? `${option.value}% off` : option.type === 'amount' ? `${money(option.value)} off` : `${money(option.value)} per cu ft`})`}
@@ -1471,12 +1499,12 @@ export default function CustomerMovePage() {
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer key={preparedEstimate} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={showSignature} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
-              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running'} fetchSignedPdf={fetchSignedPdf} />
+              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {(showInventoryList || inventoryOpened) && <ManualInventoryModal visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
+            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
@@ -1496,16 +1524,7 @@ export default function CustomerMovePage() {
               // Saving the list does not reprice; the estimate is only marked as needing an update.
               setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
               return result;
-            }} onDone={async () => {
-              await answerQueue.current;
-              if (failedAnswers.current.size || failedPricing.current.size) {
-                throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
-              }
-              await call(data.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
-              // Done changes the list, volume and price; the rest of the page is unchanged.
-              await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
-              setCalculationError('');
-            }} onClose={changed => { setShowInventoryList(false); if (changed) void loadSection('inventory', true); }} />}
+            }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => { setShowInventoryList(false); if (changed) void loadSection('inventory', true); }} />}
             {inventoryPdf && <InventoryViewer url={inventoryPdf.url} filename={inventoryPdf.filename} title={inventoryPdf.title} description={inventoryPdf.description} onClose={() => { URL.revokeObjectURL(inventoryPdf.url); setInventoryPdf(null); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
@@ -1534,6 +1553,7 @@ export default function CustomerMovePage() {
                   </div>
                   {packingStep==='package'&&<nav className="cm-packing-subtabs cm-packing-subtabs-heading" aria-label="Packing services sections">{packingSections.map(section=><button type="button" key={section} aria-current={packingSection===section?'page':undefined} onClick={()=>{setPackingSection(section);setPackingError('');termsBody.current?.scrollTo({top:0});}}>{section==='service'?'Service':section==='boxes'?'Boxes':'Item protection'}</button>)}</nav>}
                   <div className="cm-modal-body" ref={termsBody} onChangeCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}} onClickCapture={event=>{const action=(event.target as HTMLElement).closest<HTMLElement>('[data-customer-action]');if(action)lastCustomerAction.current=action.dataset.customerAction||null;}}>
+                    <fieldset className="cm-read-only" disabled={readOnly}>
                     {packingStep === 'stops' && data.extra_stops ? <div style={{display:'grid',gap:24}}>{data.extra_stops.locations.map(group=><CustomerExtraStopsQuestion key={group.location} group={group} apiKey={data.google_maps_browser_key || ''} missing={stopsMissing && (stopsIncomplete[group.location] || group.answer==null || (group.answer && !group.stops.length))} onIncomplete={value=>{setStopsIncomplete(old=>({...old,[group.location]:value}));setStopsMissing(false);}} onChange={(has_stops,stop_change)=>savePricingChange({kind:'extra_stops',location:group.location,has_stops,stop_change})}/>)}</div> : packingStep === 'elevator' && data.elevator ? <div style={{display:'grid',gap:24}}>{data.elevator.locations.map(location=><CustomerElevatorQuestion key={location.location} config={data.elevator!} location={location} value={elevatorAnswers[location.location] ?? null} missing={elevatorMissing && elevatorAnswers[location.location] == null} onChange={elevator => { setElevatorAnswers(prev => ({ ...prev, [location.location]: elevator })); setElevatorMissing(false); savePricingChange({kind:'elevator',location:location.location,revision:location.revision,elevator: typeof elevator === 'boolean' ? elevator : undefined, access_unknown: elevator === 'unknown'}); }} />)}</div> : packingStep === 'access' ? <div style={{display:'grid',gap:24}}>
                       {pickupCarry && data.long_carry && <CustomerLongCarryQuestion key={`pickup:${pickupCarry.revision}`} config={data.long_carry} location={pickupCarry} value={carryAnswers.pickup ?? null} missing={carryMissing && carryAnswers.pickup == null} onChange={carry_feet => { setCarryAnswers(prev => ({...prev,pickup:carry_feet})); setCarryMissing(false); if (carry_feet !== null) savePricingChange({kind:'long_carry',location:'pickup',revision:pickupCarry.revision,...(carry_feet === 'unknown' ? {carry_unknown:true,carry_acknowledged:true} : {carry_feet})}); }} />}
                       {data.shuttle ? <fieldset data-customer-action="delivery-shuttle" style={{ border: shuttleMissing ? '1px solid #d32f2f' : '1px solid #e5d8d5', borderRadius: 12, padding: 18 }} aria-invalid={shuttleMissing}>
@@ -1608,6 +1628,7 @@ export default function CustomerMovePage() {
                     </> : data.packing_package && <CustomerPackingOptions stage={packingSection} config={data.packing_package} selection={packageSelection} onChange={changePackage} disabled={false} />}
                     {!data.estimate && <p>Your choices will be saved and included when your estimate is ready.</p>}
                     {packingError && <div className="cm-save-error" role="alert"><p>{packingError}</p>{failedPricing.current.size > 0 && <button type="button" className="cm-secondary-btn" disabled={answersSaving} onClick={() => { for (const change of failedPricing.current.values()) savePricingChange(change); }}>{answersSaving ? 'Retrying...' : 'Try again'}</button>}</div>}
+                    </fieldset>
                   </div>
                   {packingStep === 'items' && termsError && <p role="alert" className="cm-field-error">{termsError}</p>}
                   <div className="cm-modal-footer">
@@ -1615,7 +1636,7 @@ export default function CustomerMovePage() {
                     {packingStep === 'items' ? <button type="button" className="slds-button cm-primary" aria-busy={answersSaving} onClick={nextTermsStep}>{currentTermsStep < termsGroups.length - 1 ? 'Next' : 'Done'}</button> : <button type="button" className="slds-button cm-primary" onClick={()=>void nextPricingStep()}>{packingStep==='package'&&nextPackingSection?`Next: ${nextPackingSection==='boxes'?'boxes':'item protection'}`:nextPricing ? `Next: ${nextPricingLabels[nextPricing]}` : 'Done'}</button>}
 
                   </div>
-                  {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}
+                  {<small className="cm-answer-autosave-note" role="status" aria-live="polite">{readOnly ? '' : answersSaving ? 'Saving...' : failedAnswers.current.size ? 'Could not save all answers. Please retry.' : answerSaveStarted ? <><span className="cm-save-check" aria-hidden="true">&#10003;</span> Saved</> : 'Your answers save automatically.'}</small>}
                 </div>
               </div>
             )}

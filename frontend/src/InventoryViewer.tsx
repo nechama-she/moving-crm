@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import PdfPages, { useDrawnPages } from './PdfPages';
 import './PdfViewer.css';
 
 // Shows a PDF to read and download: the inventory, or with its own title and text, the work order.
@@ -6,6 +7,7 @@ export default function InventoryViewer({ url, filename, onClose, title = 'Your 
   url: string; filename: string; onClose: () => void; title?: string; description?: string;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const drawPages = useDrawnPages();
   useEffect(() => { dialog.current?.showModal(); }, []);
   return <dialog ref={dialog} className="pdf-viewer" aria-labelledby="inventory-viewer-title" onCancel={e => { e.preventDefault(); onClose(); }}>
     <header className="pdf-viewer-header">
@@ -16,7 +18,7 @@ export default function InventoryViewer({ url, filename, onClose, title = 'Your 
       </div>
     </header>
     <div className="pdf-viewer-content">
-      <iframe title={`${title} PDF`} src={url} />
+      {drawPages ? <PdfPages url={url} title={`${title} PDF`} /> : <iframe title={`${title} PDF`} src={url} />}
     </div>
   </dialog>;
 }

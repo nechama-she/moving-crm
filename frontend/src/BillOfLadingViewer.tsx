@@ -14,6 +14,9 @@ export default function BillOfLadingViewer({ base, headers, customerName, filena
   const [signed, setSigned] = useState(false);
   // The spot being signed; each spot is signed and saved on its own, then the next one is shown.
   const [signing, setSigning] = useState<number | null>(null);
+  // On a phone the form opens above the pages: brought into view when it opens.
+  const signForm = useRef<HTMLElement>(null);
+  useEffect(() => { if (signing !== null) signForm.current?.scrollIntoView({ block: 'nearest' }); }, [signing]);
   const [toNextSpot, setToNextSpot] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => { dialog.current?.showModal(); }, []);
@@ -45,7 +48,7 @@ export default function BillOfLadingViewer({ base, headers, customerName, filena
     {error && <p role="alert">{error}</p>}
     <div className="pdf-viewer-content">
       {url ? <PdfPages url={url} title="Bill of Lading PDF" toNextSpot={toNextSpot} onSign={signed ? undefined : setSigning} /> : !error && <p role="status">Preparing your Bill of Lading...</p>}
-      {signing !== null && <aside><Signing key={signing} path={`/bill-of-lading/${signing}`} paper="Bill of Lading" base={base} headers={headers} customerName={customerName} disabled={false} version={revision} hideHistory
+      {signing !== null && <aside ref={signForm}><Signing key={signing} path={`/bill-of-lading/${signing}`} paper="Bill of Lading" base={base} headers={headers} customerName={customerName} disabled={false} version={revision} hideHistory
         onClose={() => setSigning(null)} onSigned={() => { setSigning(null); setToNextSpot(true); void load(); }} /></aside>}
     </div>
   </dialog>;

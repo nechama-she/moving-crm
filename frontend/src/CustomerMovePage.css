@@ -339,3 +339,5 @@
 /* The customer's discount pick on the transportation subtotal. */
 .cm-discount-choice{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:13px;color:var(--cm-text-muted)}
 .cm-discount-choice select{min-height:36px;padding:4px 8px;border:1px solid var(--cm-border);border-radius:6px;font:inherit;color:var(--cm-text);background:#fff}
+/* Locks the answers inside without changing the layout. */
+.cm-read-only{display:contents}

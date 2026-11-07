@@ -139,8 +139,8 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
     <button type="button" className="slds-button" disabled={busy} aria-label={`Remove ${name}`} onClick={onRemove}>&times;</button>
   </div>;
 }
-function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete }: {
-  room: Room; selected: boolean; busy: boolean; summary: string;
+function RoomCard({ room, selected, busy, locked = false, summary, onSelect, onRename, onDelete }: {
+  room: Room; selected: boolean; busy: boolean; locked?: boolean; summary: string;
   onSelect: () => void; onRename: (name: string) => void; onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -162,17 +162,21 @@ function RoomCard({ room, selected, busy, summary, onSelect, onRename, onDelete 
             if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); event.currentTarget.blur(); pencil.current?.focus(); }
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelled.current = true; setEditing(false); pencil.current?.focus(); }
           }} /> : <strong>{room.name}</strong>}
-        <button ref={pencil} type="button" className="mi-room-rename" disabled={busy} aria-label={`Rename room ${room.name}`} title="Rename room" onClick={() => { cancelled.current = false; setDraft(room.name); setEditing(true); }}>
+        <button ref={pencil} type="button" className="mi-room-rename" disabled={busy || locked} aria-label={`Rename room ${room.name}`} title="Rename room" onClick={() => { cancelled.current = false; setDraft(room.name); setEditing(true); }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" /></svg>
         </button>
       </div>
       <span>{summary}</span>
     </div>
-    <button type="button" className="mi-remove" disabled={busy} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
+    <button type="button" className="mi-remove" disabled={busy || locked} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true }: {
+export default function ManualInventoryModal({ loadCatalog, searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true }: {
   visible?: boolean;
+  // Whether the list has a price: without one, Done prices it even when nothing changed.
+  priced?: boolean;
+  // The list can be seen, rooms filtered and the PDF opened, but nothing changed or saved.
+  readOnly?: boolean;
   submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string}>;
   loadInventory: () => Promise<{revision:string; report_id:string|null; rooms:Room[]}>;
   draftKey: string;
@@ -329,7 +333,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
     return operation;
   }
   useEffect(() => {
-    if (!catalog) return;
+    if (!catalog || readOnly) return;
     latest.current = rooms;
     if (loadedRooms.current === rooms) {
       loadedRooms.current = null;
@@ -373,7 +377,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
       let saved: Room[] | undefined;
       try {
         const raw = localStorage.getItem(draftKey);
-        if (raw) {
+        if (raw && !readOnly) {
           const draft = JSON.parse(raw);
           if (draft.revision === editor.revision && Array.isArray(draft.rooms)) saved = draft.rooms;
         }
@@ -499,16 +503,16 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
   // Done, the close button and Escape all do the same: save the list and update the estimate.
   async function save() {
     if (busy) return;
-    if (!catalog) { onClose(); return; }
+    if (!catalog || (readOnly && priced)) { onClose(false); return; }
     if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
-    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current) { onClose(false); return; }
+    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current && priced) { onClose(false); return; }
     setBusy(true); setError('');
     try {
       if (dirty.current || pending.current || saving.current) {
         if (inFlight.current !== rooms) pending.current = rooms;
         await flush();
       }
-      if (savedChanges.current) {
+      if (savedChanges.current || !priced) {
         setFinishing(true);
         await onDone();
         savedChanges.current = false;
@@ -527,7 +531,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   }}>
-    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div className="mi-header-actions"><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "View inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "View inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
+    <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div className="mi-header-actions"><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "View inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "View inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length || readOnly} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
     <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
@@ -535,11 +539,11 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
     <div className="mi-body">
       {!catalog ? <p>Loading inventory...</p> : <>
         <div className="mi-room-toolbar">
-          <p key={roomHintFlash} id="mi-room-hint" className={roomHintFlash ? 'mi-hint-flash' : undefined}>{rooms.length ? 'Choose a room to add items to it, or add a room.' : 'Add a room to start adding items.'}</p>
+          <p key={roomHintFlash} id="mi-room-hint" className={roomHintFlash ? 'mi-hint-flash' : undefined}>{readOnly ? 'Choose a room to see its items.' : rooms.length ? 'Choose a room to add items to it, or add a room.' : 'Add a room to start adding items.'}</p>
           <div className="mi-room-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setRoomPickerOpen(false); }} onKeyDown={event => {
             if (event.key === 'Escape' && roomPickerOpen) { event.preventDefault(); event.stopPropagation(); setRoomPickerOpen(false); addRoomButton.current?.focus(); }
           }}>
-            <button ref={addRoomButton} type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !catalog.rooms.length} aria-expanded={roomPickerOpen} aria-controls="mi-room-choices" onClick={() => setRoomPickerOpen(open => !open)}>+ Add room</button>
+            <button ref={addRoomButton} type="button" className="slds-button" disabled={busy || rooms.length >= 100 || !catalog.rooms.length || readOnly} aria-expanded={roomPickerOpen} aria-controls="mi-room-choices" onClick={() => setRoomPickerOpen(open => !open)}>+ Add room</button>
             {roomPickerOpen && <div id="mi-room-choices" className="mi-room-choices" role="group" aria-label="Choose a room to add">
               {catalog.rooms.map(type => <button type="button" key={type.id} disabled={busy} onClick={() => {
                 const id = crypto.randomUUID();
@@ -550,7 +554,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
             </div>}
           </div>
         </div>
-        <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy}
+        <div className="mi-rooms">{rooms.map(r => <RoomCard key={r.id} room={r} selected={r.id === selected} busy={busy} locked={readOnly}
           summary={`${count(r)} items \u00b7 ${pieces(r)} pieces \u00b7 ${boxes(r)} boxes \u00b7 ${number(total(r, 'cuft'))} cu ft`}
           onSelect={() => { setSelected(current => current === r.id ? '' : r.id); setCustomOpen(false); }}
           onRename={name => setRooms(current => current.map(value => value.id === r.id ? { ...value, name } : value))}
@@ -558,7 +562,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
         {!room && <button type="button" className="slds-button mi-add-items-inactive" style={{ marginTop: 12 }} aria-disabled="true" aria-describedby="mi-room-hint" onClick={() => setRoomHintFlash(value => value + 1)}>+ Add items</button>}
         {room &&
         <section className="mi-room-editor">
-        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { viewInventoryRequested.current = catalogOpen; setCatalogOpen(open => !open); setCustomOpen(false); }}>{catalogOpen ? 'View my inventory' : '+ Add items'}</button>
+        <button type="button" className="slds-button" style={{ marginTop: 12 }} disabled={busy || readOnly} aria-expanded={catalogOpen} aria-controls="mi-add-item-catalog" onClick={() => { viewInventoryRequested.current = catalogOpen; setCatalogOpen(open => !open); setCustomOpen(false); }}>{catalogOpen ? 'View my inventory' : '+ Add items'}</button>
         {catalogOpen && <section className="mi-catalog-card" id="mi-add-item-catalog" aria-label="Add inventory items">
           <div className="mi-catalog-toolbar">
             <div className="mi-catalog-search">
@@ -618,8 +622,8 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
             <summary><strong>{r.name}</strong> &middot; {count(r)} items &middot; {pieces(r)} pieces &middot; {boxes(r)} boxes</summary>
             <div className="mi-inventory-row mi-inventory-headings"><span>Image</span><span>Item name</span><span>Unit volume<small>cu ft</small></span><span>Total volume<small>cu ft</small></span><span>Qty</span><span>Going</span><span className="mi-inventory-actions-heading">Actions</span></div>
             {Object.entries(r.items).filter(([, qty]) => qty > 0).map(([id, qty]) => <InventoryRow key={id}
-              serviceBusy={closingBusy} serviceRowId={catalogInventoryId(r, id)} openService={openService} setOpenService={setOpenService}
-              name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy}
+              serviceBusy={closingBusy || readOnly} serviceRowId={catalogInventoryId(r, id)} openService={openService} setOpenService={setOpenService}
+              name={packingItemName(r.item_names?.[id] || items.get(id)?.name || 'Item')} cuft={items.get(id)?.cuft || 0} quantity={qty} busy={busy || readOnly}
               photo={imageEndpoint ? <QuestionReferenceImages active={visible} compact name={items.get(id)?.name || r.item_names?.[id] || 'Item'} room={r.name} endpoint={imageEndpoint} linkKey={linkKey} session={session}/> : undefined}
               onSave={value => setRooms(current => current.map(valueRoom => valueRoom.id === r.id ? {
                 ...valueRoom, items: { ...valueRoom.items, [id]: 0 },
@@ -633,8 +637,8 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
               onRemove={() => quantity(id, 0, r.id)} />)}
             {itemGroups(r.custom_items || []).map(([setId, group]) => <div key={setId || 'individual'} className={setId ? 'mi-inventory-set' : undefined}>
               {setId && <div className="mi-set-heading"><strong>{group[0].set_name}</strong><span>{number(group.reduce((sum, item) => sum + (item.going === false ? 0 : item.cuft * item.quantity), 0))} cu ft</span></div>}
-              {group.map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy}
-              serviceBusy={closingBusy} serviceRowId={item.id} openService={openService} setOpenService={setOpenService}
+              {group.map(item => <InventoryRow key={item.id} name={packingItemName(item.name)} cuft={item.cuft} quantity={item.quantity} busy={busy || readOnly}
+              serviceBusy={closingBusy || readOnly} serviceRowId={item.id} openService={openService} setOpenService={setOpenService}
               selectors={items.get(item.catalog_item_id || '')?.selectors || item.selectors} selections={item.selections}
               onSelectionChange={(selectorId, choice) => setRooms(current => current.map(value => value.id === r.id ? {...value, custom_items: value.custom_items?.map(entry => {
                 if (entry.id !== item.id) return entry;
@@ -655,7 +659,7 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
         </section>
       </>}
     </div>
-    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || 'Changes save automatically. Done updates your estimate.'}</span><button type="button" className="slds-button cm-primary" disabled={catalogOpen ? finishing : busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => {
+    <footer><span role="status">{finishing ? 'Updating your estimate...' : busy ? 'Saving your list...' : saveStatus || (readOnly ? '' : 'Changes save automatically. Done updates your estimate.')}</span><button type="button" className="slds-button cm-primary" disabled={catalogOpen ? finishing : busy || !catalog || rooms.some(r => !r.name.trim())} onClick={() => {
       if (catalogOpen) {
         viewInventoryRequested.current = true;
         setCatalogOpen(false);

@@ -3,6 +3,23 @@ import { useEffect, useRef, useState } from 'react';
 // The PDF's empty signature spots are links marked with this text and the spot's number (bill_of_lading_pdf.SIGN_HERE).
 const SIGN_HERE = 'sign-here';
 
+// A computer with a mouse: its browser shows a PDF in a frame in full.
+const MOUSE = '(pointer: fine)';
+
+/** Whether the viewers draw the PDF's pages instead of framing the PDF: on touch screens (phones, tablets, folding
+ * phones), which show a framed PDF as its first page only or not at all, and in browsers without a PDF viewer. */
+export function useDrawnPages() {
+  const drawn = () => !navigator.pdfViewerEnabled || !window.matchMedia(MOUSE).matches;
+  const [value, setValue] = useState(drawn);
+  useEffect(() => {
+    const query = window.matchMedia(MOUSE);
+    const change = () => setValue(drawn());
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
+  return value;
+}
+
 type SignArea = { spot: number; page: number; left: number; top: number; width: number; height: number };
 
 /** The PDF's pages, drawn to fit the width. With onSign, each signature spot opens its signing when clicked;

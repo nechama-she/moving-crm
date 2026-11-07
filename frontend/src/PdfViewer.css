@@ -23,6 +23,7 @@
   .pdf-viewer-header { padding: 12px; flex-wrap: wrap; }
   .pdf-viewer-content { flex-direction: column; overflow-y: auto; }
   .pdf-viewer-content iframe { flex: 1 0 45dvh; }
-  .pdf-viewer-content .pdf-pages { flex: 1 0 45dvh; padding: 6px; }
-  .pdf-viewer-content aside { width: auto; overflow: visible; }
+  /* The pages at their full height, scrolling with the rest; the signing form first, where it opens. */
+  .pdf-viewer-content .pdf-pages { flex: none; overflow: visible; padding: 6px; }
+  .pdf-viewer-content aside { width: auto; overflow: visible; order: -1; }
 }
