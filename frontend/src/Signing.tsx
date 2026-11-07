@@ -21,6 +21,16 @@ export default function Signing({ base, headers, customerName, disabled, version
   const [name, setName] = useState(customerName);
   const [strokes, setStrokes] = useState<Point[][]>([]);
   const active = useRef<number | null>(null);
+  // iPhones scroll the page under a finger drawing on the pad, whatever its CSS says: its touches are kept from the page.
+  const pad = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const node = pad.current;
+    if (!node) return;
+    const keep = (event: TouchEvent) => event.preventDefault();
+    node.addEventListener('touchstart', keep, { passive: false });
+    node.addEventListener('touchmove', keep, { passive: false });
+    return () => { node.removeEventListener('touchstart', keep); node.removeEventListener('touchmove', keep); };
+  }, [version]);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -84,7 +94,7 @@ export default function Signing({ base, headers, customerName, disabled, version
       <p>This saves your signature with the {paper} version you review here. Later changes will not change this signed copy.</p>
       <label>Full name<input value={name} maxLength={200} disabled={busy} autoComplete="name" onChange={e => setName(e.target.value)} /></label>
       <p id="signature-help">Draw your signature below using your finger, mouse, or pen.</p>
-      <svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label="Draw your signature" aria-describedby="signature-help"
+      <svg ref={pad} viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label="Draw your signature" aria-describedby="signature-help"
         onPointerDown={e => { if (busy || active.current !== null) return; e.preventDefault(); active.current = e.pointerId; e.currentTarget.setPointerCapture(e.pointerId); const p = point(e); setStrokes(value => [...value, [p]]); }}
         onPointerMove={e => { if (busy || active.current !== e.pointerId) return; const p = point(e); setStrokes(value => value.map((stroke, i) => i === value.length - 1 && stroke.length < 1000 ? [...stroke, p] : stroke)); }}
         onPointerUp={() => { active.current = null; setStrokes(value => value.filter(stroke => stroke.length > 1)); }}
