@@ -749,6 +749,14 @@ input, select, textarea, button {
 .pricing-books-desktop strong { color: #032d60; font-size: 13px; }
 .pricing-books-desktop span { font-size: 13px; }
 .pricing-books-desktop small { color: #706e6b; font-size: 11px; }
+/* Adding a pricing book, under the list. */
+.pricing-new-book-button { width: 100%; border: 0; border-top: 1px solid #e5e5e5; background: #fff; padding: 12px 14px; color: #0176d3; font-weight: 600; text-align: left; cursor: pointer; }
+.pricing-new-book-button:hover { background: #f3f3f3; }
+.pricing-new-book { display: grid; gap: 10px; padding: 12px 14px; border-top: 1px solid #e5e5e5; }
+.pricing-new-book label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: #3e3e3c; }
+.pricing-new-book select, .pricing-new-book input { min-height: 32px; padding: 4px 8px; border: 1px solid #c9c7c5; border-radius: 4px; font: inherit; font-weight: 400; }
+.pricing-new-book .pricing-actions { flex-wrap: wrap; }
+.pricing-delete-book { color: #ba0517; }
 .pricing-content { min-width: 0; display: grid; gap: 14px; }
 .pricing-card { background: #fff; border: 1px solid #c9c7c5; border-radius: 8px; box-shadow: 0 1px 2px rgb(0 0 0 / 7%); }
 .pricing-unavailable { padding: 28px; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 16px; align-items: start; border-top: 4px solid #fe9339; }

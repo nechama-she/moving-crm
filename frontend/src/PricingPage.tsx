@@ -23,6 +23,8 @@ type PlanSummary = {
   id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
   fuel_percent: number | null; admin_fee: number | null; price_valid_days: number; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
+  // The master book: new books start with its values, and others can copy them.
+  master?: boolean;
 };
 type Rule = { id?: string; category: string; title: string; description: string };
 type Rate = {
@@ -179,6 +181,62 @@ export default function PricingPage() {
   const calculationId = useRef(0);
   const priceSaveRunning = useRef(false);
   const [error, setError] = useState("");
+  // A new pricing book: its company and area name, open while being added.
+  const [newBook, setNewBook] = useState<{ company_id: string; name: string } | null>(null);
+  const [bookCompanies, setBookCompanies] = useState<{ id: string; name: string }[]>([]);
+  const [bookBusy, setBookBusy] = useState(false);
+  async function startNewBook() {
+    setError("");
+    setNewBook({ company_id: "", name: "" });
+    if (bookCompanies.length) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/companies`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(formatApiError(await response.json().catch(() => ({})), "Failed to load companies"));
+      setBookCompanies(((await response.json()) as { id: string; name: string }[]).sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to load companies"); }
+  }
+  async function createBook() {
+    if (!newBook) return;
+    setBookBusy(true); setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/pricing`, {
+        method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" }, body: JSON.stringify(newBook) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(formatApiError(body, "Failed to add the pricing book"));
+      const row = body as PlanSummary;
+      setPlans(current => [...current, row].sort((a, b) => a.company_name.localeCompare(b.company_name)));
+      setSelectedId(row.id);
+      setNewBook(null);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to add the pricing book"); }
+    finally { setBookBusy(false); }
+  }
+  // Bumped to load the selected book again after its values change on the server.
+  const [bookVersion, setBookVersion] = useState(0);
+  async function copyMaster(row: PlanSummary) {
+    if (!window.confirm(`Replace the values of ${row.company_name} - ${row.name} with the master book's? Its name, company and pickup areas stay. This cannot be undone.`)) return;
+    setBookBusy(true); setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/pricing/${encodeURIComponent(row.id)}/copy-master`, { method: "POST", headers: authHeaders(token) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(formatApiError(body, "Failed to copy the master book"));
+      setPlans(current => current.map(value => value.id === row.id ? body as PlanSummary : value));
+      setBookVersion(value => value + 1);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to copy the master book"); }
+    finally { setBookBusy(false); }
+  }
+  async function deleteBook(row: PlanSummary) {
+    if (!window.confirm(`Delete the pricing book ${row.company_name} - ${row.name}? Its rates, rules and services are deleted with it. This cannot be undone.`)) return;
+    setBookBusy(true); setError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/pricing/${encodeURIComponent(row.id)}`, { method: "DELETE", headers: authHeaders(token) });
+      if (!response.ok) throw new Error(formatApiError(await response.json().catch(() => ({})), "Failed to delete the pricing book"));
+      const rest = plans.filter(value => value.id !== row.id);
+      setPlans(rest);
+      setSelectedId(rest[0]?.id || "");
+      if (!rest.length) { setPlan(null); setDraft(null); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to delete the pricing book"); }
+    finally { setBookBusy(false); }
+  }
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [destination, setDestination] = useState("");
@@ -311,7 +369,7 @@ export default function PricingPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [selectedId, token]);
+  }, [selectedId, token, bookVersion]);
 
   const hasPendingRateGroups = pendingRateGroups.length > 0;
   const active = editing || sectionEditing.length > 0 || hasPendingRateGroups ? draft : plan;
@@ -776,6 +834,23 @@ export default function PricingPage() {
               </button>
             ))}
           </div>
+          {user?.role === "admin" && !jobContext ? (newBook ? (
+            <form className="pricing-new-book" onSubmit={event => { event.preventDefault(); void createBook(); }}>
+              <label>Company
+                <select value={newBook.company_id} disabled={bookBusy} onChange={event => setNewBook({ ...newBook, company_id: event.target.value })}>
+                  <option value="">Select a company</option>
+                  {bookCompanies.map(company => <option key={company.id} value={company.id}>{company.name}</option>)}
+                </select>
+              </label>
+              <label>Area name
+                <input value={newBook.name} maxLength={255} disabled={bookBusy} placeholder="e.g. MD, VA, DC" onChange={event => setNewBook({ ...newBook, name: event.target.value })} />
+              </label>
+              <div className="pricing-actions">
+                <button type="submit" className="slds-button primary" disabled={bookBusy || !newBook.company_id || !newBook.name.trim()}>{bookBusy ? "Adding…" : "Add pricing book"}</button>
+                <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => setNewBook(null)}>Cancel</button>
+              </div>
+            </form>
+          ) : <button type="button" className="slds-button pricing-new-book-button" onClick={() => void startNewBook()}>+ New pricing book</button>) : null}
         </aside>
 
         <main className="pricing-content">
@@ -823,7 +898,11 @@ export default function PricingPage() {
                 <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, fuel_percent: plan.fuel_percent, admin_fee: plan.admin_fee, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
                 <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save changes"}</button>
               </>
-            ) : <button className="slds-button primary" onClick={() => setEditing(true)}>Edit details</button>}
+            ) : <>
+              <button className="slds-button primary" onClick={() => setEditing(true)}>Edit details</button>
+              {!jobContext && plans.some(value => value.master) && !plans.find(value => value.id === selectedId)?.master && <button className="slds-button secondary" disabled={bookBusy} onClick={() => { const row = plans.find(value => value.id === selectedId); if (row) void copyMaster(row); }}>Copy from master</button>}
+              {!jobContext && <button className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => { const row = plans.find(value => value.id === selectedId); if (row) void deleteBook(row); }}>Delete</button>}
+            </>}
           </div>
         ) : null}
                 <div className="pricing-kpis">
