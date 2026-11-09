@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { API_BASE } from "../apiConfig";
 import { authHeaders, useAuth } from "../AuthContext";
@@ -99,6 +99,12 @@ export default function CommandPalette({ open, onClose, pages }: { open: boolean
     onClose(); navigate(to);
   }
 
+  // Results are links, so right-click, Ctrl-click and middle-click open them in a new tab; a plain click stays in the app.
+  function follow(e: MouseEvent<HTMLAnchorElement>, to: string) {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault(); go(to);
+  }
+
   if (!open) return null;
   const leadsLoading = searchingLeads && leadResults?.text !== text;
   const leads = searchingLeads ? (leadsLoading ? [] : leadResults?.items || []) : recent;
@@ -147,26 +153,26 @@ export default function CommandPalette({ open, onClose, pages }: { open: boolean
               {leads.map((lead, i) => {
                 const details = [lead.quote_number ? `#${lead.quote_number}` : "", lead.phone_number ? displayPhone(lead.phone_number) : "", lead.email || "", lead.company_name || ""].filter(Boolean);
                 return (
-                  <button type="button" key={lead.id} className={`aur-palette-option is-lead${i === selected ? " is-selected" : ""}`} onMouseEnter={() => setSelected(i)}
-                    onClick={e => go(options[i].to, e.ctrlKey || e.metaKey)}>
+                  <a key={lead.id} href={options[i].to} className={`aur-palette-option is-lead${i === selected ? " is-selected" : ""}`} onMouseEnter={() => setSelected(i)}
+                    onClick={e => follow(e, options[i].to)}>
                     <span className="aur-avatar is-sm">{initials(lead.full_name || "")}</span>
                     <span className="aur-palette-lead"><strong>{lead.full_name || "Unnamed lead"}</strong>{details.length > 0 && <small>{details.join(" · ")}</small>}</span>
                     {lead.status && <span className={`aur-stage stage-${lead.status.toLowerCase()}`}>{lead.status}</span>}
-                  </button>
+                  </a>
                 );
               })}
               {leadTotal > leads.length && (
-                <button type="button" className={`aur-palette-option is-all${selected === leads.length ? " is-selected" : ""}`} onMouseEnter={() => setSelected(leads.length)} onClick={e => go(allLeadsUrl, e.ctrlKey || e.metaKey)}>
+                <a href={allLeadsUrl} className={`aur-palette-option is-all${selected === leads.length ? " is-selected" : ""}`} onMouseEnter={() => setSelected(leads.length)} onClick={e => follow(e, allLeadsUrl)}>
                   <Icon name="search" /><span>{`See all ${leadTotal.toLocaleString()} results for “${text}”`}</span><Icon name="arrow" size={16} />
-                </button>
+                </a>
               )}
             </div>}
             {matches.length > 0 && <div className="aur-palette-group">
               <span className="aur-palette-heading">Go to</span>
               {matches.map((p, i) => (
-                <button type="button" key={p.to} className={`aur-palette-option${pageStart + i === selected ? " is-selected" : ""}`} onMouseEnter={() => setSelected(pageStart + i)} onClick={() => go(p.to)}>
+                <a key={p.to} href={p.to} className={`aur-palette-option${pageStart + i === selected ? " is-selected" : ""}`} onMouseEnter={() => setSelected(pageStart + i)} onClick={e => follow(e, p.to)}>
                   <Icon name={p.icon} /><span>{p.label}</span><Icon name="arrow" size={16} />
-                </button>
+                </a>
               ))}
             </div>}
             {assistant && <div className="aur-palette-group">
@@ -200,12 +206,12 @@ export default function CommandPalette({ open, onClose, pages }: { open: boolean
             {!!ask.result.items?.length && <ul className="aur-answer-list">
               {ask.result.items.map(item => (
                 <li key={item.id}>
-                  <button type="button" onClick={() => go(`/leads/${encodeURIComponent(item.id)}`)}>
+                  <a href={`/leads/${encodeURIComponent(item.id)}`} onClick={e => follow(e, `/leads/${encodeURIComponent(item.id)}`)}>
                     <span className="aur-avatar is-sm">{initials(item.name)}</span>
                     <span className="aur-answer-name"><strong>{item.name}</strong><small>{item.detail}</small></span>
                     <span className={`aur-pill tone-${item.tone}`}>{item.flag}</span>
                     <span className="aur-answer-value">{item.value}</span>
-                  </button>
+                  </a>
                 </li>
               ))}
             </ul>}

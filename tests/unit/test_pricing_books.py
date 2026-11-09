@@ -46,7 +46,7 @@ def test_master_book_is_a_copy_of_east_and_new_books_start_from_it():
     from sqlalchemy import text
     from models import Base, Company, PricingPlan, PricingRate, PricingRule, PricingElevator, PricingElevatorTier, PricingPickupArea, AppSetting
     from routes import pricing
-    import migrate
+    from pricing_books import copy_book
     engine = create_engine('sqlite://')
     event.listen(engine, 'connect', lambda connection, _: connection.execute('PRAGMA foreign_keys=ON'))
     Base.metadata.create_all(engine)
@@ -71,12 +71,13 @@ def test_master_book_is_a_copy_of_east_and_new_books_start_from_it():
         db.add(PricingElevatorTier(plan_id='east', fee=75))
         db.commit()
         east = contents(db, 'east')
-        # The deploy step: an exact copy, no company, inactive; run again, it adds nothing.
+        # The default book: an exact copy of East, no company, inactive.
+        db.add(PricingPlan(id='master', company_id=None, company_name='Master', name='Default', source_key='master', active=False))
+        db.commit()
         with engine.begin() as connection:
-            migrate.create_master_book(connection)
-            migrate.create_master_book(connection)
-        master = db.query(PricingPlan).filter_by(source_key='master').one()
-        assert (master.company_id, master.active, master.company_name, master.name) == (None, False, 'Master', 'Default')
+            copy_book(connection, 'east', 'master', keep=())
+        db.expire_all()
+        master = db.get(PricingPlan, 'master')
         assert (float(master.fuel_percent), float(master.admin_fee), master.price_valid_days) == (13, 199, 10)
         assert contents(db, master.id) == east
         # A new book starts with the master's values, without its pickup areas.
@@ -92,6 +93,16 @@ def test_master_book_is_a_copy_of_east_and_new_books_start_from_it():
         assert contents(db, 'old') == (east[0], east[1], east[2], ['VA'], east[4])
         with pytest.raises(HTTPException):
             pricing.copy_master_into_plan(master.id, admin, db)
+        # A book's name and company are edited with its details; None leaves it with no company.
+        details = dict(fuel_percent=13, admin_fee=199, price_valid_days=10)
+        db.add(Company(id='movers', name='Movers 95'))
+        db.commit()
+        pricing.update_pricing_section('master', 'details', pricing.SectionUpdate(name=' Default ', company_id=None, **details), admin, db)
+        assert (master.company_id, master.company_name, master.name) == (None, '', 'Default')
+        pricing.update_pricing_section('old', 'details', pricing.SectionUpdate(name='OLD', company_id='movers', **details), admin, db)
+        assert (db.get(PricingPlan, 'old').company_id, db.get(PricingPlan, 'old').company_name) == ('movers', 'Movers 95')
+        with pytest.raises(HTTPException):
+            pricing.update_pricing_section('old', 'details', pricing.SectionUpdate(name='OLD', company_id='nobody', **details), admin, db)
         # The source stays as it was; deleting a book takes its local pricing with it.
         assert contents(db, 'east') == east
         pricing.delete_pricing_plan('old', admin, db)
