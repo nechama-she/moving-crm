@@ -1,0 +1,104 @@
+/* Dark mode for the new look. useTheme() puts .aur-dark on <html> only while the new look is shown,
+   so the classic look is never affected. Rules use html.aur-dark (not .aurora) so dialogs that render
+   outside the app root are covered too. */
+
+/* 1) Color settings */
+html.aur-dark, html.aur-dark .aurora {
+  --aur-bg: #050A18;
+  --aur-surface: #0C1530;
+  --aur-subtle: #070E22;
+  --aur-hover: #13204A;
+  --aur-hover-strong: #1A2A5C;
+  --aur-ink: #EAF0FF;
+  --aur-ink-2: #C3CDEB;
+  --aur-muted: #93A1C9;
+  --aur-faint: #7180AC;
+  --aur-line: #1A2650;
+  --aur-line-soft: #121C3E;
+  --aur-line-strong: #26366A;
+  --aur-accent: #3A63F0;
+  --aur-accent-text: #8EB0FF;
+  --aur-accent-ink: #8EB0FF;
+  --aur-accent-soft: rgba(76, 125, 255, 0.16);
+  --aur-accent-line: rgba(96, 140, 255, 0.40);
+  --aur-accent-line-strong: rgba(96, 140, 255, 0.65);
+  --aur-accent-wash: rgba(76, 125, 255, 0.07);
+  --aur-ai: #B9AEFF;
+  --aur-ai-soft: rgba(140, 120, 255, 0.11);
+  --aur-ai-line: rgba(140, 120, 255, 0.30);
+  --aur-blue-bg: rgba(84, 145, 255, 0.15);
+  --aur-blue-fg: #93B9FF;
+  --aur-blue-line: rgba(84, 145, 255, 0.40);
+  --aur-purple-bg: rgba(160, 120, 255, 0.17);
+  --aur-purple-fg: #C9B5FF;
+  --aur-purple-line: rgba(160, 120, 255, 0.40);
+  --aur-amber-bg: rgba(255, 176, 46, 0.14);
+  --aur-amber-fg: #F3C46F;
+  --aur-amber-line: rgba(255, 176, 46, 0.40);
+  --aur-green-bg: rgba(46, 196, 136, 0.14);
+  --aur-green-fg: #74D8AB;
+  --aur-green-line: rgba(46, 196, 136, 0.40);
+  --aur-red-bg: rgba(255, 92, 92, 0.14);
+  --aur-red-fg: #FF9D9D;
+  --aur-red-line: rgba(255, 92, 92, 0.40);
+  --aur-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 12px 32px rgba(0, 0, 4, 0.35);
+  /* The app's shared variables, used by the older pages' style sheets */
+  --brand: #3A63F0;
+  --brand-dark: #8EB0FF;
+  --page-bg: #050A18;
+  --card-bg: #0C1530;
+  --border: #1A2650;
+  --text: #EAF0FF;
+  --text-muted: #93A1C9;
+  color-scheme: dark;
+}
+html.aur-dark body { background: var(--aur-bg); color: var(--aur-ink); }
+
+/* 2) New-look pieces with their own colors */
+html.aur-dark .aurora kbd { background: var(--aur-subtle); }
+html.aur-dark .aurora :is(.pricing-overview, .local-intro) { background: linear-gradient(120deg, var(--aur-surface) 55%, var(--aur-ai-soft)); }
+/* Pastel avatars and chips: same hue, dark fill, light letters */
+html.aur-dark .aur-avatar { filter: invert(1) hue-rotate(180deg) saturate(1.2); }
+html.aur-dark .aur-palette-mark { background: var(--aur-ai-soft); color: var(--aur-ai); }
+html.aur-dark .aur-palette-option.is-ask svg { color: var(--aur-ai); }
+html.aur-dark .aur-range-flag { background: var(--aur-amber-bg); color: var(--aur-amber-fg); }
+/* Dark fills in the light look (selected chip, navy headers) become light-on-dark the other way round */
+html.aur-dark .aur-chip.is-active { border-color: var(--aur-accent-line); background: var(--aur-accent-soft); color: var(--aur-accent-text); }
+html.aur-dark .aurora .aur-main :is([style*="background: rgb(3, 45, 96)"], [style*="background: #032d60"]) { background: var(--aur-hover-strong) !important; }
+html.aur-dark .ls-backdrop { background: rgba(0, 0, 0, 0.55); }
+
+/* 3) Midnight glass: blue glows behind the page, see-through sidebar, cards lit from the top edge */
+html.aur-dark .aur-shell {
+  background:
+    radial-gradient(900px 520px at 78% -8%, rgba(58, 99, 240, 0.30), transparent 62%),
+    radial-gradient(760px 520px at 8% 108%, rgba(40, 84, 220, 0.20), transparent 60%),
+    radial-gradient(600px 420px at 102% 72%, rgba(96, 72, 230, 0.12), transparent 60%),
+    var(--aur-bg);
+}
+html.aur-dark .aurora .aur-main,
+html.aur-dark .aurora .aur-main > :not(.impersonation-banner) { background: transparent !important; }
+html.aur-dark .aur-sidebar { background: rgba(9, 16, 38, 0.66); border-right-color: rgba(96, 140, 255, 0.12); backdrop-filter: blur(16px) saturate(1.2); }
+html.aur-dark .aur-mobilebar { background: rgba(9, 16, 38, 0.78); backdrop-filter: blur(16px); }
+html.aur-dark :is(.aur-card, .aur-kpi, .aur-set-tile, .aur-funnel-col) {
+  background: linear-gradient(180deg, rgba(20, 33, 72, 0.92), rgba(11, 20, 46, 0.92));
+  border-color: rgba(110, 150, 255, 0.14);
+  box-shadow: var(--aur-shadow);
+}
+/* Cards on the existing pages (white boxes with a border in the light look) get the same lit edge */
+html.aur-dark .aurora .aur-main :is(div, section)[style*="background: rgb(255, 255, 255)"][style*="border: 1px solid"] {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 40%) !important;
+  border-color: rgba(110, 150, 255, 0.14) !important;
+}
+html.aur-dark :is(.aur-btn.is-primary, .aur-quick-btn.is-primary, .aurora .aur-main :is(.slds-button.primary, .slds-button_brand)) {
+  background: linear-gradient(180deg, #4A78FF, #2F57E6) !important;
+  box-shadow: 0 0 0 1px rgba(140, 175, 255, 0.25) inset, 0 8px 22px rgba(47, 87, 230, 0.38) !important;
+}
+html.aur-dark .aur-nav-highlight { background: linear-gradient(90deg, rgba(76, 125, 255, 0.26), rgba(76, 125, 255, 0.12)); box-shadow: 0 0 0 1px rgba(110, 150, 255, 0.18) inset, 0 6px 18px rgba(30, 70, 220, 0.22); }
+html.aur-dark .aur-brand-mark { background: linear-gradient(180deg, #4A78FF, #2F57E6); box-shadow: 0 6px 20px rgba(47, 87, 230, 0.5); }
+html.aur-dark .aur-kpi strong { text-shadow: 0 0 24px rgba(110, 150, 255, 0.25); }
+/* Sales Performance chart: its grid and hover marks are SVG attributes, not styles */
+html.aur-dark .performance-chart line[stroke="#e5e5e5"] { stroke: var(--aur-line); }
+html.aur-dark .performance-chart line[stroke="#f1f1f1"] { stroke: var(--aur-line-soft); }
+html.aur-dark .performance-chart line[stroke="#032d60"] { stroke: var(--aur-ink-2); }
+html.aur-dark .performance-chart circle[fill="#fff"] { fill: var(--aur-surface); }
+html.aur-dark .performance-chart text { fill: var(--aur-muted); }

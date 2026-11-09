@@ -287,3 +287,81 @@ def test_rejects_non_admin_users(role):
         )
 
     assert exc.value.status_code == 403
+
+
+def _website_message(text, timestamp, role="user", **extra):
+    return {"user_id": "web-abc123", "platform": "website_gorillah_bot", "page_id": "gorillahaulers.com",
+            "message_id": f"m-{timestamp}", "text": text, "timestamp": timestamp, "role": role, **extra}
+
+
+class _HashableLead(SimpleNamespace):
+    """A lead stand-in the route can de-duplicate like a model instance (it keys leads in a dict)."""
+    __hash__ = object.__hash__
+
+
+def test_website_chat_links_the_whole_conversation_to_its_lead(monkeypatch):
+    company = SimpleNamespace(name="Gorilla Haulers", aircall_number_id="")
+    lead = _HashableLead(
+        id="lead-7", company_id="company-1", assigned_to=None, full_name="Dana Demo", phone="2405550188",
+        facebook_user_id=None, company=company, assignee=None, contacts=[],
+        created_at=datetime(2026, 11, 1), updated_at=datetime(2026, 11, 1),
+    )
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(chats, "_query_meta_page", lambda start_key, limit: ([
+        _website_message("Your request is in. A moving specialist will call you.", 1_777_000_003_000, "assistant", lead_id="lead-7"),
+        _website_message("I agree", 1_777_000_002_000, lead_id="lead-7"),
+        _website_message("Hi, I'm moving a 2 bedroom", 1_777_000_001_000),
+    ], None))
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([lead]),
+    )
+
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["lead_id"] == "lead-7"
+    assert item["client"] == "Dana Demo"
+    assert item["platform"] == "website_gorillah_bot"
+    assert item["message_partition_key"] == "web-abc123"
+    assert item["destination_name"] == "gorillahaulers.com"
+    assert item["sender_label"] == "AI"
+
+
+def test_website_chat_without_a_lead_is_a_website_visitor(monkeypatch):
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(chats, "_query_meta_page", lambda start_key, limit: (
+        [_website_message("How much for a studio?", 1_777_000_001_000)], None))
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([]),
+    )
+
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["lead_id"] == ""
+    assert item["client"] == "Website visitor"
+    assert item["platform"] == "website_gorillah_bot"
+    assert item["message_partition_key"] == "web-abc123"
+    assert item["destination_name"] == "gorillahaulers.com"
+
+
+def test_website_chat_thread_reads_every_page_of_that_platform(monkeypatch):
+    table = MagicMock()
+    table.query.side_effect = [
+        {"Items": [_website_message("one", 1)], "LastEvaluatedKey": {"user_id": "web-abc123", "timestamp": 1}},
+        {"Items": [_website_message("two", 2, "assistant")]},
+    ]
+    monkeypatch.setattr(chats, "conversations_table", table)
+
+    result = chats.get_website_chat_messages("web-abc123", user=SimpleNamespace(id="admin-1", role="admin"))
+
+    assert [message["text"] for message in result["messages"]] == ["one", "two"]
+    assert table.query.call_args_list[1].kwargs["ExclusiveStartKey"] == {"user_id": "web-abc123", "timestamp": 1}
+    assert table.query.call_args.kwargs["ScanIndexForward"] is True
+    assert "FilterExpression" in table.query.call_args.kwargs
+
+
+def test_website_chat_thread_is_admin_only():
+    with pytest.raises(HTTPException) as exc:
+        chats.get_website_chat_messages("web-abc123", user=SimpleNamespace(id="user-1", role="sales_rep"))
+    assert exc.value.status_code == 403

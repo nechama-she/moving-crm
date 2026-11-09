@@ -29,7 +29,8 @@ export default function ReportsPage() {
     companies.forEach(id => params.append("company_ids", id));
     reps.forEach(id => params.append("rep_ids", id));
     fetch(`${API_BASE}/api/stats/booking-percentage?${params}`, { headers: authHeaders(token), signal: controller.signal })
-      .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Could not load report"); return data as Report; })
+      // A gateway timeout comes back as an HTML error page, not JSON.
+      .then(async response => { const data = await response.json().catch(() => null); if (!response.ok || !data) throw new Error(response.status === 503 || response.status === 504 ? "The report took too long to calculate. Try a shorter date range." : typeof data?.detail === "string" ? data.detail : "Could not load report"); return data as Report; })
       .then(data => { setReport(data); setOptions(data.options); }).catch(err => { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Could not load report"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();

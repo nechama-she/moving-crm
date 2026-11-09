@@ -98,6 +98,9 @@ def _plan_counts_by_id(db: Session, plan_ids: list[str]) -> tuple[dict[str, int]
     return rate_counts, rule_counts, service_counts
 
 
+from pricing_books import MASTER_KEY
+
+
 def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
     rows: list[dict] = []
     for plan in plans:
@@ -113,6 +116,8 @@ def _plan_summary_rows(plans: list[PricingPlan], db: Session) -> list[dict]:
             "fuel_percent": float(plan.fuel_percent) if plan.fuel_percent is not None else None,
             "admin_fee": float(plan.admin_fee) if plan.admin_fee is not None else None,
             "active": bool(plan.active),
+            # The master book: new books start with its values (pricing_books).
+            "master": plan.source_key == MASTER_KEY,
             "rate_count": 0,
             "rule_count": 0,
             "service_count": 0,
@@ -1971,6 +1976,67 @@ def calculate_pricing(
                 result['total']=float(Decimal(str(result['total']))+Decimal(str(row['total'] or 0)))
         db.commit()
     return result
+
+
+class NewPricingPlan(BaseModel):
+    company_id: str = Field(min_length=1, max_length=36)
+    # The book's name: the area it prices, such as "MD, VA, DC".
+    name: str = Field(min_length=1, max_length=255)
+
+
+@router.post("")
+def create_pricing_plan(body: NewPricingPlan, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """A new pricing book for a company, after its others, with the master book's values. With no pickup areas of its
+    own it prices no job until they are filled in."""
+    from uuid import uuid4
+    from sqlalchemy import func
+    from models import Company
+    from pricing_books import copy_book, master_id
+    company = db.get(Company, body.company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if not body.name.strip():
+        raise HTTPException(status_code=422, detail="Enter a name for the pricing book")
+    last = db.query(func.max(PricingPlan.sort_order)).filter(PricingPlan.company_id == company.id).scalar()
+    plan = PricingPlan(company_id=company.id, company_name=company.name, name=body.name.strip(),
+                       source_key=f"manual:{uuid4()}", sort_order=(last or 0) + 1)
+    db.add(plan)
+    db.flush()
+    master = master_id(db.connection())
+    if master:
+        copy_book(db.connection(), master, plan.id)
+    db.commit()
+    db.refresh(plan)
+    return _plan_summary_rows([plan], db)[0]
+
+
+@router.post("/{plan_id}/copy-master")
+def copy_master_into_plan(plan_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Replaces this book's values with the master book's; its name, company and pickup areas stay."""
+    from pricing_books import copy_book, master_id
+    plan = _plan_or_404(db, user, plan_id)
+    master = master_id(db.connection())
+    if not master:
+        raise HTTPException(status_code=404, detail="There is no master pricing book")
+    if master == plan.id:
+        raise HTTPException(status_code=400, detail="This is the master pricing book")
+    copy_book(db.connection(), master, plan.id)
+    db.commit()
+    db.expire_all()
+    return _plan_summary_rows([db.get(PricingPlan, plan_id)], db)[0]
+
+
+@router.delete("/{plan_id}")
+def delete_pricing_plan(plan_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Deletes a pricing book with everything in it (its tables are deleted with it by the database). Jobs it priced keep
+    their saved prices; their next price matches the company's remaining books."""
+    from models import AppSetting
+    plan = _plan_or_404(db, user, plan_id)
+    db.query(PricingPlan).filter(PricingPlan.id == plan.id).delete(synchronize_session=False)
+    # Its local pricing is a setting named after it.
+    db.query(AppSetting).filter(AppSetting.key == f"local_pricing:{plan.id}").delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": plan_id}
 
 
 @router.get("/{plan_id}")

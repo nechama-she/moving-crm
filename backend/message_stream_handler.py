@@ -321,6 +321,10 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         return _process_call_record(db, record, item, event_id)
     if str(item.get("record_type") or "message").lower() != "message":
         return False, None
+    # The website chat bot answers its own visitors: its conversations show in the inbox
+    # but never become unanswered messages or first-contact work.
+    if str(item.get("platform") or "").strip().lower() == "website_gorillah_bot":
+        return False, None
 
     message_id = str(item.get("message_id") or "").strip()
     timestamp = item.get("timestamp")

@@ -71,7 +71,8 @@ def get_settings(plan_id: str, user: User = Depends(get_current_user), db: Sessi
 
 @router.put('/{plan_id}')
 def save_settings(plan_id: str, body: LocalSettingsPayload, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    plan = _plan_and_company(plan_id, user, db)
+    # The settings need no company (the master book has none); only travel routes are the company's.
+    plan = _plan_or_404(db, user, plan_id)
     key = f'local_pricing:{plan_id}'
     settings = LocalSettings.model_validate(body.model_dump())
     row = db.get(AppSetting, key)
