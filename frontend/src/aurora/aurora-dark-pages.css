@@ -722,6 +722,14 @@ html.aur-dark .pricing-books-desktop button { border-bottom: 1px solid var(--aur
 html.aur-dark .pricing-books-desktop button:hover { background-color: var(--aur-subtle); }
 html.aur-dark .pricing-books-desktop button.active { background-color: var(--aur-accent-soft); }
 html.aur-dark .pricing-books-desktop small { color: var(--aur-muted); }
+html.aur-dark .pricing-new-book-button { border-top: 1px solid var(--aur-line); background-color: var(--aur-surface); color: var(--aur-accent-ink); }
+html.aur-dark .pricing-new-book-button:hover { background-color: var(--aur-subtle); }
+html.aur-dark .pricing-new-book { border-top: 1px solid var(--aur-line); }
+html.aur-dark .pricing-new-book label { color: var(--aur-ink-2); }
+html.aur-dark .pricing-new-book select,
+html.aur-dark .pricing-new-book input { border: 1px solid var(--aur-line-strong); }
+html.aur-dark .pricing-copy-banner span { color: var(--aur-muted); }
+html.aur-dark .pricing-delete-book { color: var(--aur-red-fg); }
 html.aur-dark .pricing-card { background-color: var(--aur-surface); }
 html.aur-dark .pricing-unavailable { border-top: 4px solid var(--aur-amber-line); }
 html.aur-dark .pricing-unavailable-icon { background-color: var(--aur-amber-bg); color: var(--aur-amber-fg); }

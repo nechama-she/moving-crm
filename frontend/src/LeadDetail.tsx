@@ -1359,8 +1359,8 @@ export default function LeadDetail() {
   }
 
   function renderRow(key: string) {
-    // Priority is edited in the lead header.
-    if (key === "meta_platform" || key === "priority") return null;
+    // Priority and referral source are in the lead header.
+    if (key === "meta_platform" || key === "priority" || key === "referral_source") return null;
     const isQuoteNumber = key === "quote_number";
     const val = lead![key];
     if (key === "leadgen_id" && lead?.smartmoving_id) return null;
@@ -2736,6 +2736,11 @@ export default function LeadDetail() {
               </div>
               {priorityError ? <div role="alert" className="lead-header-error">{priorityError}</div> : null}
 
+              <div className="lead-header-row">
+                <div className="lead-header-label">Referral source</div>
+                <span className="lead-header-text">{String(lead.referral_source || "").trim() || "—"}</span>
+              </div>
+
               {companiesError ? <div className="lead-header-error">{companiesError}</div> : null}
             </section>
 
@@ -2772,6 +2777,23 @@ export default function LeadDetail() {
                   setLead(updated);
                 }} />
               </div>
+              {(() => {
+                // The primary job's move date and total, as on its job tab.
+                const primaryJob = leadJobs.find((job) => job.job_order === 1);
+                const [year, month, day] = String(primaryJob?.move_date || "").split("-").map(Number);
+                const moveDate = year && month && day ? new Date(year, month - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+                const total = primaryJob?.charges.length ? primaryJob.charges.reduce((sum, charge) => sum + charge.total_cost, 0) : null;
+                return <>
+                  <div className="lead-header-field">
+                    <div className="lead-header-label">Move date</div>
+                    <span className="lead-header-text">{moveDate || <span className="lead-header-empty">Not set</span>}</span>
+                  </div>
+                  <div className="lead-header-field">
+                    <div className="lead-header-label">Total</div>
+                    <span className="lead-header-text">{total == null ? <span className="lead-header-empty">Not priced</span> : `$${total.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
+                  </div>
+                </>;
+              })()}
             </section>
 
             {canRefreshSmartMoving || user?.role === "admin" ? (

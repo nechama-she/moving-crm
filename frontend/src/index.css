@@ -756,8 +756,17 @@ input, select, textarea, button {
 .pricing-new-book label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: #3e3e3c; }
 .pricing-new-book select, .pricing-new-book input { min-height: 32px; padding: 4px 8px; border: 1px solid #c9c7c5; border-radius: 4px; font: inherit; font-weight: 400; }
 .pricing-new-book .pricing-actions { flex-wrap: wrap; }
+.pricing-copy-banner { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-color: #0176d3; }
+.pricing-copy-banner > div:first-child { display: grid; gap: 4px; }
+.pricing-copy-banner span { font-size: 13px; color: #5c5c5c; }
+.pricing-copy-pick { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.pricing-copy-check { width: 18px; height: 18px; margin: 0 8px 0 4px; flex: none; cursor: pointer; }
+.pricing-section.is-not-copied { opacity: .55; }
 .pricing-company-select { display: block; margin-bottom: 6px; padding: 4px 8px; font-size: 13px; }
-.pricing-book-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid #e5e5e5; }
+/* The Local / Long Distance tabs, with the selected book's Copy from default and Delete on the right */
+.pricing-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; max-width: 1440px; margin: 0 0 18px; }
+.pricing-page .pricing-toolbar .pricing-mode { margin: 0; }
+.pricing-book-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pricing-delete-book { color: #ba0517; }
 .pricing-content { min-width: 0; display: grid; gap: 14px; }
 .pricing-card { background: #fff; border: 1px solid #c9c7c5; border-radius: 8px; box-shadow: 0 1px 2px rgb(0 0 0 / 7%); }

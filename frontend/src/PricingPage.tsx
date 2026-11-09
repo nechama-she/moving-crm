@@ -26,6 +26,28 @@ type PlanSummary = {
   // The default book: new books start with its values, and others can copy them.
   master?: boolean;
 };
+// The cards "Copy from default" can copy (pricing_books.PARTS); all but the transportation rates are checked to start
+// with. Pickup areas are each book's own and are never copied.
+const COPY_CARDS: { part: string; label: string; picked: boolean }[] = [
+  { part: "details", label: "Price validity, fuel and admin fee", picked: true },
+  { part: "local", label: "Local pricing", picked: true },
+  { part: "rates", label: "Transportation rates", picked: false },
+  { part: "extraStops", label: "Additional stop pricing", picked: true },
+  { part: "elevator", label: "Elevator pricing", picked: true },
+  { part: "longCarry", label: "Long carry pricing", picked: true },
+  { part: "stairs", label: "Stairs pricing", picked: true },
+  { part: "storage", label: "Storage pricing", picked: true },
+  { part: "originFees", label: "Origin fees", picked: true },
+  { part: "deliveryFees", label: "Destination fees", picked: true },
+  { part: "shuttle", label: "Delivery shuttle", picked: true },
+  { part: "packing", label: "Packing rates", picked: true },
+  { part: "materials", label: "Materials", picked: true },
+  { part: "itemMaterials", label: "Item packing materials", picked: true },
+  { part: "itemSelectors", label: "Item services", picked: true },
+  { part: "bulkyItems", label: "Bulky items rates", picked: true },
+  { part: "discounts", label: "Discount", picked: true },
+  { part: "services", label: "Additional services & adjustments", picked: true },
+];
 type Rule = { id?: string; category: string; title: string; description: string };
 type Rate = {
   id?: string; destination: string; destination_group: string;
@@ -215,17 +237,20 @@ export default function PricingPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to add the pricing book"); }
     finally { setBookBusy(false); }
   }
-  // Bumped to load the selected book again after its values change on the server.
-  const [bookVersion, setBookVersion] = useState(0);
-  async function copyMaster(row: PlanSummary) {
-    if (!window.confirm(`Replace the values of ${bookLabel(row)} with the default book's? Its name, company and pickup areas stay. This cannot be undone.`)) return;
+  // Copying from the default book into a book: the page shows the default book, with the cards to copy checked.
+  const [copyChoice, setCopyChoice] = useState<{ planId: string; parts: string[] } | null>(null);
+  async function copyMaster(row: PlanSummary, parts: string[]) {
+    const labels = COPY_CARDS.filter(card => parts.includes(card.part)).map(card => card.label).join(", ");
+    if (!window.confirm(`Replace these cards of ${bookLabel(row)} with the default book's: ${labels}? Its other cards, name, company and pickup areas stay. This cannot be undone.`)) return;
     setBookBusy(true); setError("");
     try {
-      const response = await fetch(`${API_BASE}/api/pricing/${encodeURIComponent(row.id)}/copy-master`, { method: "POST", headers: authHeaders(token) });
+      const response = await fetch(`${API_BASE}/api/pricing/${encodeURIComponent(row.id)}/copy-master`, {
+        method: "POST", headers: { ...authHeaders(token), "Content-Type": "application/json" }, body: JSON.stringify({ parts }) });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(formatApiError(body, "Failed to copy the default book"));
       setPlans(current => current.map(value => value.id === row.id ? body as PlanSummary : value));
-      setBookVersion(value => value + 1);
+      setCopyChoice(null);
+      setSelectedId(row.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to copy the default book"); }
     finally { setBookBusy(false); }
   }
@@ -243,6 +268,14 @@ export default function PricingPage() {
     finally { setBookBusy(false); }
   }
   const selectedBook = plans.find(value => value.id === selectedId);
+  const copying = copyChoice && selectedBook?.master ? copyChoice : null;
+  const copyTarget = copying ? plans.find(value => value.id === copying.planId) : undefined;
+  // Choosing another book leaves the copy.
+  useEffect(() => { if (copyChoice && !selectedBook?.master) setCopyChoice(null); }, [copyChoice, selectedBook]);
+  function pickFor(part: string) {
+    if (!copying) return undefined;
+    return { checked: copying.parts.includes(part), onChange: (on: boolean) => setCopyChoice({ ...copying, parts: on ? [...copying.parts, part] : copying.parts.filter(value => value !== part) }) };
+  }
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [destination, setDestination] = useState("");
@@ -375,7 +408,7 @@ export default function PricingPage() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [selectedId, token, bookVersion]);
+  }, [selectedId, token]);
 
   const hasPendingRateGroups = pendingRateGroups.length > 0;
   const active = editing || sectionEditing.length > 0 || hasPendingRateGroups ? draft : plan;
@@ -823,9 +856,17 @@ export default function PricingPage() {
       {error ? <div className="pricing-alert error">{error}</div> : null}
       {notice ? <div className="pricing-alert success">{notice}</div> : null}
 
-      <div className="pricing-mode" aria-label="Pricing type">
-        <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
-        <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+      <div className="pricing-toolbar">
+        <div className="pricing-mode" aria-label="Pricing type">
+          <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
+          <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+        </div>
+        {user?.role === "admin" && !jobContext && selectedBook && !copying ? (
+          <div className="pricing-book-actions">
+            {plans.some(value => value.master) && !selectedBook.master && <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => { setCopyChoice({ planId: selectedBook.id, parts: COPY_CARDS.filter(card => card.picked).map(card => card.part) }); setSelectedId(plans.find(value => value.master)?.id || selectedBook.id); }}>Copy from default</button>}
+            <button type="button" className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => void deleteBook(selectedBook)}>Delete</button>
+          </div>
+        ) : null}
       </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
@@ -841,12 +882,6 @@ export default function PricingPage() {
               </button>
             ))}
           </div>
-          {user?.role === "admin" && !jobContext && selectedBook ? (
-            <div className="pricing-book-actions">
-              {plans.some(value => value.master) && !selectedBook.master && <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => void copyMaster(selectedBook)}>Copy from default</button>}
-              <button type="button" className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => void deleteBook(selectedBook)}>Delete</button>
-            </div>
-          ) : null}
           {user?.role === "admin" && !jobContext ? (newBook ? (
             <form className="pricing-new-book" onSubmit={event => { event.preventDefault(); void createBook(); }}>
               <label>Company
@@ -867,8 +902,20 @@ export default function PricingPage() {
         </aside>
 
         <main className="pricing-content">
+          {copying && copyTarget ? (
+            <section className="pricing-card pricing-copy-banner">
+              <div>
+                <strong>{`Copy from the default book into ${bookLabel(copyTarget)}`}</strong>
+                <span>Check the cards to copy, on both Local and Long Distance. The other cards and the pickup areas of the book stay as they are.</span>
+              </div>
+              <div className="pricing-actions">
+                <button type="button" className="slds-button primary" disabled={bookBusy || !copying.parts.length} onClick={() => void copyMaster(copyTarget, copying.parts)}>{bookBusy ? "Copying…" : `Copy ${copying.parts.length} ${copying.parts.length === 1 ? "card" : "cards"}`}</button>
+                <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => { setCopyChoice(null); setSelectedId(copyTarget.id); }}>Cancel</button>
+              </div>
+            </section>
+          ) : null}
           {pricingMode === "local" ? (
-            selectedId ? <LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", number: jobContext.job?.number || "", volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
+            selectedId ? <><CopyPick label="Local pricing" pick={pickFor("local")} /><LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", number: jobContext.job?.number || "", volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /></> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
           ) : jobContext && jobContext.serviceability !== "supported" ? (
             <section className="pricing-card pricing-unavailable">
               <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
@@ -907,7 +954,8 @@ export default function PricingPage() {
                     </select>
                   ) : <span className="eyebrow">{active.company_id ? active.company_name : "No company"}</span>}
                   {editing ? <input className="pricing-title-input" value={active.name} onChange={(e) => patchDraft({ name: e.target.value })} /> : <h2>{active.name}</h2>}
-                  <p>{active.pickup_regions || "Pickup coverage is described in the rules below."}</p>
+                  {/* The default book has no pickup areas: it prices no job, and books copy its values without them. */}
+                  {!selectedBook?.master && <p>{active.pickup_regions || "Pickup coverage is described in the rules below."}</p>}
                 </div>
                 {user?.role === "admin" && active && pricingMode === "long-distance" ? (
           <div className="pricing-actions">
@@ -921,6 +969,7 @@ export default function PricingPage() {
             </>}
           </div>
         ) : null}
+                <CopyPick label="Price validity, fuel and admin fee" pick={pickFor("details")} />
                 <div className="pricing-kpis">
 <div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
                   <div><span>Fuel</span>{editing ? <input type="number" step="0.1" value={active.fuel_percent ?? ""} onChange={(e) => patchDraft({ fuel_percent: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.fuel_percent == null ? "See rules" : `${active.fuel_percent}%`}</strong>}</div>
@@ -930,9 +979,9 @@ export default function PricingPage() {
                 </div>
               </section>
 
-              <PricingSection title="Pickup areas" count={active.pickup_areas?.length || 0} open={openSections.pickup} toggle={() => setOpenSections(s => ({ ...s, pickup: !s.pickup }))} onDoubleClick={() => startServiceEdit('pickup')} actions={serviceEditActions('pickup')}>
+              {!selectedBook?.master && <PricingSection title="Pickup areas" count={active.pickup_areas?.length || 0} open={openSections.pickup} toggle={() => setOpenSections(s => ({ ...s, pickup: !s.pickup }))} onDoubleClick={() => startServiceEdit('pickup')} actions={serviceEditActions('pickup')}>
                 <PickupAreasCard areas={active.pickup_areas || []} editing={editingSection('pickup')} onChange={pickup_areas => patchDraft({ pickup_areas })} />
-              </PricingSection>
+              </PricingSection>}
 
               {/* Shown only when pricing a job opened from a lead. */}
               <section className="pricing-card pricing-calculator" hidden={!jobContext}>
@@ -1109,7 +1158,7 @@ export default function PricingPage() {
                 ) : null}
               </section>
 
-              <PricingSection title="Transportation rates" count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={<>{serviceEditActions('rates')}</>}>
+              <PricingSection title="Transportation rates" pick={pickFor("rates")} count={rateRows.length} open={openSections.rates} toggle={() => setOpenSections((s) => ({ ...s, rates: !s.rates }))} onDoubleClick={() => startServiceEdit('rates')} actions={<>{serviceEditActions('rates')}</>}>
                 <div className="pricing-table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search destination or ZIP area" /><span>{bands.length} cubic-foot bands</span></div>
                 <div className="pricing-rate-table-wrap">
                   <table className="pricing-rate-table">
@@ -1137,49 +1186,51 @@ export default function PricingPage() {
                 {editingSection('rates') && <button type="button" className="slds-button" disabled={saving} onClick={addDestination}>+ Add destination</button>}
               </PricingSection>
 
-              <PricingSection title="Additional stop pricing" count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>
+              <PricingSection title="Additional stop pricing" pick={pickFor("extraStops")} count={active.services.filter(isExtraStopsCard).length} open={openSections.extraStops} toggle={() => setOpenSections(s => ({ ...s, extraStops: !s.extraStops }))} onDoubleClick={() => startServiceEdit('extraStops')} actions={serviceEditActions('extraStops')}>
                 <ExtraStopsPricingCard services={active.services} editing={editingSection('extraStops')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Elevator pricing" count={active.services.filter(isElevatorCard).length} open={openSections.elevator} toggle={() => setOpenSections(s => ({ ...s, elevator: !s.elevator }))} onDoubleClick={() => startServiceEdit('elevator')} actions={serviceEditActions('elevator')}>
+              <PricingSection title="Elevator pricing" pick={pickFor("elevator")} count={active.services.filter(isElevatorCard).length} open={openSections.elevator} toggle={() => setOpenSections(s => ({ ...s, elevator: !s.elevator }))} onDoubleClick={() => startServiceEdit('elevator')} actions={serviceEditActions('elevator')}>
                 <ElevatorPricingCard services={active.services} editing={editingSection('elevator')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Long carry pricing" count={active.services.filter(isLongCarryCard).length} open={openSections.longCarry} toggle={() => setOpenSections(s => ({ ...s, longCarry: !s.longCarry }))} onDoubleClick={() => startServiceEdit('longCarry')} actions={serviceEditActions('longCarry')}>
+              <PricingSection title="Long carry pricing" pick={pickFor("longCarry")} count={active.services.filter(isLongCarryCard).length} open={openSections.longCarry} toggle={() => setOpenSections(s => ({ ...s, longCarry: !s.longCarry }))} onDoubleClick={() => startServiceEdit('longCarry')} actions={serviceEditActions('longCarry')}>
                 <LongCarryPricingCard services={active.services} editing={editingSection('longCarry')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Stairs pricing" count={active.services.filter(isStairsCard).length} open={openSections.stairs} toggle={() => setOpenSections(s => ({ ...s, stairs: !s.stairs }))} onDoubleClick={() => startServiceEdit('stairs')} actions={serviceEditActions('stairs')}>
+              <PricingSection title="Stairs pricing" pick={pickFor("stairs")} count={active.services.filter(isStairsCard).length} open={openSections.stairs} toggle={() => setOpenSections(s => ({ ...s, stairs: !s.stairs }))} onDoubleClick={() => startServiceEdit('stairs')} actions={serviceEditActions('stairs')}>
                 <StairsPricingCard services={active.services} editing={editingSection('stairs')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Storage pricing" count={active.services.filter(isStorageCard).length} open={openSections.storage} toggle={() => setOpenSections(s => ({ ...s, storage: !s.storage }))} onDoubleClick={() => startServiceEdit('storage')} actions={serviceEditActions('storage')}>
+              <PricingSection title="Storage pricing" pick={pickFor("storage")} count={active.services.filter(isStorageCard).length} open={openSections.storage} toggle={() => setOpenSections(s => ({ ...s, storage: !s.storage }))} onDoubleClick={() => startServiceEdit('storage')} actions={serviceEditActions('storage')}>
                 <StoragePricingCard services={active.services} editing={editingSection('storage')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Origin fees" count={active.services.filter(isOriginFeesCard).length} open={openSections.originFees} toggle={() => setOpenSections(s => ({ ...s, originFees: !s.originFees }))} onDoubleClick={() => startServiceEdit('originFees')} actions={serviceEditActions('originFees')}>
+              <PricingSection title="Origin fees" pick={pickFor("originFees")} count={active.services.filter(isOriginFeesCard).length} open={openSections.originFees} toggle={() => setOpenSections(s => ({ ...s, originFees: !s.originFees }))} onDoubleClick={() => startServiceEdit('originFees')} actions={serviceEditActions('originFees')}>
                 <DeliveryFeesCard origin services={active.services} editing={editingSection('originFees')} onChange={services => patchDraft({ services })} />
               </PricingSection>
-              <PricingSection title="Destination fees" count={active.services.filter(isDeliveryFeesCard).length} open={openSections.deliveryFees} toggle={() => setOpenSections(s => ({ ...s, deliveryFees: !s.deliveryFees }))} onDoubleClick={() => startServiceEdit('deliveryFees')} actions={serviceEditActions('deliveryFees')}>
+              <PricingSection title="Destination fees" pick={pickFor("deliveryFees")} count={active.services.filter(isDeliveryFeesCard).length} open={openSections.deliveryFees} toggle={() => setOpenSections(s => ({ ...s, deliveryFees: !s.deliveryFees }))} onDoubleClick={() => startServiceEdit('deliveryFees')} actions={serviceEditActions('deliveryFees')}>
                 <DeliveryFeesCard services={active.services} editing={editingSection('deliveryFees')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Delivery shuttle" count={active.services.filter(isShuttleCard).length} open={openSections.shuttle} toggle={() => setOpenSections(s => ({ ...s, shuttle: !s.shuttle }))} onDoubleClick={() => startServiceEdit('shuttle')} actions={serviceEditActions('shuttle')}>
+              <PricingSection title="Delivery shuttle" pick={pickFor("shuttle")} count={active.services.filter(isShuttleCard).length} open={openSections.shuttle} toggle={() => setOpenSections(s => ({ ...s, shuttle: !s.shuttle }))} onDoubleClick={() => startServiceEdit('shuttle')} actions={serviceEditActions('shuttle')}>
                 <ShuttleCard services={active.services} editing={editingSection('shuttle')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Packing rates" count={4} open={openSections.packing} toggle={() => setOpenSections(s => ({ ...s, packing: !s.packing }))} onDoubleClick={() => startServiceEdit('packing')} actions={serviceEditActions('packing')}>
+              <PricingSection title="Packing rates" pick={pickFor("packing")} count={4} open={openSections.packing} toggle={() => setOpenSections(s => ({ ...s, packing: !s.packing }))} onDoubleClick={() => startServiceEdit('packing')} actions={serviceEditActions('packing')}>
                 <LongDistancePackingCard services={active.services} editing={editingSection('packing')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
-              <PricingSection title="Materials" count={materialRows(active.services).length} open={openSections.materials} toggle={() => setOpenSections(s => ({ ...s, materials: !s.materials }))} onDoubleClick={() => startServiceEdit('materials')} actions={serviceEditActions('materials')}>
+              <PricingSection title="Materials" pick={pickFor("materials")} count={materialRows(active.services).length} open={openSections.materials} toggle={() => setOpenSections(s => ({ ...s, materials: !s.materials }))} onDoubleClick={() => startServiceEdit('materials')} actions={serviceEditActions('materials')}>
                 <LongDistanceMaterialsCard services={active.services} editing={editingSection('materials')} onChange={services => patchDraft({ services })} />
               </PricingSection>
 
+              <CopyPick label="Item packing materials" pick={pickFor("itemMaterials")} />
               <ItemMaterialsCard key={active.id} planId={active.id} blocked={saving} />
+              <CopyPick label="Item services" pick={pickFor("itemSelectors")} />
               <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={saving} />
 
-              <PricingSection title="Bulky items rates" count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
+              <PricingSection title="Bulky items rates" pick={pickFor("bulkyItems")} count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">
                   {bulkyItems.map((item) => {
                     const index = (active.services || []).indexOf(item);
@@ -1204,7 +1255,7 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Discount" count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
+              <PricingSection title="Discount" pick={pickFor("discounts")} count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => { setDiscountDraft(null); setDiscountError(''); }}>Cancel changes</button>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => void saveDiscounts()}>{savingDiscounts ? 'Saving...' : 'Save changes'}</button>
               </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit discount" title="Edit" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); setDiscountOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}>
@@ -1222,7 +1273,7 @@ export default function PricingPage() {
                 {discountDraft && <button type="button" className="slds-button add-row" disabled={savingDiscounts} onClick={() => setDiscountDraft(rows => [...(rows || []), { category: 'discount_amount', title: '', description: '0' }])}>+ Add discount</button>}
                 </div>
               </PricingSection>
-              <PricingSection title="Additional services & adjustments" count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))} actions={serviceEditActions('services')}>
+              <PricingSection title="Additional services & adjustments" pick={pickFor("services")} count={pricingServices.length + catalogRules.length} open={openSections.services} toggle={() => setOpenSections((s) => ({ ...s, services: !s.services }))} actions={serviceEditActions('services')}>
                 <div className="pricing-services pricing-services-editor">
                   {pricingServices.map((service) => {
                     const index = (active.services || []).indexOf(service);
@@ -1310,6 +1361,12 @@ function DiscountRow({
   );
 }
 
-function PricingSection({ title, count, open, toggle, onDoubleClick, actions, children }: { title: string; count: number; open: boolean; toggle: () => void; onDoubleClick?: () => void; actions?: React.ReactNode; children: React.ReactNode }) {
-  return <section className="pricing-card pricing-section" onDoubleClick={onDoubleClick}><div className="pricing-section-heading"><button className="slds-button pricing-section-title" onClick={toggle}><span><strong>{title}</strong><small>{count}</small></span></button><div className="pricing-section-actions">{actions}<button className="slds-button pricing-section-toggle" onClick={toggle} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>{open ? "−" : "+"}</button></div></div>{open ? <div className="pricing-section-body">{children}</div> : null}</section>;
+type CopyPickState = { checked: boolean; onChange: (on: boolean) => void };
+// While copying from the default book: whether to copy this card.
+function CopyPick({ label, pick }: { label: string; pick?: CopyPickState }) {
+  return pick ? <label className="pricing-copy-pick"><input type="checkbox" checked={pick.checked} onChange={event => pick.onChange(event.target.checked)} />{`Copy ${label}`}</label> : null;
+}
+
+function PricingSection({ title, count, open, toggle, onDoubleClick, actions, pick, children }: { title: string; count: number; open: boolean; toggle: () => void; onDoubleClick?: () => void; actions?: React.ReactNode; pick?: CopyPickState; children: React.ReactNode }) {
+  return <section className={`pricing-card pricing-section${pick && !pick.checked ? " is-not-copied" : ""}`} onDoubleClick={onDoubleClick}><div className="pricing-section-heading">{pick && <input type="checkbox" className="pricing-copy-check" aria-label={`Copy ${title}`} checked={pick.checked} onChange={event => pick.onChange(event.target.checked)} />}<button className="slds-button pricing-section-title" onClick={toggle}><span><strong>{title}</strong><small>{count}</small></span></button><div className="pricing-section-actions">{actions}<button className="slds-button pricing-section-toggle" onClick={toggle} aria-label={open ? `Collapse ${title}` : `Expand ${title}`}>{open ? "−" : "+"}</button></div></div>{open ? <div className="pricing-section-body">{children}</div> : null}</section>;
 }

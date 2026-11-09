@@ -440,8 +440,12 @@
   .aurora .lead-header { grid-template-columns: minmax(0, 1fr) !important; }
   .aurora .lead-header-group { border-left: none; }
   .aurora .lead-header-group:nth-child(n + 2) { border-top: 1px solid var(--aur-line-soft); }
+  /* Full width: move size, volume, move date and total two by two */
+  .aurora .lead-header-move { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .aurora .lead-header-group { border-color: var(--aur-line-soft); }
+/* The move date and total sit indented like the move size and volume buttons beside them */
+.aurora .lead-header-move .lead-header-text { display: block; padding: 0 14px; }
 .aurora .lead-header-avatar { background: var(--aur-accent); }
 .aurora .lead-header-name { overflow-wrap: anywhere; }
 .aurora .lead-header-contact-line { overflow-wrap: anywhere; }
@@ -451,11 +455,12 @@
 .aurora .aur-rail-panel [style*="border-bottom: 2px solid rgb(224, 224, 224)"] { gap: 6px !important; border-bottom: 0 !important; margin-bottom: 12px !important; }
 .aurora .aur-rail-panel [style*="border-bottom: 2px solid rgb(224, 224, 224)"] > button { height: 32px; min-height: 0; padding: 0 12px !important; margin: 0 !important; border: 1px solid var(--aur-line) !important; border-radius: 999px !important; background: var(--aur-surface) !important; color: var(--aur-muted) !important; font-size: 13px !important; }
 .aurora .aur-rail-panel [style*="border-bottom: 2px solid rgb(224, 224, 224)"] > button[style*="rgb(25, 118, 210)"] { border-color: transparent !important; background: var(--aur-accent-soft) !important; color: var(--aur-accent-ink) !important; font-weight: 700 !important; }
-/* Narrow screens: stage, quick actions and summary first, chat/tasks/log after the details */
+/* Narrow screens: stage, quick actions and summary first, then the details, then chat/tasks/log, then the jobs */
 @media (max-width: 1180px) {
   .aur-lead-rail { display: contents; }
-  .aur-lead-layout > .aur-lead-rail .aur-rail-card { order: -1; }
-  .aur-lead-layout > .aur-lead-rail .aur-rail-tools { order: 1; }
+  .aur-lead-layout > .aur-lead-rail .aur-rail-card { order: -2; }
+  .aur-lead-layout > .lead-detail-main > :is(.lead-header, :has(.lead-header)) { order: -1; }
+  .aur-lead-layout > .aur-lead-rail .aur-rail-tools { order: -1; }
 }
 @media (max-width: 700px) { .aur-rail-tools { height: 75vh; } }
 @media (max-width: 1180px) {
@@ -463,7 +468,7 @@
   .aur-lead-layout > .lead-detail-main { display: contents; }
   .aur-lead-layout > .lead-detail-main > :first-child { order: -2; }
   .aur-lead-layout > .aur-lead-rail .aur-rail-card { margin-bottom: 14px; }
-  .aur-lead-layout > .aur-lead-rail .aur-rail-tools { margin-top: 20px; }
+  .aur-lead-layout > .aur-lead-rail .aur-rail-tools { margin: 6px 0 20px; }
 }
 
 /* Sales work queue: category cards wrap into a grid instead of a sideways-scrolling row */
