@@ -114,10 +114,6 @@ type PageSection = typeof pageSections[number];
 type SectionState = { loading: boolean; error: string; ready: boolean };
 const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {loading:true, error:'', ready:false}])) as Record<PageSection, SectionState>;
 type Pending = {id:string;file:File;status:string;progress:number;preview?:string;error?:string};
-// Customers can see everything and sign, but change nothing: only reps edit, until changes made at the same time by a rep
-// and a customer reach each other. Set to true to let customers edit their move again.
-const CUSTOMER_CAN_EDIT = false;
-
 export default function CustomerMovePage() {
   const {accessId}=useParams();
   const [bootstrap] = useState(() => readCustomerBootstrap(accessId));
@@ -129,7 +125,9 @@ export default function CustomerMovePage() {
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
   const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
-  const readOnly = !repPage && !CUSTOMER_CAN_EDIT;
+  // Whether customers can change their move: the server's one switch (CUSTOMER_CAN_EDIT), read-only until it answers.
+  const [customerCanEdit, setCustomerCanEdit] = useState(false);
+  const readOnly = !repPage && !customerCanEdit;
   const [key]=useState(()=>bootstrap?.key || new URLSearchParams(window.location.hash.slice(1)).get('key')||'');
   const [session,setSession]=useState(()=>loadCustomerSession(sessionKey));
   useEffect(() => {
@@ -751,7 +749,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){

@@ -40,6 +40,10 @@ from routes.leads import LeadContactInput, save_lead_contacts, _get_visible_lead
 router = APIRouter(tags=['Customer move portal'])
 
 NOW = datetime.utcnow
+# The one switch: customers can see everything and sign, but change nothing, until changes made at the same time by a
+# rep and a customer reach each other. The customer page reads it (verify-options), and the link message says so.
+# Set to True to let customers edit their move again.
+CUSTOMER_CAN_EDIT = False
 
 
 def setting(name):
@@ -407,6 +411,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
                 for row in lead.contacts if row.kind == 'phone' or '@' in row.value]
     return {
         'options': options,
+        'customer_can_edit': CUSTOMER_CAN_EDIT,
         'link_sms': customer_link_sms_notice(access),
         'company': {key: shown[key] for key in ('name', 'color', 'logo')},
     }
@@ -2428,6 +2433,13 @@ def customer_link_sms_notice(access):
             'phone_last4': access.link_sms_phone_last4 or ''}
 
 
+def customer_link_message(access):
+    """The text sent with the customer page's link: what the customer can do there."""
+    if CUSTOMER_CAN_EDIT:
+        return f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
+    return f'View your move and your estimate, and sign online: {public_url(access)}'
+
+
 def deliver_customer_link_sms(lead, access, db):
     if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
     if not lead.phone: raise HTTPException(400, 'This lead has no phone number')
@@ -2435,7 +2447,7 @@ def deliver_customer_link_sms(lead, access, db):
     number = (company.aircall_number_id or '') if company else ''
     if not number and company and company.phone: number = find_number_id(company.phone)
     if not number: raise HTTPException(400, 'Configure an Aircall number for the sending company')
-    result = send_sms(to=lead.phone, text=f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}', number_id=number, sensitive=True)
+    result = send_sms(to=lead.phone, text=customer_link_message(access), number_id=number, sensitive=True)
     if not result.get('ok'): raise HTTPException(502, 'Could not send SMS. Please retry.')
     access.link_sms_sent_at = NOW()
     access.link_sms_phone_last4 = re.sub(r'\D', '', lead.phone)[-4:]
@@ -2449,7 +2461,7 @@ def deliver_customer_link_email(lead, access, db):
     sender = setting('PUBLIC_MOVE_EMAIL_FROM')
     if not sender:
         raise HTTPException(503, 'Customer email sending is not configured')
-    message = f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
+    message = customer_link_message(access)
     try:
         boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
             Source=sender, Destination={'ToAddresses': [lead.email.strip()]}, Message={
@@ -2470,7 +2482,7 @@ def send_customer_page_link(lead_id: str, body: SendCustomerLinkRequest,
     lead, access = staff_access(lead_id, user, db)
     if access.revoked or access.expires_at < NOW():
         raise HTTPException(400, 'Customer link is inactive')
-    message = f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
+    message = customer_link_message(access)
     deliveries = []
     for channel, recipient in [('sms', lead.phone), ('email', lead.email)]:
         if recipient and recipient.strip():
