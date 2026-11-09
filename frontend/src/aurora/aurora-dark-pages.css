@@ -729,7 +729,6 @@ html.aur-dark .pricing-new-book label { color: var(--aur-ink-2); }
 html.aur-dark .pricing-new-book select,
 html.aur-dark .pricing-new-book input { border: 1px solid var(--aur-line-strong); }
 html.aur-dark .pricing-copy-banner span { color: var(--aur-muted); }
-html.aur-dark .pricing-book-actions { border-top: 1px solid var(--aur-line); }
 html.aur-dark .pricing-delete-book { color: var(--aur-red-fg); }
 html.aur-dark .pricing-card { background-color: var(--aur-surface); }
 html.aur-dark .pricing-unavailable { border-top: 4px solid var(--aur-amber-line); }

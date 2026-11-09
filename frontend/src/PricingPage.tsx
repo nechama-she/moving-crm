@@ -856,9 +856,17 @@ export default function PricingPage() {
       {error ? <div className="pricing-alert error">{error}</div> : null}
       {notice ? <div className="pricing-alert success">{notice}</div> : null}
 
-      <div className="pricing-mode" aria-label="Pricing type">
-        <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
-        <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+      <div className="pricing-toolbar">
+        <div className="pricing-mode" aria-label="Pricing type">
+          <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
+          <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
+        </div>
+        {user?.role === "admin" && !jobContext && selectedBook && !copying ? (
+          <div className="pricing-book-actions">
+            {plans.some(value => value.master) && !selectedBook.master && <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => { setCopyChoice({ planId: selectedBook.id, parts: COPY_CARDS.filter(card => card.picked).map(card => card.part) }); setSelectedId(plans.find(value => value.master)?.id || selectedBook.id); }}>Copy from default</button>}
+            <button type="button" className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => void deleteBook(selectedBook)}>Delete</button>
+          </div>
+        ) : null}
       </div>
       <div className="pricing-layout">
         <aside className="pricing-book-list">
@@ -874,12 +882,6 @@ export default function PricingPage() {
               </button>
             ))}
           </div>
-          {user?.role === "admin" && !jobContext && selectedBook && !copying ? (
-            <div className="pricing-book-actions">
-              {plans.some(value => value.master) && !selectedBook.master && <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => { setCopyChoice({ planId: selectedBook.id, parts: COPY_CARDS.filter(card => card.picked).map(card => card.part) }); setSelectedId(plans.find(value => value.master)?.id || selectedBook.id); }}>Copy from default</button>}
-              <button type="button" className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => void deleteBook(selectedBook)}>Delete</button>
-            </div>
-          ) : null}
           {user?.role === "admin" && !jobContext ? (newBook ? (
             <form className="pricing-new-book" onSubmit={event => { event.preventDefault(); void createBook(); }}>
               <label>Company
