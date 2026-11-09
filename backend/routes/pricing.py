@@ -2011,17 +2011,24 @@ def create_pricing_plan(body: NewPricingPlan, user: User = Depends(require_admin
     return _plan_summary_rows([plan], db)[0]
 
 
+class CopyMaster(BaseModel):
+    # The cards to copy (pricing_books.PARTS); the book's other cards, name, company and pickup areas stay.
+    parts: list[str] = Field(min_length=1, max_length=50)
+
+
 @router.post("/{plan_id}/copy-master")
-def copy_master_into_plan(plan_id: str, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    """Replaces this book's values with the master book's; its name, company and pickup areas stay."""
-    from pricing_books import copy_book, master_id
+def copy_master_into_plan(plan_id: str, body: CopyMaster, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Replaces the chosen cards of this book with the master book's."""
+    from pricing_books import NEW_BOOK_PARTS, copy_book, master_id
+    if not body.parts or not set(body.parts) <= set(NEW_BOOK_PARTS):
+        raise HTTPException(status_code=422, detail="Choose the cards to copy")
     plan = _plan_or_404(db, user, plan_id)
     master = master_id(db.connection())
     if not master:
         raise HTTPException(status_code=404, detail="There is no default pricing book")
     if master == plan.id:
         raise HTTPException(status_code=400, detail="This is the default pricing book")
-    copy_book(db.connection(), master, plan.id)
+    copy_book(db.connection(), master, plan.id, list(dict.fromkeys(body.parts)))
     db.commit()
     db.expire_all()
     return _plan_summary_rows([db.get(PricingPlan, plan_id)], db)[0]
@@ -2301,6 +2308,8 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
                     default=max((row.sort_order for row in plan.services), default=-1) + 1)
         save_bulky_items(plan, body.services, first)
     elif section == 'pickup':
+        if plan.source_key == MASTER_KEY:
+            raise HTTPException(422, 'The default book has no pickup areas.')
         areas = body.pickup_areas
         if areas is None or len({area.state for area in areas}) != len(areas):
             raise HTTPException(422, 'Add each pickup state only once.')
