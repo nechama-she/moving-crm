@@ -440,6 +440,8 @@
   .aurora .lead-header { grid-template-columns: minmax(0, 1fr) !important; }
   .aurora .lead-header-group { border-left: none; }
   .aurora .lead-header-group:nth-child(n + 2) { border-top: 1px solid var(--aur-line-soft); }
+  /* Full width: move size, volume, move date and total two by two */
+  .aurora .lead-header-move { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .aurora .lead-header-group { border-color: var(--aur-line-soft); }
 .aurora .lead-header-avatar { background: var(--aur-accent); }
