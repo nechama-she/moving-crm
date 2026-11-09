@@ -770,7 +770,8 @@ def list_pricing_plans(
         query = query.filter(PricingPlan.company_id == company_id)
     plans = (
         query
-        .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
+        # The default book first, then the companies' books.
+        .order_by((PricingPlan.source_key == MASTER_KEY).desc(), PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
     return _plan_summary_rows(plans, db)
@@ -2017,9 +2018,9 @@ def copy_master_into_plan(plan_id: str, user: User = Depends(require_admin), db:
     plan = _plan_or_404(db, user, plan_id)
     master = master_id(db.connection())
     if not master:
-        raise HTTPException(status_code=404, detail="There is no master pricing book")
+        raise HTTPException(status_code=404, detail="There is no default pricing book")
     if master == plan.id:
-        raise HTTPException(status_code=400, detail="This is the master pricing book")
+        raise HTTPException(status_code=400, detail="This is the default pricing book")
     copy_book(db.connection(), master, plan.id)
     db.commit()
     db.expire_all()
@@ -2197,6 +2198,8 @@ class SectionUpdate(BaseModel):
     pickup_areas: list[PickupArea] | None = None
     rules: list[RuleInput] | None = None
     name: str | None = Field(default=None, min_length=1)
+    # The book's company; None for a book of no company, like the default book.
+    company_id: str | None = None
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
     admin_fee: float | None = Field(default=None, ge=0)
     price_valid_days: int | None = Field(default=None, ge=1, le=3650)
@@ -2214,12 +2217,21 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
                 'bulkyItems': BULKY_ITEM_MARKER}
     field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
     fields = {'services', 'rules'} if section == 'services' else {'name', 'fuel_percent', 'admin_fee', 'price_valid_days'} if section == 'details' else {field}
+    if section == 'details':
+        fields = fields | ({'company_id'} & body.model_fields_set)
     if section not in {'rates', 'pickup', 'services', 'details', *prefixes} or body.model_fields_set != fields:
         raise HTTPException(422, 'Send only the fields for this pricing section.')
     if section == 'details':
         if not body.name or not body.name.strip() or body.price_valid_days is None:
             raise HTTPException(422, 'Name and price validity are required.')
         plan.name = body.name.strip()
+        if 'company_id' in body.model_fields_set:
+            from models import Company
+            company =db.get(Company, body.company_id) if body.company_id else None
+            if body.company_id and not company:
+                raise HTTPException(404, 'Company not found')
+            plan.company_id = company.id if company else None
+            plan.company_name = company.name if company else ''
         plan.fuel_percent = body.fuel_percent
         plan.admin_fee = body.admin_fee
         plan.price_valid_days = body.price_valid_days
