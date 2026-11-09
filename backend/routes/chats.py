@@ -1,4 +1,4 @@
-"""Unified latest-message inbox across SMS, Messenger, and Instagram."""
+"""Unified latest-message inbox across SMS, Messenger, Instagram, and the website chat bot."""
 
 import logging
 import base64
@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
@@ -25,6 +25,10 @@ DONE_CURSOR = {"__done": True}
 SMS_TIMESTAMP_INDEX = "record-type-timestamp-index"
 META_TIMESTAMP_INDEX = "record-type-timestamp-index"
 CALLS_TIMESTAMP_INDEX = "record-type-timestamp-index"
+# BoxBot's gorillahaulers.com chat. The meta-webhook Lambda stores its messages in
+# conversations with this platform and the CRM lead_id once the chat made a lead.
+WEBSITE_PLATFORM = "website_gorillah_bot"
+META_PLATFORMS = {"messenger", "instagram", WEBSITE_PLATFORM}
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -322,7 +326,7 @@ def get_all_chats(
                 for message in page:
                     platform = str(message.get("platform") or "").strip().lower()
                     user_id = str(message.get("user_id") or "")
-                    if platform in {"messenger", "instagram"} and user_id:
+                    if platform in META_PLATFORMS and user_id:
                         conversation_keys.add(("meta", user_id, platform))
                 meta_done = meta_next is None
 
@@ -341,11 +345,23 @@ def get_all_chats(
         logger.error("Could not load unified chats: %s", exc)
         raise HTTPException(status_code=502, detail="Could not fetch chats") from exc
 
+    # Facebook ids and Meta page links are for Messenger and Instagram; the website chat
+    # links to its lead by lead_id below.
+    facebook_messages = [
+        message for message in meta_messages
+        if str(message.get("platform") or "").strip().lower() != WEBSITE_PLATFORM
+    ]
     meta_user_ids = {
         str(message.get("user_id") or "")
-        for message in meta_messages
+        for message in facebook_messages
         if message.get("user_id")
     }
+    # A website chat carries the lead id on its messages from the moment the chat made the
+    # lead, so any of its messages in this batch links the whole conversation to that lead.
+    website_leads: dict[str, str] = {}
+    for message in sorted(meta_messages, key=lambda item: _timestamp(item.get("timestamp"))):
+        if str(message.get("platform") or "").strip().lower() == WEBSITE_PLATFORM and message.get("lead_id"):
+            website_leads[str(message.get("user_id") or "").strip()] = str(message["lead_id"])
     sms_phones: set[str] = set()
     sms_number_ids: set[str] = set()
     for message in sms_messages:
@@ -362,7 +378,7 @@ def get_all_chats(
     association_companies = {
         _phone(message.get("company_number")) for message in sms_messages if _phone(message.get("company_number"))
     } | {
-        str(message.get("page_id") or "").strip() for message in meta_messages if str(message.get("page_id") or "").strip()
+        str(message.get("page_id") or "").strip() for message in facebook_messages if str(message.get("page_id") or "").strip()
     }
     associations = (
         db.query(CommunicationAssociation).filter(
@@ -409,6 +425,8 @@ def get_all_chats(
     association_lead_ids = {row.lead_id for row in associations}
     if association_lead_ids:
         match_conditions.append(Lead.id.in_(association_lead_ids))
+    if website_leads:
+        match_conditions.append(Lead.id.in_(set(website_leads.values())))
 
     leads = []
     if match_conditions:
@@ -446,6 +464,9 @@ def get_all_chats(
         number_id = str(message.get("number_id") or "").strip()
         page_id = str(message.get("page_id") or "").strip()
         destination_company = number_company_names.get(number_id, "") if platform == "sms" else page_company_names.get(page_id, "")
+        if platform == WEBSITE_PLATFORM:
+            # The website chat's page_id is the site it runs on.
+            destination_company = page_id
         destination_rep = number_rep_names.get(number_id, "") if platform == "sms" else ""
         latest[key] = {
             "conversation_id": f"lead:{lead.id}:{platform}",
@@ -471,12 +492,15 @@ def get_all_chats(
 
     for message in meta_messages:
         platform = str(message.get("platform") or "").strip().lower()
-        if platform not in {"messenger", "instagram"}:
+        if platform not in META_PLATFORMS:
             continue
         user_id = str(message.get("user_id") or "").strip()
         page_id = str(message.get("page_id") or "").strip()
-        associated_lead_id = association_by_key.get((platform, user_id, page_id))
-        lead = leads_by_id.get(associated_lead_id) if associated_lead_id else meta_leads.get(user_id)
+        if platform == WEBSITE_PLATFORM:
+            lead = leads_by_id.get(website_leads.get(user_id, ""))
+        else:
+            associated_lead_id = association_by_key.get((platform, user_id, page_id))
+            lead = leads_by_id.get(associated_lead_id) if associated_lead_id else meta_leads.get(user_id)
         if lead:
             add_message(lead, platform, message)
         else:
@@ -485,14 +509,16 @@ def get_all_chats(
             timestamp = _timestamp(message.get("timestamp"))
             key = (f"unmatched:{platform}:{user_id}", platform)
             if key not in latest or latest[key]["timestamp"] < timestamp:
+                website = platform == WEBSITE_PLATFORM
+                destination = page_id if website else page_company_names.get(page_id, "")
                 latest[key] = {
                     "conversation_id": f"unmatched:{platform}:{user_id}",
                     "lead_id": "",
-                    "client": user_id,
+                    "client": "Website visitor" if website else user_id,
                     "rep": "",
                     "company": "",
-                    "destination_name": page_company_names.get(str(message.get("page_id") or ""), ""),
-                    "destination_type": "company" if page_company_names.get(str(message.get("page_id") or ""), "") else "",
+                    "destination_name": destination,
+                    "destination_type": "company" if destination else "",
                     "destination_phone": "",
                     "platform": platform,
                     "message": str(message.get("text") or ""),
@@ -569,3 +595,27 @@ def get_all_chats(
         ) if has_more else "",
         "has_more": has_more,
     }
+
+
+@router.get(f"/{WEBSITE_PLATFORM}/{{user_id}}")
+def get_website_chat_messages(user_id: str, user: User = Depends(get_current_user)):
+    """One website chat conversation, oldest first, in the Messenger route's shape."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can view all chats")
+    args = {
+        "KeyConditionExpression": Key("user_id").eq(user_id),
+        "FilterExpression": Attr("platform").eq(WEBSITE_PLATFORM),
+        "ScanIndexForward": True,
+    }
+    items: list[dict] = []
+    try:
+        while True:
+            response = conversations_table.query(**args)
+            items.extend(response.get("Items", []))
+            if "LastEvaluatedKey" not in response:
+                break
+            args["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    except ClientError as exc:
+        logger.error("Could not load website chat %s: %s", user_id, exc)
+        raise HTTPException(status_code=502, detail="Could not fetch conversations") from exc
+    return {"messages": items}

@@ -14,6 +14,8 @@ import TasksPanel from "./TasksPanel";
 import LeadLogsPanel from "./LeadLogsPanel";
 import { API_BASE } from "./apiConfig";
 import { useAuth, authHeaders } from "./AuthContext";
+import { getUiMode } from "./aurora/uiMode";
+import AuroraLeadRail from "./aurora/AuroraLeadRail";
 
 const HIDDEN_FIELDS = new Set(["entry_id", "inbox_url", "estimatedTotal", "estimated_total", "payments"]);
 
@@ -1190,6 +1192,8 @@ export default function LeadDetail() {
   const isDispatchUser = user?.role === "dispatch";
   const isForemanUser = user?.role === "foreman";
   const canViewLeadCommunications = user?.role === "admin" || user?.role === "sales_rep";
+  // The new look shows chat, tasks and log in a right-hand column instead of the floating drawer.
+  const aurora = getUiMode() === "aurora";
   const canRefreshSmartMoving = user?.role === "admin" || user?.role === "sales_rep" || user?.role === "dispatch";
   const canEditLead = !isDispatchUser && !isForemanUser;
   const canEditJobs = !isDispatchUser && !isForemanUser;
@@ -1782,10 +1786,35 @@ export default function LeadDetail() {
       panelSelector: ".lead-files-panel",
     },
   ];
+  const conversationPanel = (
+    user?.role === "admin" || chatUserId || lead.phone_number ? (
+      <ChatMessages
+        key={leadId}
+        leadId={leadId!}
+        userId={chatUserId}
+        userName={String(lead.full_name || "Client")}
+        phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
+        inboxUrl={messengerInboxUrl}
+        aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
+        repAircallNumberId={lead.assigned_rep_aircall_number_id ? String(lead.assigned_rep_aircall_number_id) : ""}
+        companyPhone={lead.company_phone ? String(lead.company_phone) : ""}
+        repPhone={lead.assigned_rep_phone ? String(lead.assigned_rep_phone) : ""}
+        companyName={lead.company_name ? String(lead.company_name) : ""}
+      />
+    ) : (
+      <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
+    )
+  );
+  const tasksPanel = (
+    <div id="tasks" ref={tasksSection} style={{ scrollMarginTop: 80 }}>
+      <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} selectedTaskId={new URLSearchParams(location.search).get('task') || undefined} />
+    </div>
+  );
 
   return (
     <div className="lead-detail-page" style={{ width: "100%", height: "calc(100vh - 52px)", overflowY: "auto", overflowX: "hidden", boxSizing: "border-box", padding: "24px clamp(16px, 3vw, 28px) 40px", background: "#f6f8fb", fontFamily: "inherit" }}>
-      <div style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
+      <div className={aurora ? "aur-lead-layout" : undefined} style={{ width: "100%", maxWidth: 1120, margin: "0 auto" }}>
+      <div className="lead-detail-main">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button className="slds-button"
           onClick={() => navigate(backTo)}
@@ -3696,7 +3725,7 @@ export default function LeadDetail() {
       {!isDispatchUser && (user?.role === "admin" || user?.role === "sales_rep") &&
         renderSection("Other Info", [...META_FIELDS, ...otherFields])}
 
-      {canViewLeadCommunications ? (
+      {canViewLeadCommunications && !aurora ? (
         <>
         <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={location.hash === '#tasks'} actions={sideActions}>
           <div style={{ display: "none", borderBottom: "1px solid #dddbda", background: "#f3f2f2" }}>
@@ -3748,27 +3777,9 @@ export default function LeadDetail() {
           </div>
           <div style={{ padding: 16 }}>
             {activeTab === "conversations" ? (
-              user?.role === "admin" || chatUserId || lead.phone_number ? (
-                <ChatMessages
-                  key={leadId}
-                  leadId={leadId!}
-                  userId={chatUserId}
-                  userName={String(lead.full_name || "Client")}
-                  phoneNumber={lead.phone_number ? String(lead.phone_number) : ""}
-                  inboxUrl={messengerInboxUrl}
-                  aircallNumberId={lead.aircall_number_id ? String(lead.aircall_number_id) : ""}
-                  repAircallNumberId={lead.assigned_rep_aircall_number_id ? String(lead.assigned_rep_aircall_number_id) : ""}
-                  companyPhone={lead.company_phone ? String(lead.company_phone) : ""}
-                  repPhone={lead.assigned_rep_phone ? String(lead.assigned_rep_phone) : ""}
-                  companyName={lead.company_name ? String(lead.company_name) : ""}
-                />
-              ) : (
-                <p style={{ color: "#706e6b", fontSize: 13 }}>No conversation available for this lead.</p>
-              )
+              conversationPanel
             ) : activeTab === "activity" ? (
-              <div id="tasks" ref={tasksSection} style={{ scrollMarginTop: 80 }}>
-                <TasksPanel key={`${leadId}:${taskRevision}`} leadId={leadId!} token={token} selectedTaskId={new URLSearchParams(location.search).get('task') || undefined} />
-              </div>
+              tasksPanel
             ) : activeTab === "logs" ? (
               <LeadLogsPanel leadId={leadId!} token={token} />
             ) : null}
@@ -3779,10 +3790,16 @@ export default function LeadDetail() {
           <LeadLogsPanel leadId={leadId!} token={token} />
         </section>
         </>
-      ) : (
+      ) : !canViewLeadCommunications ? (
         <LeadSidePanel key={leadId} active={activeTab} onSelect={setActiveTab} tasksRequested={false} showTabs={false} actions={sideActions} />
-      )}
+      ) : null}
       {liveSwitchOpen && leadId && <LiveSwitchPanel key={leadId} leadId={leadId} hasCustomerPage={lead?.has_customer_page === true} onClose={() => setLiveSwitchOpen(false)} onUploaded={() => { void loadAllJobAttachments(); void loadLead(); }} />}
+      </div>
+      {canViewLeadCommunications && aurora ? (
+        <AuroraLeadRail leadId={leadId!} status={String(lead.status || "")} phone={lead.phone_number ? String(lead.phone_number) : ""}
+          email={lead.email ? String(lead.email) : ""} tasksRequested={location.hash === "#tasks"}
+          chat={conversationPanel} tasks={tasksPanel} log={<LeadLogsPanel leadId={leadId!} token={token} />} actions={sideActions} />
+      ) : null}
       </div>
     </div>
   );

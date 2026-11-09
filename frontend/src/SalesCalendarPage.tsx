@@ -1,4 +1,8 @@
 import CalendarDateRange from "./CalendarDateRange";
+import RangeDays from "./aurora/RangeDays";
+import { dayKey, rangeDays, rangeLabel } from "./aurora/dateRange";
+import { getUiMode } from "./aurora/uiMode";
+import { isDarkTheme, useIsDarkTheme } from "./aurora/theme";
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "./apiConfig";
@@ -98,6 +102,11 @@ const DEFAULT_COMPANY_TONE: CompanyTone = Object.freeze({ tint: "#e0f2fe", borde
 
 function toneForCompanyColor(companyColor?: string, companyName?: string): CompanyTone {
   const normalizedColor = normalizeHexColor(companyColor) || generateCompanyColorFromName(companyName);
+  // The new look in dark mode: a dark tint of the company color with light text.
+  if (isDarkTheme()) {
+    const base = normalizedColor || "#38bdf8";
+    return { tint: mixHexColors(base, "#141926", 0.8), border: mixHexColors(base, "#141926", 0.45), text: mixHexColors(base, "#ffffff", 0.6) };
+  }
   if (!normalizedColor) return DEFAULT_COMPANY_TONE;
 
   return {
@@ -319,6 +328,7 @@ function parseThirdPartyPayout(raw: unknown): ThirdPartyPayout {
 
 export default function SalesCalendarPage() {
   const location = useLocation();
+  useIsDarkTheme(); // company tints are computed per theme
   const { token, user } = useAuth();
 
   const [viewMonth, setViewMonth] = useState(() => {
@@ -929,6 +939,74 @@ export default function SalesCalendarPage() {
     [location.pathname, location.search]
   );
 
+  const salesJobChip = (job: SalesCalendarJob) => {
+    const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
+    const commissionStatus = leadRepCommissionStatus(job);
+    return (
+      <Link
+        key={job.id}
+        to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+        state={backState}
+        style={{
+          display: "block",
+          fontSize: 11,
+          color: repTone.text,
+          textDecoration: "none",
+          background: repTone.tint,
+          border: `1px solid ${repTone.border}`,
+          borderRadius: 4,
+          padding: "4px 5px",
+          overflow: "hidden",
+        }}
+        onClick={(e) => e.stopPropagation()}
+        title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <strong style={{ fontSize: 13, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {job.full_name || "Unnamed"}
+          </strong>
+          <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700, flexShrink: 0 }}>
+            {job.assigned_to_name || "Unassigned"}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {job.company_name || "Unknown company"}
+        </div>
+        <div style={{ fontSize: 12, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}
+        </div>
+        <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {job.status || "booked"}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          {leadDisplayAmount(job) != null ? (
+            <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {formatMoney(leadDisplayAmount(job) || 0)}
+            </div>
+          ) : <span />}
+          {commissionStatus ? (
+            <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
+              {commissionStatus.label}
+            </span>
+          ) : null}
+        </div>
+      </Link>
+    );
+  };
+
+  // New look: Today / Next 7 days show only those days instead of the whole month.
+  const shortRange = getUiMode() === "aurora" ? rangeDays(dateRange) : null;
+  const jobsByDate = useMemo(() => {
+    const map = new Map<string, SalesCalendarJob[]>();
+    for (const job of filteredJobs) {
+      const parsed = parseCalendarDate(job.booked_move_date || job.move_date);
+      if (!parsed) continue;
+      const key = dayKey(parsed);
+      map.set(key, [...(map.get(key) || []), job]);
+    }
+    return map;
+  }, [filteredJobs]);
+
   return (
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
       <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Sales Calendar</h1>
@@ -1239,12 +1317,13 @@ export default function SalesCalendarPage() {
         </div>
       ) : null}
 
-      <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+      <section className={shortRange ? "aur-range-mode" : undefined} style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
         <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
             <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>Sales Jobs</h2>
             <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Filtered by first booked move date</p>
           </div>
+          {shortRange ? <strong className="aur-range-title">{rangeLabel(shortRange)}</strong> : (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button className="slds-button" type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} style={calendarNavBtn}>◀</button>
             <button
@@ -1260,9 +1339,12 @@ export default function SalesCalendarPage() {
             </button>
             <button className="slds-button" type="button" onClick={() => setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} style={calendarNavBtn}>▶</button>
           </div>
+          )}
         </div>
 
         {loading ? <p style={{ padding: 10, color: "#3e3e3c", fontSize: 13 }}>Loading calendar...</p> : null}
+
+        {shortRange ? <RangeDays days={shortRange} jobsByDate={jobsByDate} renderJob={salesJobChip} /> : null}
 
         <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
           <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
@@ -1291,60 +1373,7 @@ export default function SalesCalendarPage() {
                   </div>
                   {dayJobs.length > 0 ? (
                     <div style={{ display: "grid", gap: 6 }}>
-                      {visibleJobs.map((job) => {
-                        const repTone = toneForRepName(job.assigned_to_name || "Unassigned");
-                        const commissionStatus = leadRepCommissionStatus(job);
-                        return (
-                          <Link
-                            key={job.id}
-                            to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
-                            state={backState}
-                            style={{
-                              display: "block",
-                              fontSize: 11,
-                              color: repTone.text,
-                              textDecoration: "none",
-                              background: repTone.tint,
-                              border: `1px solid ${repTone.border}`,
-                              borderRadius: 4,
-                              padding: "4px 5px",
-                              overflow: "hidden",
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                              <strong style={{ fontSize: 13, color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {job.full_name || "Unnamed"}
-                              </strong>
-                              <span style={{ fontSize: 11, color: repTone.text, fontWeight: 700, flexShrink: 0 }}>
-                                {job.assigned_to_name || "Unassigned"}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: 12, color: repTone.text, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {job.company_name || "Unknown company"}
-                            </div>
-                            <div style={{ fontSize: 12, color: "#334155", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {job.pickup_zip || "?"} {" -> "} {job.delivery_zip || "?"}
-                            </div>
-                            <div style={{ fontSize: 11, color: repTone.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {job.status || "booked"}
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                              {leadDisplayAmount(job) != null ? (
-                                <div style={{ fontSize: 11, color: "#0f766e", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {formatMoney(leadDisplayAmount(job) || 0)}
-                                </div>
-                              ) : <span />}
-                              {commissionStatus ? (
-                                <span style={{ fontSize: 10, fontWeight: 700, color: commissionStatus.text, background: commissionStatus.background, border: `1px solid ${commissionStatus.border}`, borderRadius: 999, padding: "1px 6px", whiteSpace: "nowrap" }}>
-                                  {commissionStatus.label}
-                                </span>
-                              ) : null}
-                            </div>
-                          </Link>
-                        );
-                      })}
+                      {visibleJobs.map((job) => salesJobChip(job))}
                       {overflowCount > 0 ? (
                         <button className="slds-button"
                           type="button"

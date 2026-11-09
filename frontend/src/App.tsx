@@ -4,6 +4,7 @@ import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
 import GlobalLeadSearch from "./GlobalLeadSearch";
+import { getUiMode, onUiModeChange, setUiMode } from "./aurora/uiMode";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
 const LiveSwitchCallbackPage = lazy(() => import("./LiveSwitchCallbackPage"));
@@ -11,6 +12,11 @@ const WalkthroughRequestsPage = lazy(() => import("./WalkthroughRequestsPage"));
 import LoginPage from "./LoginPage";
 const ChangePasswordPage = lazy(() => import("./ChangePasswordPage"));
 const LeadsList = lazy(() => import("./LeadsList"));
+const AuroraShell = lazy(() => import("./aurora/AuroraShell"));
+const AuroraLeads = lazy(() => import("./aurora/AuroraLeads"));
+const AuroraLogin = lazy(() => import("./aurora/AuroraLogin"));
+const AuroraInbox = lazy(() => import("./aurora/AuroraInbox"));
+const AuroraSettings = lazy(() => import("./aurora/AuroraSettings"));
 const LeadDetail = lazy(() => import("./LeadDetail"));
 const OutreachEventsPage = lazy(() => import("./OutreachEventsPage"));
 const PeriodAssignPage = lazy(() => import("./PeriodAssignPage"));
@@ -57,6 +63,9 @@ function ProtectedRoutes() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
+  const [uiMode, setUiModeState] = useState(getUiMode);
+  useEffect(() => onUiModeChange(setUiModeState), []);
+  const aurora = uiMode === "aurora";
   const isDispatchUser = user?.role === "dispatch";
   const isForemanUser = user?.role === "foreman";
   const isDispatchAllowedPath =
@@ -84,9 +93,49 @@ function ProtectedRoutes() {
   if (isForemanUser && !isForemanAllowedPath) {
     return <Navigate to="/dispatch" replace />;
   }
+  const routes = (
+        <Routes>
+          <Route path="/" element={aurora ? <AuroraLeads /> : <LeadsList />} />
+          <Route path="/chats" element={user?.role === "admin" ? (aurora ? <AuroraInbox /> : <ChatsPage />) : <Navigate to="/" replace />} />
+          <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
+          <Route path="/reports" element={user?.role === "admin" ? <Navigate to="/reports/booking-percentage" replace /> : <Navigate to="/" replace />} />
+          <Route path="/reports/booking-percentage" element={user?.role === "admin" ? <ReportsPage /> : <Navigate to="/" replace />} />
+          <Route path="/walkthrough-requests" element={user?.role === "admin" ? <WalkthroughRequestsPage /> : <Navigate to="/" replace />} />
+          <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
+          <Route path="/outreach" element={<OutreachEventsPage />} />
+          <Route path="/sales-calendar" element={<SalesCalendarPage />} />
+          <Route path="/sales-performance" element={<SalesPerformancePage />} />
+          <Route path="/assign-period" element={user?.role === "admin" ? <PeriodAssignPage /> : <Navigate to="/" replace />} />
+          <Route path="/sales-reps" element={<SalesRepsPage />} />
+          <Route path="/admin-users" element={<AdminUsersPage />} />
+          <Route path="/system-users" element={user?.role === "admin" ? <SystemUsersPage /> : <Navigate to="/" replace />} />
+          <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
+          <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
+          <Route path="/foremen" element={<ForemenPage />} />
+          <Route path="/settings/companies" element={<CompaniesPage />} />
+          <Route path="/settings/documents" element={user?.role === 'admin' ? <CompanyDocumentsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
+          <Route path="/pending-duplications" element={<PendingDuplicationsPage />} />
+          <Route path="/settings/pending-duplications" element={<Navigate to="/pending-duplications" replace />} />
+          <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
+          <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
+          <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
+          <Route path="/settings/access-history" element={user?.role === "admin" ? <AccessHistoryPage /> : <Navigate to="/" replace />} />
+          <Route path="/settings" element={aurora ? <AuroraSettings /> : <SettingsPage />} />
+          <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
+          <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
+          <Route path="/leads/:leadId" element={<LeadDetail />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
+          <Route path="*" element={<Navigate to={isDispatchUser || isForemanUser ? "/dispatch" : "/"} replace />} />
+        </Routes>
+  );
+  const impersonationBanner = isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button className="slds-button" type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null;
+  if (aurora) return <AuroraShell banner={impersonationBanner}>{routes}</AuroraShell>;
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      {isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button className="slds-button" type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null}
+      {impersonationBanner}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",
@@ -119,6 +168,7 @@ function ProtectedRoutes() {
               Change Password
             </NavLink>
           ) : null}
+          {user ? <button type="button" className="slds-button" onClick={() => setUiMode("aurora")} style={{ background: "#ffffff", color: "#032d60", border: 0, borderRadius: 4, padding: "5px 12px", fontSize: 13, fontWeight: 600 }}>Switch to new look</button> : null}
           <button className="slds-button"
             onClick={logout}
             style={{
@@ -153,42 +203,7 @@ function ProtectedRoutes() {
         </>
       ) : null}
       <div className="crm-main" style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        <Routes>
-          <Route path="/" element={<LeadsList />} />
-          <Route path="/chats" element={user?.role === "admin" ? <ChatsPage /> : <Navigate to="/" replace />} />
-          <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
-          <Route path="/reports" element={user?.role === "admin" ? <Navigate to="/reports/booking-percentage" replace /> : <Navigate to="/" replace />} />
-          <Route path="/reports/booking-percentage" element={user?.role === "admin" ? <ReportsPage /> : <Navigate to="/" replace />} />
-          <Route path="/walkthrough-requests" element={user?.role === "admin" ? <WalkthroughRequestsPage /> : <Navigate to="/" replace />} />
-          <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
-          <Route path="/outreach" element={<OutreachEventsPage />} />
-          <Route path="/sales-calendar" element={<SalesCalendarPage />} />
-          <Route path="/sales-performance" element={<SalesPerformancePage />} />
-          <Route path="/assign-period" element={user?.role === "admin" ? <PeriodAssignPage /> : <Navigate to="/" replace />} />
-          <Route path="/sales-reps" element={<SalesRepsPage />} />
-          <Route path="/admin-users" element={<AdminUsersPage />} />
-          <Route path="/system-users" element={user?.role === "admin" ? <SystemUsersPage /> : <Navigate to="/" replace />} />
-          <Route path="/dispatch" element={<DispatchPage mode="calendar" />} />
-          <Route path="/dispatch-users" element={<DispatchPage mode="manage" />} />
-          <Route path="/foremen" element={<ForemenPage />} />
-          <Route path="/settings/companies" element={<CompaniesPage />} />
-          <Route path="/settings/documents" element={user?.role === 'admin' ? <CompanyDocumentsPage /> : <Navigate to="/settings" replace />} />
-          <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
-          <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
-          <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
-          <Route path="/pending-duplications" element={<PendingDuplicationsPage />} />
-          <Route path="/settings/pending-duplications" element={<Navigate to="/pending-duplications" replace />} />
-          <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />
-          <Route path="/settings/ignored-call-numbers" element={user?.role === "admin" ? <IgnoredCallNumbersPage /> : <Navigate to="/" replace />} />
-          <Route path="/settings/impersonate" element={<ImpersonateUsersPage />} />
-          <Route path="/settings/access-history" element={user?.role === "admin" ? <AccessHistoryPage /> : <Navigate to="/" replace />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/pricing" element={<ErrorBoundary><PricingPage /></ErrorBoundary>} />
-          <Route path="/auto-assign-tracker" element={<AutoAssignTrackerPage />} />
-          <Route path="/leads/:leadId" element={<LeadDetail />} />
-          <Route path="/change-password" element={<ChangePasswordPage />} />
-          <Route path="*" element={<Navigate to={isDispatchUser || isForemanUser ? "/dispatch" : "/"} replace />} />
-        </Routes>
+        {routes}
       </div>
     </div>
   );
@@ -203,7 +218,7 @@ function App() {
             <Routes>
               <Route path="/move/:accessId" element={<CustomerMovePage />} />
               <Route path="/liveswitch/callback" element={<LiveSwitchCallbackPage />} />
-              <Route path="/login" element={<LoginPage />} />
+              <Route path="/login" element={getUiMode() === "aurora" ? <AuroraLogin /> : <LoginPage />} />
               <Route path="/*" element={<ProtectedRoutes />} />
             </Routes>
           </Suspense>

@@ -1,0 +1,80 @@
+/* Aurora theme for the existing CRM pages shown inside the new shell.
+   Scoped to .aurora .aur-main, so the classic look is never affected.
+   1) Re-point the app's shared design variables to Aurora values.
+   2) Restyle shared primitives (buttons, fields, tables, headings).
+   3) Map the most common inline colors to the Aurora palette. */
+
+.aurora {
+  --brand: #4B4DF7;
+  --brand-dark: #2E30C9;
+  --nav-bg: #0E1530;
+  --page-bg: #F5F6FA;
+  --card-bg: #FFFFFF;
+  --border: #E6E8F0;
+  --text: #0E1530;
+  --text-muted: #5B6478;
+  --radius: 10px;
+}
+
+.aurora .aur-main { background: var(--aur-bg); }
+.aurora .aur-main > :not(.aur-page):not(.impersonation-banner) { font-family: var(--aur-font); }
+.aurora .aur-main :is(h1, h2, h3, h4) { font-family: var(--aur-font); color: var(--aur-ink); letter-spacing: -0.01em; }
+.aurora .aur-main h1 { font-weight: 800; }
+.aurora .aur-main a:not([class*="aur-"]) { color: var(--aur-accent-ink); }
+
+/* Buttons */
+.aurora .aur-main .slds-button { border-radius: 10px; min-height: 36px; padding: 7px 14px; font-size: 13px; font-weight: 600; border-color: var(--aur-line); color: var(--aur-ink); transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
+.aurora .aur-main .slds-button:enabled:hover { border-color: var(--aur-accent-line-strong); box-shadow: 0 2px 8px rgba(75, 77, 247, 0.10); }
+.aurora .aur-main :is(.slds-button.primary, .slds-button_brand) { background: var(--aur-accent) !important; border-color: var(--aur-accent) !important; color: #FFFFFF !important; box-shadow: 0 6px 16px rgba(75, 77, 247, 0.22); }
+.aurora .aur-main :is(.slds-button.secondary, .slds-button_neutral) { color: var(--aur-accent-ink); border-color: var(--aur-accent-line); background: var(--aur-surface); }
+.aurora .aur-main :is(.slds-button.danger, .slds-button_destructive) { color: var(--aur-red-fg); border-color: var(--aur-red-line); }
+.aurora .aur-main .slds-button[style*="background: rgb(1, 118, 211)"],
+.aurora .aur-main .slds-button[style*="background: #0176d3"] { background: var(--aur-accent) !important; border-color: var(--aur-accent) !important; }
+
+/* Fields */
+.aurora .aur-main :is(input:not([type]), input[type="text"], input[type="number"], input[type="email"], input[type="password"], input[type="search"], input[type="tel"], input[type="url"], input[type="date"], input[type="datetime-local"], input[type="time"], input[type="month"], select, textarea):not(.aur-keep) {
+  border-color: var(--aur-line) !important;
+  border-radius: 10px !important;
+  background-color: var(--aur-surface);
+  color: var(--aur-ink);
+}
+.aurora .aur-main :is(input, select, textarea):focus-visible { outline: none; border-color: var(--aur-accent-line-strong) !important; box-shadow: 0 0 0 3px rgba(75, 77, 247, 0.14); }
+.aurora .aur-main input[type="checkbox"], .aurora .aur-main input[type="radio"] { accent-color: var(--aur-accent); }
+
+/* Tables */
+.aurora .aur-main table:not(.aur-table) { border-color: var(--aur-line); font-variant-numeric: tabular-nums; }
+.aurora .aur-main table:not(.aur-table) th { background: var(--aur-subtle) !important; color: var(--aur-muted) !important; font-size: 12px !important; font-weight: 600 !important; text-transform: none !important; letter-spacing: 0 !important; border-color: var(--aur-line-soft) !important; }
+.aurora .aur-main table:not(.aur-table) td { border-color: var(--aur-line-soft) !important; }
+.aurora .aur-main table:not(.aur-table) tbody tr:hover td { background-color: var(--aur-accent-wash); }
+
+/* Inline colors used across pages, mapped to Aurora */
+.aurora .aur-main [style*="color: rgb(3, 45, 96)"], .aurora .aur-main [style*="color: #032d60"] { color: var(--aur-ink) !important; }
+.aurora .aur-main [style*="background: rgb(3, 45, 96)"], .aurora .aur-main [style*="background: #032d60"] { background: var(--aur-ink) !important; }
+.aurora .aur-main [style*="color: rgb(1, 118, 211)"], .aurora .aur-main [style*="color: #0176d3"],
+.aurora .aur-main [style*="color: rgb(11, 92, 171)"], .aurora .aur-main [style*="color: #0b5cab"] { color: var(--aur-accent-ink) !important; }
+.aurora .aur-main [style*="background: rgb(1, 118, 211)"], .aurora .aur-main [style*="background: #0176d3"] { background: var(--aur-accent) !important; }
+.aurora .aur-main [style*="border: 1px solid rgb(1, 118, 211)"], .aurora .aur-main [style*="border: 1px solid #0176d3"] { border-color: var(--aur-accent) !important; }
+.aurora .aur-main :is([style*="color: rgb(112, 110, 107)"], [style*="color: #706e6b"], [style*="color: rgb(100, 116, 139)"], [style*="color: #64748b"]) { color: var(--aur-muted) !important; }
+.aurora .aur-main :is([style*="border: 1px solid rgb(221, 219, 218)"], [style*="border: 1px solid #dddbda"], [style*="border: 1px solid rgb(203, 213, 225)"], [style*="border: 1px solid #cbd5e1"], [style*="border: 1px solid rgb(216, 221, 230)"], [style*="border: 1px solid #d8dde6"], [style*="border: 1px solid rgb(201, 199, 197)"], [style*="border: 1px solid #c9c7c5"], [style*="border: 1px solid rgb(219, 228, 239)"], [style*="border: 1px solid #dbe4ef"]) { border-color: var(--aur-line) !important; }
+.aurora .aur-main :is([style*="background: rgb(243, 242, 242)"], [style*="background: #f3f2f2"], [style*="background: rgb(243, 243, 243)"], [style*="background: #f3f3f3"], [style*="background: rgb(250, 250, 249)"], [style*="background: #fafaf9"]) { background: var(--aur-subtle) !important; }
+/* White boxes with a border are the app's cards: give them the Aurora card shape. */
+.aurora .aur-main div[style*="background: rgb(255, 255, 255)"][style*="border: 1px solid"],
+.aurora .aur-main div[style*="background: #fff"][style*="border: 1px solid"],
+.aurora .aur-main section[style*="background: rgb(255, 255, 255)"][style*="border: 1px solid"],
+.aurora .aur-main section[style*="background: #fff"][style*="border: 1px solid"] { border-radius: 14px !important; box-shadow: var(--aur-shadow); }
+
+/* Existing page layouts sized for the old 52 px top bar */
+/* Chrome writes the height as calc(-52px + 100vh) */
+.aurora .aur-main :is([style*="calc(100vh - 52px)"], [style*="calc(-52px + 100vh)"]) { height: auto !important; min-height: 100% !important; }
+.aurora .aur-main .leads-workspace { height: auto !important; }
+
+/* Status pills from the classic leads list, in Aurora colors */
+.aurora .aur-main .lead-status { border-radius: 99px; font-weight: 700; }
+.aurora .aur-main .status-new { background-color: var(--aur-blue-bg); color: var(--aur-blue-fg); }
+.aurora .aur-main .status-contacted { background-color: var(--aur-purple-bg); color: var(--aur-purple-fg); }
+.aurora .aur-main .status-quoted { background-color: var(--aur-amber-bg); color: var(--aur-amber-fg); }
+.aurora .aur-main :is(.status-booked, .status-scheduled, .status-completed) { background-color: var(--aur-green-bg); color: var(--aur-green-fg); }
+.aurora .aur-main :is(.status-lost, .status-cancelled) { background-color: var(--aur-red-bg); color: var(--aur-red-fg); }
+
+/* Impersonation banner inside the new shell */
+.aurora .impersonation-banner { margin: 12px 28px 0; border-radius: 12px; }

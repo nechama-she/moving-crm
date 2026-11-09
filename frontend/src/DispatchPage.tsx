@@ -1,4 +1,8 @@
 import CalendarDateRange from "./CalendarDateRange";
+import RangeDays from "./aurora/RangeDays";
+import { dayKey, rangeDays, rangeLabel } from "./aurora/dateRange";
+import { getUiMode } from "./aurora/uiMode";
+import { isDarkTheme, useIsDarkTheme } from "./aurora/theme";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
@@ -89,6 +93,11 @@ function companyKeyForJob(job: LeadJob): string {
 
 function toneForCompanyColor(companyColor?: string, companyName?: string): CompanyTone {
   const normalizedColor = normalizeHexColor(companyColor) || generateCompanyColorFromName(companyName);
+  // The new look in dark mode: a dark tint of the company color with light text.
+  if (isDarkTheme()) {
+    const base = normalizedColor || "#38bdf8";
+    return { tint: mixHexColors(base, "#141926", 0.8), border: mixHexColors(base, "#141926", 0.45), text: mixHexColors(base, "#ffffff", 0.6) };
+  }
   if (!normalizedColor) return DEFAULT_COMPANY_TONE;
 
   return {
@@ -288,6 +297,7 @@ function parsePayments(raw: unknown): LeadPayment[] {
 
 export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
   const location = useLocation();
+  useIsDarkTheme(); // company tints are computed per theme
   const navigate = useNavigate();
   const { token, user } = useAuth();
   const dispatchCompanySelectionFromSearch = useMemo(
@@ -1290,6 +1300,7 @@ export default function DispatchPage({ mode }: { mode?: DispatchPageMode }) {
             jobs={filteredCalendarJobs}
             daySettings={daySettings}
             viewDate={dispatchMonth}
+            shortRange={getUiMode() === "aurora" ? rangeDays(dateRange) : null}
             selectedJobId={selectedJobId}
             onPrevMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
             onNextMonth={() => setDispatchMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
@@ -1473,6 +1484,7 @@ function CompanyCalendar({
   jobs,
   daySettings,
   viewDate,
+  shortRange,
   selectedJobId,
   onPrevMonth,
   onNextMonth,
@@ -1484,6 +1496,7 @@ function CompanyCalendar({
   jobs: LeadJob[];
   daySettings: Record<string, DispatchCalendarDaySetting>;
   viewDate: Date;
+  shortRange?: string[] | null;
   selectedJobId: string;
   onPrevMonth: () => void;
   onNextMonth: () => void;
@@ -1491,6 +1504,7 @@ function CompanyCalendar({
   onSaveDaySetting: (companyId: string, dayDate: string, isFull: boolean, note: string) => Promise<DispatchCalendarDaySetting | null>;
 }) {
   const location = useLocation();
+  const dark = useIsDarkTheme(); // company tints are computed per theme
   const [jobPanelDay, setJobPanelDay] = useState<number | null>(null);
   const [panelCompanyId, setPanelCompanyId] = useState("");
   const [panelNote, setPanelNote] = useState("");
@@ -1544,11 +1558,49 @@ function CompanyCalendar({
     }
 
     return uniqueCompanies;
-  }, [jobs]);
+  }, [jobs, dark]);
 
   function getCompanyTone(job: LeadJob): CompanyTone {
     const key = companyKeyForJob(job);
     return companyStyles.get(key)?.tone || toneForCompanyColor(job.company_color, job.company_name);
+  }
+
+  const dispatchJobChip = (job: LeadJob) => (
+    <Link
+      key={job.id}
+      to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
+      state={dispatchBackState}
+      data-company-key={companyKeyForJob(job)}
+      style={{
+        display: "block",
+        fontSize: 11,
+        color: getCompanyTone(job).text,
+        textDecoration: "none",
+        background: job.id === selectedJobId ? "#f8fafc" : getCompanyTone(job).tint,
+        border: `1px solid ${job.id === selectedJobId ? "#2563eb" : getCompanyTone(job).border}`,
+        borderRadius: 4,
+        padding: "4px 5px",
+        overflow: "hidden",
+        boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
+      }}
+      title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
+    >
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{formatJobVolumeWeight(job)}</div>
+      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{job.number}</div>
+      {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
+    </Link>
+  );
+
+  // New look: Today / Next 7 days show only those days instead of the whole month.
+  const jobsByDate = new Map<string, LeadJob[]>();
+  for (const job of jobs) {
+    const parsed = parseCalendarDate(job.move_date);
+    if (!parsed) continue;
+    const key = dayKey(parsed);
+    jobsByDate.set(key, [...(jobsByDate.get(key) || []), job]);
   }
 
   const jobsByDay = new Map<number, LeadJob[]>();
@@ -1632,6 +1684,33 @@ function CompanyCalendar({
     setJobPanelDay(day);
   }
 
+  function openRangeDay(key: string) {
+    const date = new Date(`${key}T00:00:00`);
+    const monthDelta = (date.getFullYear() - year) * 12 + (date.getMonth() - month);
+    if (monthDelta === 0) {
+      openDayPanel(date.getDate());
+      return;
+    }
+    if (monthDelta < 0) onPrevMonth();
+    else onNextMonth();
+    setPanelCompanyId(defaultPanelCompanyId());
+    setPanelError("");
+    setJobPanelDay(date.getDate());
+  }
+
+  const rangeDayTools = (key: string) => {
+    const setting = daySettings[key];
+    return (
+      <>
+        {setting?.is_full ? <span className="aur-range-flag">Full</span> : null}
+        <button className="slds-button aur-range-tool" type="button" onClick={() => openRangeDay(key)} title="Open day panel" aria-label="Open day panel">
+          <NoteIcon active={Boolean(setting?.note)} />
+        </button>
+        {setting?.note ? <p className="aur-range-note" title={setting.note}>{setting.note}</p> : null}
+      </>
+    );
+  };
+
   function closeDayPanel() {
     if (panelSaving) return;
     setJobPanelDay(null);
@@ -1709,12 +1788,13 @@ function CompanyCalendar({
   }, [jobPanelDay, panelCompanyId, viewDate, onLoadDaySetting]);
 
   return (
-    <section style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
+    <section className={shortRange ? "aur-range-mode" : undefined} style={{ border: "1px solid #dddbda", borderRadius: 4, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,.06)", marginBottom: 14 }}>
       <div style={{ padding: "10px 14px", borderBottom: "1px solid #dddbda", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <div>
           <h2 style={{ margin: 0, fontSize: 15, color: "#032d60" }}>{companyName}</h2>
           <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>Calendar for selected jobs</p>
         </div>
+        {shortRange ? <strong className="aur-range-title">{rangeLabel(shortRange)}</strong> : (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button className="slds-button" type="button" onClick={onPrevMonth} style={calendarNavBtn}>◀</button>
           <button
@@ -1730,7 +1810,10 @@ function CompanyCalendar({
           </button>
           <button className="slds-button" type="button" onClick={onNextMonth} style={calendarNavBtn}>▶</button>
         </div>
+        )}
       </div>
+
+      {shortRange ? <RangeDays days={shortRange} jobsByDate={jobsByDate} renderJob={dispatchJobChip} renderDayTools={rangeDayTools} /> : null}
 
       <div className={`calendar-scroll desktop-calendar${mobileMonthExpanded ? " mobile-month-visible" : ""}`} style={{ padding: 10 }}>
         <div className="calendar-week-grid" style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginBottom: 6 }}>
@@ -1821,34 +1904,7 @@ function CompanyCalendar({
                 ) : null}
                 {dayJobs.length > 0 ? (
                   <div style={{ display: "grid", gap: 6 }}>
-                    {visibleJobs.map((job) => (
-                      <Link
-                        key={job.id}
-                        to={`/leads/${job.lead_id || job.id}?job_id=${encodeURIComponent(job.id)}`}
-                        state={dispatchBackState}
-                        data-company-key={companyKeyForJob(job)}
-                        style={{
-                          display: "block",
-                          fontSize: 11,
-                          color: getCompanyTone(job).text,
-                          textDecoration: "none",
-                          background: job.id === selectedJobId ? "#f8fafc" : getCompanyTone(job).tint,
-                          border: `1px solid ${job.id === selectedJobId ? "#2563eb" : getCompanyTone(job).border}`,
-                          borderRadius: 4,
-                          padding: "4px 5px",
-                          overflow: "hidden",
-                          boxShadow: job.id === selectedJobId ? "0 0 0 1px rgba(37, 99, 235, 0.2)" : undefined,
-                        }}
-                        title={`${job.full_name} • ${job.pickup_zip || "?"} -> ${job.delivery_zip || "?"} • ${job.status}`}
-                      >
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>{job.full_name}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: getCompanyTone(job).text, fontWeight: 700 }}>{job.company_name || "Unknown company"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569" }}>{job.pickup_zip || "?"}{" -> "}{job.delivery_zip || "?"}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: job.id === selectedJobId ? "#1d4ed8" : getCompanyTone(job).text }}>{formatJobVolumeWeight(job)}</div>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#475569", fontSize: 11 }}>{job.number}</div>
-                        {job.price != null ? <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#0f766e" }}>${job.price.toFixed(2)}</div> : null}
-                      </Link>
-                    ))}
+                    {visibleJobs.map((job) => dispatchJobChip(job))}
                     {overflowCount > 0 ? (
                       <button className="slds-button"
                         type="button"
