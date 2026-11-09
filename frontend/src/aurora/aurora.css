@@ -444,6 +444,8 @@
   .aurora .lead-header-move { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .aurora .lead-header-group { border-color: var(--aur-line-soft); }
+/* The move date and total sit indented like the move size and volume buttons beside them */
+.aurora .lead-header-move .lead-header-text { display: block; padding: 0 14px; }
 .aurora .lead-header-avatar { background: var(--aur-accent); }
 .aurora .lead-header-name { overflow-wrap: anywhere; }
 .aurora .lead-header-contact-line { overflow-wrap: anywhere; }
