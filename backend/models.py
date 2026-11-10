@@ -25,6 +25,16 @@ def generate_lead_number():
     return digits + luhn_digit(digits)
 
 
+# Confirmation numbers: letters and digits without the look-alikes 0, O, 1, I and L.
+CONFIRMATION_CHARACTERS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+
+
+def generate_confirmation_number():
+    """A payment's confirmation number: 10 random letters and digits, such as K7Q3X9M2PA."""
+    import secrets
+    return ''.join(secrets.choice(CONFIRMATION_CHARACTERS) for _ in range(10))
+
+
 def job_number(lead, job):
     """A job's number: its lead's number and the job's place among the lead's jobs, such as 48213075526-1."""
     return f"{lead.number}-{job.job_order}"
@@ -714,11 +724,14 @@ class LeadPayment(Base):
     rep_paid_at = Column(String(40), nullable=False, default="")
     rep_commission_percent = Column(Numeric(6, 2))
     rep_commission_amount = Column(Numeric(12, 2))
+    # Given to each payment entered in the CRM from now on; SmartMoving's and earlier ones have none.
+    confirmation_number = Column(String(12), unique=True)
 
     def to_dict(self):
         return {
             "id": self.id,
             "source": self.source,
+            "confirmationNumber": self.confirmation_number or "",
             "amount": float(self.amount or 0),
             "takenByUser": self.taken_by_user or "",
             "paidAt": self.paid_at.isoformat() if self.paid_at else "",

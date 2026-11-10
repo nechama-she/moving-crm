@@ -161,6 +161,7 @@ html.aur-dark .customer-move .cm-carry-over { border: 1px solid var(--aur-line-s
 html.aur-dark .customer-move .cm-carry-over.is-selected { background-color: var(--aur-red-bg); }
 
 /* CustomerMovePage.css */
+html.aur-dark .cm-payments { background-color: var(--aur-surface); }
 html.aur-dark .customer-move { background-color: var(--aur-subtle); }
 html.aur-dark .cm-brand>span { background-color: var(--aur-green-bg); }
 html.aur-dark .cm-brand>small { color: var(--aur-muted); }

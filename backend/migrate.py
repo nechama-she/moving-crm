@@ -19,8 +19,9 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # Nothing pending.
-    logger.info("No pending schema changes")
+    # Payments' confirmation numbers: new CRM payments get one; existing payments keep none. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'lead_payments', 'confirmation_number', 'VARCHAR(12) UNIQUE')
 
 
 if __name__ == "__main__":

@@ -63,6 +63,8 @@ type Details = {
   signature_status?: 'unsigned' | 'signed' | 'changed';
   // Rep pages only: the estimate is signed.
   work_order_available?: boolean;
+  // The payments entered in the CRM, each with its confirmation number (none on earlier ones).
+  payments?: { id: string; amount: number; paid_at: string; method: string; confirmation_number: string }[];
   // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
   bill_of_lading?: { signed: boolean } | null;
   // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
@@ -641,6 +643,7 @@ export default function CustomerMovePage() {
   const [estimateSignatureRemovedElsewhere, setEstimateSignatureRemovedElsewhere] = useState(0);
   const [inventoryPdf, setInventoryPdf] = useState<{ url: string; filename: string; title?: string; description?: string } | null>(null);
   const [workOrderBusy, setWorkOrderBusy] = useState(false);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [billOfLadingOpen, setBillOfLadingOpen] = useState(false);
   // Counts changes to the Bill of Lading on another open page while it is open: it then loads again in place.
   const [billOfLadingChanged, setBillOfLadingChanged] = useState(0);
@@ -665,6 +668,24 @@ export default function CustomerMovePage() {
       setPdfError((error as Error).message);
     } finally {
       setWorkOrderBusy(false);
+    }
+  }
+  // One invoice for the job: its prices, each payment with its confirmation number, and the balance due.
+  async function openInvoice() {
+    setPdfError('');
+    setInvoiceBusy(true);
+    try {
+      const response = await fetch(base + '/invoice.pdf', { headers, cache: 'no-store' });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(typeof result.detail === 'string' ? result.detail : `Could not open the invoice (HTTP ${response.status}). Please try again.`);
+      }
+      setInventoryPdf({ url: URL.createObjectURL(await response.blob()), filename: pdfName('Invoice'),
+        title: 'Invoice', description: 'Your charges, your payments and the balance due.' });
+    } catch (error) {
+      setPdfError((error as Error).message);
+    } finally {
+      setInvoiceBusy(false);
     }
   }
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
@@ -1573,6 +1594,23 @@ export default function CustomerMovePage() {
                   </div>
                 </div>
               )}
+
+              {!!data.payments?.length && <section className="cm-payments" aria-label="Payments">
+                <div className="cm-payments-header">
+                  <strong>Payments</strong>
+                  <button type="button" className="cm-secondary-btn" disabled={invoiceBusy} onClick={() => void openInvoice()}>{invoiceBusy ? 'Preparing invoice...' : 'View invoice'}</button>
+                </div>
+                <ul>
+                  {data.payments.map(payment => <li key={payment.id}>
+                    <div>
+                      <span>{payment.paid_at ? new Date(payment.paid_at + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date not set'}{payment.method ? ` \u00b7 ${payment.method}` : ''}</span>
+                      {payment.confirmation_number && <small>Confirmation number: {payment.confirmation_number}</small>}
+                    </div>
+                    <strong>{money(payment.amount)}</strong>
+                  </li>)}
+                </ul>
+                <div className="cm-payments-total"><span>Total paid</span><strong>{money(data.payments.reduce((sum, payment) => sum + payment.amount, 0))}</strong></div>
+              </section>}
 
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}

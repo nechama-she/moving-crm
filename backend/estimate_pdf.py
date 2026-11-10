@@ -104,8 +104,9 @@ def _services_total(estimate):
     return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
 
 
-def _services_table(data, p, table, styles):
-    """Additional services and fees: each answer with its charge, then the other service lines, and their total."""
+def _services_table(data, p, table, styles, no_charge='No charge'):
+    """Additional services and fees: each answer with its charge, then the other service lines, and their total. no_charge:
+    what a fee with no charge shows."""
     from routes.pricing import customer_packing_charge_id
     lines, total, pending = _services_total(data['estimate'])
     by_id = {charge.get('id'): charge for charge in lines}
@@ -114,7 +115,7 @@ def _services_table(data, p, table, styles):
     def charge_of(key):
         charge = by_id.get(customer_packing_charge_id(job_id, key)) if job_id else None
         if charge is None:
-            return 'No charge'
+            return no_charge
         shown.add(charge.get('id'))
         if charge.get('pending'):
             return 'Pending'
@@ -137,7 +138,7 @@ def _services_table(data, p, table, styles):
         value = charge_of(key)
         return value if isinstance(value, list) else p(value, 'RightEstimate')
     def amount(value):
-        return money(value) if float(value or 0) else 'No charge'
+        return money(value) if float(value or 0) else no_charge
     def service(name, terms):
         return [p(name)] + ([p(terms, 'NoteEstimate')] if terms else [])
     body = [[p('SERVICE'), p('DETAILS'), p('CHARGE', 'RightEstimate')]]
@@ -237,49 +238,11 @@ def _template(output, company):
                              bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
 
 
-def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signature=True):
-    """Details, price breakdown, customer note and signature: the part that belongs on page one."""
-    company = data.get('company_details') or {}
+def _price_table(data, styles, p, table, link=True, total_label='TOTAL ESTIMATED PRICE'):
+    """The price breakdown: the volume, each price line, the transportation package's discount and subtotal, the
+    additional services and fees total (linking to their table), then the total."""
     estimate = data['estimate']
-    from inventory_pdf import company_logo_image
-    company_block = [p(company.get('name') or data.get('company'), 'CompanyEstimate')]
-    company_block += [p(value, 'CompanyDetailsEstimate') for value in [company.get('office_address'), company.get('phone')] if value]
-    if company.get('dot_number'):
-        company_block.append(p(f"USDOT: {company['dot_number']}", 'CompanyDetailsEstimate'))
-    logo = company_logo_image(company.get('logo'))
-    header = Table([[logo, company_block]] if logo else [[company_block]], colWidths=[166, 356] if logo else [522], hAlign='LEFT')
-    header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                                ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
-    story = [header,
-             Spacer(1, 12), Paragraph(title, styles['Title']),
-             p(' | '.join(filter(None, [data.get('order_number') and f"Order No. {data['order_number']}",
-                                        'Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)'))])),
-               'NoteEstimate')]
-    # Every phone and every email: the main one first, then the extras.
-    def contacts(kind):
-        return '\n'.join(filter(None, [data.get(kind), *[row['value'] for row in data.get('contacts') or [] if row['kind'] == kind]]))
-    # A small grey label over each value; empty ones are left out, and rows of three line up with each other.
-    def row(*fields):
-        fields = [(label, value) for label, value in fields if value]
-        if not fields:
-            return Spacer(0, 0)
-        return table([[[p(label, 'LabelEstimate'), p(value)] for label, value in fields]], [522 / max(len(fields), 3)] * len(fields))
-    def stops(kind):
-        return '\n'.join(stop.get('address', '') for stop in data.get('stops', []) if stop.get('type') == kind)
-    # The earliest delivery date is the customer's storage answer, so it shows only where storage is offered.
-    storage = data.get('storage')
-    story += [p('Customer', 'SectionEstimate'),
-              row(('NAME', data.get('name', '')), ('PHONE', contacts('phone')), ('EMAIL', contacts('email'))),
-              p('Move details', 'SectionEstimate'),
-              row(('PICKUP', data.get('pickup', '')), ('PICKUP STOPS', stops('pickup')),
-                  ('DELIVERY', data.get('delivery', '')), ('DELIVERY STOPS', stops('delivery'))),
-              row(('PICKUP DATE', str(data.get('move_date') or 'Not scheduled')),
-                  ('FIRST AVAILABLE DELIVERY DATE', storage and (storage.get('available_date') or 'Not answered')),
-                  ('PARTIAL ESTIMATE' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL', money(estimate['price'])))]
-    for stop in data.get('stops', []):
-        if stop.get('type') not in ('pickup', 'delivery'):
-            story.append(p(f"Additional stop (unspecified): {stop.get('address', '')}"))
-    story += [p('Price breakdown', 'SectionEstimate'), p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")]
+    story = [p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")]
     package = data.get('packing_package') or {}
     minimum = package.get('minimum_cubic_feet')
     if minimum and float(minimum) > float(estimate.get('cuft') or 0):
@@ -344,7 +307,54 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signatu
     charge_table = table(charges, [180, 247, 95], header=True)
     charge_table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0'))]))
     story.append(charge_table)
-    story.append(table([[p('PARTIAL ESTIMATE - PENDING CHARGES EXCLUDED' if any(c.get('pending') for c in estimate.get('charges', [])) else 'TOTAL ESTIMATED PRICE'), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
+    pending = any(c.get('pending') for c in estimate.get('charges', []))
+    story.append(table([[p('PARTIAL ESTIMATE - PENDING CHARGES EXCLUDED' if pending else total_label), p(money(estimate['price']), 'RightEstimate')]], [417, 105]))
+    return story
+
+
+def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signature=True):
+    """Details, price breakdown, customer note and signature: the part that belongs on page one."""
+    company = data.get('company_details') or {}
+    estimate = data['estimate']
+    from inventory_pdf import company_logo_image
+    company_block = [p(company.get('name') or data.get('company'), 'CompanyEstimate')]
+    company_block += [p(value, 'CompanyDetailsEstimate') for value in [company.get('office_address'), company.get('phone')] if value]
+    if company.get('dot_number'):
+        company_block.append(p(f"USDOT: {company['dot_number']}", 'CompanyDetailsEstimate'))
+    logo = company_logo_image(company.get('logo'))
+    header = Table([[logo, company_block]] if logo else [[company_block]], colWidths=[166, 356] if logo else [522], hAlign='LEFT')
+    header.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                                ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+    story = [header,
+             Spacer(1, 12), Paragraph(title, styles['Title']),
+             p(' | '.join(filter(None, [data.get('order_number') and f"Order No. {data['order_number']}",
+                                        'Prepared ' + (data.get('prepared_at') or datetime.now(timezone.utc).strftime('%B %d, %Y (UTC)'))])),
+               'NoteEstimate')]
+    # Every phone and every email: the main one first, then the extras.
+    def contacts(kind):
+        return '\n'.join(filter(None, [data.get(kind), *[row['value'] for row in data.get('contacts') or [] if row['kind'] == kind]]))
+    # A small grey label over each value; empty ones are left out, and rows of three line up with each other.
+    def row(*fields):
+        fields = [(label, value) for label, value in fields if value]
+        if not fields:
+            return Spacer(0, 0)
+        return table([[[p(label, 'LabelEstimate'), p(value)] for label, value in fields]], [522 / max(len(fields), 3)] * len(fields))
+    def stops(kind):
+        return '\n'.join(stop.get('address', '') for stop in data.get('stops', []) if stop.get('type') == kind)
+    # The earliest delivery date is the customer's storage answer, so it shows only where storage is offered.
+    storage = data.get('storage')
+    story += [p('Customer', 'SectionEstimate'),
+              row(('NAME', data.get('name', '')), ('PHONE', contacts('phone')), ('EMAIL', contacts('email'))),
+              p('Move details', 'SectionEstimate'),
+              row(('PICKUP', data.get('pickup', '')), ('PICKUP STOPS', stops('pickup')),
+                  ('DELIVERY', data.get('delivery', '')), ('DELIVERY STOPS', stops('delivery'))),
+              row(('PICKUP DATE', str(data.get('move_date') or 'Not scheduled')),
+                  ('FIRST AVAILABLE DELIVERY DATE', storage and (storage.get('available_date') or 'Not answered')),
+                  ('PARTIAL ESTIMATE' if any(c.get('pending') for c in estimate.get('charges', [])) else 'ESTIMATED TOTAL', money(estimate['price'])))]
+    for stop in data.get('stops', []):
+        if stop.get('type') not in ('pickup', 'delivery'):
+            story.append(p(f"Additional stop (unspecified): {stop.get('address', '')}"))
+    story += [p('Price breakdown', 'SectionEstimate')] + _price_table(data, styles, p, table, link)
     if data.get('list_changed') or data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
     note = (data.get('customer_notes') or '').strip()

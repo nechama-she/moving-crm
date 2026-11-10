@@ -902,7 +902,11 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     pricing_data['discount_choices'] = None if individual_charges else _discount_choices(lead, job, db)
     if pricing_only:
         return pricing_data
-    return {'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    # The CRM payments, as the customer sees them; SmartMoving's are not shown.
+    payments = [{'id': row.id, 'amount': float(row.amount or 0), 'paid_at': row.paid_at.isoformat() if row.paid_at else '',
+                 'method': row.method or '', 'confirmation_number': row.confirmation_number or ''}
+                for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
+    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -1194,6 +1198,27 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
         'documents': documents_for(db.get(Lead, access.lead_id), job, db, 'work_order')})
     return Response(pdf, media_type='application/pdf', headers={
         'Content-Disposition': 'inline; filename="work-order-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.get('/api/public-moves/{access_id}/invoice.pdf')
+def invoice_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """One invoice for the job: the signed estimate's prices (the current estimate's when none is signed), each CRM
+    payment with its confirmation number, and the balance due."""
+    from invoice_pdf import build_invoice_pdf
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    signed = db.query(EstimateSignature).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
+    data = json.loads(signed.snapshot)['data'] if signed else _estimate_document(access, db)[0]
+    if not data.get('estimate'):
+        raise HTTPException(409, 'The invoice is ready once the estimate has a price.')
+    payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
+    zone = _company_for(lead, db)
+    today = datetime.now(ZoneInfo(zone.timezone if zone else 'America/New_York')).date()
+    pdf = build_invoice_pdf(data, payments, job_number(lead, job), today)
+    return Response(pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="invoice-' + job_number(lead, job) + '.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
