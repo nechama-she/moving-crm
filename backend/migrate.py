@@ -7,6 +7,8 @@ import logging
 
 from sqlalchemy import text
 
+from database import engine
+
 logger = logging.getLogger("migrate")
 
 
