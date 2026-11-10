@@ -1,0 +1,20 @@
+/* Messenger-style bubbles in the bottom-left corner: the newest nearest the corner, the open one's card beside them. */
+.cm-change-bubbles{position:fixed;left:20px;bottom:20px;z-index:9000;font-family:Arial,sans-serif}
+.cm-change-bubbles ul{display:flex;flex-direction:column-reverse;gap:10px;margin:0;padding:0;list-style:none}
+.cm-change-bubble{position:relative;display:grid;place-items:center;width:52px;height:52px;padding:0;border:2px solid #fff;border-radius:50%;background:var(--cm-primary);color:#fff;box-shadow:0 6px 18px rgba(18,46,39,.28);cursor:pointer;animation:cm-change-pop .32s cubic-bezier(.2,1.4,.4,1)}
+.cm-change-bubble:hover{background:var(--cm-primary-hover)}
+.cm-change-bubble:focus-visible{outline:3px solid var(--cm-tint-strong);outline-offset:2px}
+.cm-change-bubble.is-open{box-shadow:0 0 0 3px var(--cm-tint-strong),0 6px 18px rgba(18,46,39,.28)}
+.cm-change-unread{position:absolute;top:0;right:0;width:13px;height:13px;border:2px solid #fff;border-radius:50%;background:#d93025}
+.cm-change-more{display:grid;place-items:center;width:52px;height:30px;border-radius:15px;background:#fff;color:var(--cm-text);font-size:13px;font-weight:700;box-shadow:0 4px 12px rgba(18,46,39,.18)}
+.cm-change-card{position:absolute;left:66px;bottom:0;width:min(290px,calc(100vw - 106px));padding:14px 16px 12px;border:1px solid var(--cm-border-soft);border-radius:16px 16px 16px 4px;background:#fff;color:var(--cm-text);box-shadow:0 10px 30px rgba(18,46,39,.22);animation:cm-change-open .2s ease-out}
+.cm-change-card p{margin:0 0 4px;font-size:14px;line-height:1.4;font-weight:700}
+.cm-change-card small{color:var(--cm-text-muted);font-size:12px}
+.cm-change-card-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:10px}
+.cm-change-card-actions button{padding:5px 12px;border:1px solid var(--cm-border-soft);border-radius:999px;background:#fff;color:var(--cm-primary);font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.cm-change-card-actions button:hover{background:var(--cm-tint)}
+.cm-change-live{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@keyframes cm-change-pop{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes cm-change-open{from{transform:translateY(6px);opacity:0}to{transform:none;opacity:1}}
+@media(max-width:600px){.cm-change-bubbles{left:12px;bottom:12px}.cm-change-bubble{width:46px;height:46px}.cm-change-more{width:46px}.cm-change-card{left:58px;width:min(290px,calc(100vw - 82px))}}
+@media(prefers-reduced-motion:reduce){.cm-change-bubble,.cm-change-card{animation:none}}

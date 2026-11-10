@@ -753,7 +753,7 @@ export default function UnansweredMessagesPage() {
   const signedToday = signatures.filter((row) => new Date(row.signed_at).toDateString() === new Date().toDateString()).length;
 
   useRealtimeUpdates(token, (event) => {
-    if (event.type === "signature_added" || event.type === "signature_removed") {
+    if (event.type === "customer_activity") {
       void loadSignatures();
       return;
     }

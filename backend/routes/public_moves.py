@@ -1145,8 +1145,6 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     record.signer_name, record.signed_at = name, signed_at
     record.signature = json.dumps(signature)
     db.commit()
-    from realtime import publish_realtime_event
-    publish_realtime_event({'type': 'signature_added', 'lead_id': access.lead_id})
     # The page shows the estimate signed from this answer, without loading its pricing again.
     work_order = is_rep_request(access, request)
     return {'id': record.id, 'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'report_id': record.report_id,
@@ -1298,8 +1296,6 @@ def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: Pu
         pdf=build_bill_of_lading_pdf(company, values, documents, signatures))
     db.add(record)
     db.commit()
-    from realtime import publish_realtime_event
-    publish_realtime_event({'type': 'signature_added', 'lead_id': access.lead_id})
     return {'id': record.id, 'name': name, 'signed_at': signature['signed_at']}
 
 
@@ -1315,8 +1311,6 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     record.pdf = pdf
     record.signer_name = record.signed_at = record.signature = None
     db.commit()
-    from realtime import publish_realtime_event
-    publish_realtime_event({'type': 'signature_removed', 'lead_id': access.lead_id})
     # The page updates from this answer: the signature it removed and the estimate's status now. The current
     # estimate is built only when another signed copy is left to compare with.
     status = estimate_signature_status(db, access.lead_id, access.job_id,

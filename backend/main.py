@@ -18,6 +18,7 @@ from database import SessionLocal
 import estimate_approval  # noqa: F401  Saved changes to an estimate clear a rep's approval.
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
+from customer_page_announcements import announce_customer_page_changes
 from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
@@ -311,6 +312,10 @@ async def protect_public_move_responses(request: Request, call_next):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+# After a customer page saves, its other open copies update.
+app.middleware("http")(announce_customer_page_changes)
 
 
 @app.middleware("http")

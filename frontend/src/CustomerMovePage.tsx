@@ -23,6 +23,7 @@ import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
+import CustomerChangeBubbles, { type MoveChange } from './CustomerChangeBubbles';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readCustomerBootstrap } from './customerBootstrap';
@@ -448,7 +449,9 @@ export default function CustomerMovePage() {
   const [themeColor, setThemeColor] = useState<string>(() => bootstrap?.move?.company_details?.color || '#214c3e');
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
-  const headers={'x-public-link':key,'x-public-session':session};
+  // This open page's id: its saves are announced to the move's other open pages, not back to it.
+  const [pageId] = useState(() => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const headers={'x-public-link':key,'x-public-session':session,'x-page-id':pageId};
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
@@ -970,7 +973,10 @@ export default function CustomerMovePage() {
     return state.loading && !state.ready ? <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
-  const updatesUnavailable = useCustomerUpdates(base, key, session, initial => refreshDetails(true, false, initial));
+  // Changes saved on the move's other open pages, newest first, as bubbles until closed.
+  const [moveChanges, setMoveChanges] = useState<MoveChange[]>([]);
+  const updatesUnavailable = useCustomerUpdates(base, key, session, pageId, initial => refreshDetails(true, false, initial),
+    ({ change, by, name }) => setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]));
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
   const pdfMessage = useRef<HTMLParagraphElement>(null);
@@ -1041,6 +1047,7 @@ export default function CustomerMovePage() {
 
   return (
     <div className="customer-move" style={paletteStyle}>
+      <CustomerChangeBubbles items={moveChanges} repPage={repPage} onDismiss={id => setMoveChanges(current => current.filter(item => item.id !== id))} onClear={() => setMoveChanges([])} />
       <div className="cm-wrap">
         {!repPage && (data?.link_sms || linkSms) && (
           <p role="status" className="cm-link-sms-notice">

@@ -505,7 +505,9 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
     if (busy) return;
     if (!catalog || (readOnly && priced)) { onClose(false); return; }
     if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
-    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current && priced) { onClose(false); return; }
+    // An empty list has nothing to price: unpriced, closing it unchanged just closes.
+    const empty = rooms.every(r => !Object.values(r.items).some(qty => qty > 0) && !(r.custom_items || []).length);
+    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current && (priced || empty)) { onClose(false); return; }
     setBusy(true); setError('');
     try {
       if (dirty.current || pending.current || saving.current) {
