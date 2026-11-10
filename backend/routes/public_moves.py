@@ -137,11 +137,16 @@ def set_move_page_cookie(response, access, token, expires_at, rep=False):
 def initial_move_page(access_id: str, request: Request, db: Session = Depends(get_db)):
     from pathlib import Path
     from fastapi.responses import HTMLResponse
-    from customer_page_html import render
+    from customer_page_html import render, with_title
     template_path = Path(__file__).resolve().parents[1] / 'customer-page.html'
     if not template_path.exists():
         template_path = Path(__file__).resolve().parents[2] / 'frontend/dist/index.html'
     template = template_path.read_text(encoding='utf-8')
+    # Titled like the estimate's file: Estimate - customer - company.
+    link = db.get(PublicMoveAccess, access_id)
+    lead = db.get(Lead, link.lead_id) if link and not link.revoked and link.expires_at > NOW() else None
+    if lead:
+        template = with_title(template, ' - '.join(value for value in ('Estimate', (lead.full_name or '').strip(), _company_details(_company_for(lead, db))['name']) if value))
     rep = request.query_params.get('audience') == 'rep'
     token = request.cookies.get('cm_rep' if rep else 'cm_customer', '')
     bootstrap = None

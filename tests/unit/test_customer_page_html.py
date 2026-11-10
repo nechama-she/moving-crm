@@ -10,7 +10,7 @@ import hmac
 
 BACKEND = Path(__file__).resolve().parents[2] / 'backend'
 sys.path.insert(0, str(BACKEND))
-from customer_page_html import render
+from customer_page_html import render, with_title
 
 
 class InitialHtmlTests(unittest.TestCase):
@@ -30,11 +30,17 @@ class InitialHtmlTests(unittest.TestCase):
     def test_unverified_response_has_no_customer_data(self):
         self.assertEqual(render('<div id="root"></div>'), '<div id="root"></div>')
 
+    def test_title_names_the_estimate_for_link_previews(self):
+        result = with_title('<head><title>Moving CRM</title></head>', 'Estimate - Jo <b> - Gorilla Haulers')
+        self.assertEqual(result, '<head><title>Estimate - Jo &lt;b&gt; - Gorilla Haulers</title>'
+                                 '<meta property="og:title" content="Estimate - Jo &lt;b&gt; - Gorilla Haulers"></head>')
+
 
 class InitialHtmlAuthTests(unittest.TestCase):
     def setUp(self):
         now = datetime.utcnow()
-        self.access = SimpleNamespace(id='move', revoked=False, expires_at=now+timedelta(hours=8))
+        self.access = SimpleNamespace(id='move', lead_id='lead', revoked=False, expires_at=now+timedelta(hours=8))
+        self.lead = SimpleNamespace(full_name='Jane Doe')
         self.session = SimpleNamespace(access_id='move', expires_at=now+timedelta(hours=1), contact_hash='fingerprint')
         self.request = SimpleNamespace(query_params={}, cookies={'cm_customer': 'session-token'}, scope={})
         self.move = Mock(return_value={'name':'Private Name'})
@@ -47,13 +53,15 @@ class InitialHtmlAuthTests(unittest.TestCase):
                       'digest': lambda token: token, 'NOW': lambda: now, 'rep_link_token': lambda a: 'rep-key',
                       'link_token': lambda a: 'customer-key', 'Request': lambda scope: scope,
                       'verification_fingerprint': lambda *a: 'fingerprint', 'hmac':hmac, 'timezone':timezone,
-                      'move_section': self.move}
+                      'move_section': self.move, 'Lead': 'lead', '_company_for': lambda lead, db: 'company',
+                      '_company_details': lambda company: {'name': 'Gorilla Haulers'}}
         exec(compile(ast.Module(body=[ast.parse('from __future__ import annotations').body[0], func], type_ignores=[]), 'html-route', 'exec'), self.scope)
 
     def run_route(self):
-        db = SimpleNamespace(get=lambda model, id: self.access if model == 'access' else self.session)
+        db = SimpleNamespace(get=lambda model, id: {'access': self.access, 'lead': self.lead}.get(model, self.session))
+        self.titles = []
         modules = {'fastapi.responses': SimpleNamespace(HTMLResponse=lambda body, headers: SimpleNamespace(body=body, headers=headers)),
-                   'customer_page_html': SimpleNamespace(render=self.renderer)}
+                   'customer_page_html': SimpleNamespace(render=self.renderer, with_title=lambda template, title: self.titles.append(title) or template)}
         with patch.dict(sys.modules, modules), patch.object(Path, 'read_text', return_value='<div id="root"></div>'):
             return self.scope['initial_move_page']('move', self.request, db)
 
@@ -74,6 +82,16 @@ class InitialHtmlAuthTests(unittest.TestCase):
                 self.assertIsNone(self.renderer.call_args.args[1])
                 self.move.assert_not_called()
                 setattr(obj, attribute, old)
+
+    def test_page_is_titled_for_link_previews_before_verification(self):
+        self.request.cookies = {}
+        self.run_route()
+        self.assertEqual(self.titles, ['Estimate - Jane Doe - Gorilla Haulers'])
+        self.assertIsNone(self.renderer.call_args.args[1])
+        self.access.revoked = True
+        self.titles.clear()
+        self.run_route()
+        self.assertEqual(self.titles, [])
 
     def test_customer_cookie_is_not_used_for_rep_page(self):
         self.request.query_params = {'audience':'rep'}
