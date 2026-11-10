@@ -228,6 +228,10 @@ export default function CustomerMovePage() {
   }, [answersSaving]);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [inventoryOpened, setInventoryOpened] = useState(false);
+  // The list window loads the list once and stays loaded while hidden. When another page changes the list, a new one
+  // loads it again: at once while hidden, or when the open one is closed.
+  const [inventoryVersion, setInventoryVersion] = useState(0);
+  const inventoryChangedElsewhere = useRef(false);
   useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'items'>('bulky');
@@ -976,7 +980,13 @@ export default function CustomerMovePage() {
   // Changes saved on the move's other open pages, newest first, as bubbles until closed.
   const [moveChanges, setMoveChanges] = useState<MoveChange[]>([]);
   const updatesUnavailable = useCustomerUpdates(base, key, session, pageId, initial => refreshDetails(true, false, initial),
-    ({ change, by, name }) => setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]));
+    ({ change, by, name }) => {
+      setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]);
+      if (['inventory_updated', 'item_questions_answered', 'inventory_report_chosen'].includes(change)) {
+        if (showInventoryList) inventoryChangedElsewhere.current = true;
+        else setInventoryVersion(version => version + 1);
+      }
+    });
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
   const pdfMessage = useRef<HTMLParagraphElement>(null);
@@ -1509,7 +1519,7 @@ export default function CustomerMovePage() {
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
+            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
@@ -1529,7 +1539,11 @@ export default function CustomerMovePage() {
               // Saving the list does not reprice; the estimate is only marked as needing an update.
               setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
               return result;
-            }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => { setShowInventoryList(false); if (changed) void loadSection('inventory', true); }} />}
+            }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => {
+              setShowInventoryList(false);
+              if (changed) void loadSection('inventory', true);
+              if (inventoryChangedElsewhere.current) { inventoryChangedElsewhere.current = false; setInventoryVersion(version => version + 1); }
+            }} />}
             {inventoryPdf && <InventoryViewer url={inventoryPdf.url} filename={inventoryPdf.filename} title={inventoryPdf.title} description={inventoryPdf.description} onClose={() => { URL.revokeObjectURL(inventoryPdf.url); setInventoryPdf(null); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>
