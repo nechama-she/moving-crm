@@ -24,6 +24,10 @@ def migrate() -> None:
     # Payments' confirmation numbers: new CRM payments get one; existing payments keep none. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'lead_payments', 'confirmation_number', 'VARCHAR(12) UNIQUE')
+    # When the customer link was emailed, and to which (masked) address. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'public_move_access', 'link_email_sent_at', 'TIMESTAMP')
+        add_column(connection, 'public_move_access', 'link_email_hint', 'VARCHAR(255)')
 
 
 if __name__ == "__main__":

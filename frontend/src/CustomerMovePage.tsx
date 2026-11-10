@@ -33,6 +33,7 @@ import RepDiscounts, { type DiscountResult } from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
+type LinkEmail = { sent_at: string; email_hint: string };
 type Shuttle = { automatic: boolean; answer: boolean | null; unknown?: boolean; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
 // What saving one answer returns: only the data that answer changed.
 type PricingDelta = {
@@ -57,6 +58,7 @@ type Details = {
 
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
+  link_email?: LinkEmail | null;
   list_changed?: boolean;
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string;going?:boolean}[];
   report_history?: ReportRun[];
@@ -131,6 +133,7 @@ export default function CustomerMovePage() {
     document.getElementById('move-first-style')?.remove();
   }, []);
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
+  const [linkEmail, setLinkEmail] = useState<LinkEmail | null>(null);
   const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
   // Whether customers can change their move: the server's one switch (CUSTOMER_CAN_EDIT), read-only until it answers.
@@ -834,7 +837,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -1147,6 +1150,11 @@ export default function CustomerMovePage() {
         {!repPage && (data?.link_sms || linkSms) && (
           <p role="status" className="cm-link-sms-notice">
             We sent a text message to your phone{(data?.link_sms || linkSms)?.phone_last4 ? ` ending in ${(data?.link_sms || linkSms)?.phone_last4}` : ''} with a link to this page. You can use it to return anytime.
+          </p>
+        )}
+        {!repPage && (data?.link_email || linkEmail) && (
+          <p role="status" className="cm-link-sms-notice">
+            We sent an email{(data?.link_email || linkEmail)?.email_hint ? ` to ${(data?.link_email || linkEmail)?.email_hint}` : ''} with a link to this page. You can use it to return anytime.
           </p>
         )}
         {!session ? (

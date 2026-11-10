@@ -418,6 +418,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         'options': options,
         'customer_can_edit': CUSTOMER_CAN_EDIT,
         'link_sms': customer_link_sms_notice(access),
+        'link_email': customer_link_email_notice(access),
         'company': {key: shown[key] for key in ('name', 'color', 'logo')},
     }
 
@@ -726,7 +727,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
         return dict(name=lead.full_name, phone=lead.phone or '', email=lead.email or '', move_date=job.move_date or '', pickup=pickup, delivery=delivery,
                     contacts=[row.to_dict() for row in lead.contacts],
                     stops=_typed_stops(job, stops), company=details['name'], company_details=details,
-                    link_sms=customer_link_sms_notice(access))
+                    link_sms=customer_link_sms_notice(access), link_email=customer_link_email_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
         return dict(inventory_draft=None, combined_inventory=_combined_inventory(state, db, job.id),
@@ -913,6 +914,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'company': company_data['name'],
             'company_details': company_data,
             'link_sms': customer_link_sms_notice(access),
+            'link_email': customer_link_email_notice(access),
             'estimate': estimate,
             'spark': spark_info,
             'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
@@ -2438,7 +2440,8 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     job = db.get(LeadJob, access.job_id)
     meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
-    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
+    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
+            'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
 
@@ -2477,11 +2480,25 @@ def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db:
     return deliver_customer_link_sms(lead, access, db)
 
 
+@router.post('/api/leads/{lead_id}/customer-page/email')
+def email_customer_link(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, access = staff_access(lead_id, user, db)
+    if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
+    if not (lead.email or '').strip(): raise HTTPException(400, 'This lead has no email address')
+    return deliver_customer_link_email(lead, access, db)
+
+
 def customer_link_sms_notice(access):
     if not access.link_sms_sent_at:
         return None
     return {'sent_at': access.link_sms_sent_at.isoformat() + 'Z',
             'phone_last4': access.link_sms_phone_last4 or ''}
+
+
+def customer_link_email_notice(access):
+    if not access.link_email_sent_at:
+        return None
+    return {'sent_at': access.link_email_sent_at.isoformat() + 'Z', 'email_hint': access.link_email_hint or ''}
 
 
 def customer_link_message(access):
@@ -2520,6 +2537,10 @@ def deliver_customer_link_email(lead, access, db):
                 'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
     except Exception:
         raise HTTPException(502, 'Could not send email. Please retry.')
+    local, _, domain = lead.email.strip().partition('@')
+    access.link_email_sent_at = NOW()
+    access.link_email_hint = local[:1] + '***@' + domain
+    db.commit()
     return {'ok': True}
 
 

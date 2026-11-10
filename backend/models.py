@@ -1503,6 +1503,8 @@ class PublicMoveAccess(Base):
     published_at = Column(DateTime)
     link_sms_sent_at = Column(DateTime)
     link_sms_phone_last4 = Column(String(4))
+    link_email_sent_at = Column(DateTime)
+    link_email_hint = Column(String(255))  # The address it went to, masked: n***@gmail.com
     created_at = Column(DateTime, default=_now)
 
 
