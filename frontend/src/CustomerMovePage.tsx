@@ -66,10 +66,7 @@ type Details = {
   // Rep pages only: the estimate is signed.
   work_order_available?: boolean;
   // The payments entered in the CRM, each with its confirmation number (none on earlier ones).
-  payments?: { id: string; amount: number; paid_at: string; method: string; confirmation_number: string }[];
-  // The signed estimate's price, which the invoice and balance use; null when nothing is signed.
-  invoice_price?: number | null;
-  // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
+  payments?: { id: string; amount: number; paid_at: string; method: string; confirmation_number: string }[];  // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
   bill_of_lading?: { signed: boolean } | null;
   // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
   discount_choices?: { options: { title: string; type: 'amount' | 'percent' | 'rate'; value: number }[]; selected: string | null } | null;
@@ -1610,6 +1607,7 @@ export default function CustomerMovePage() {
                   <strong>Payments</strong>
                   <button type="button" className="cm-secondary-btn" disabled={invoiceBusy} onClick={() => void openInvoice()}>{invoiceBusy ? 'Preparing invoice...' : 'View invoice'}</button>
                 </div>
+                {data.estimate && <div className="cm-payments-total cm-payments-balance"><span>Total</span><strong>{money(Number(data.estimate.price || 0))}</strong></div>}
                 <ul>
                   {data.payments.map(payment => <li key={payment.id}>
                     <div>
@@ -1620,7 +1618,7 @@ export default function CustomerMovePage() {
                   </li>)}
                 </ul>
                 <div className="cm-payments-total"><span>Total paid</span><strong>{money(data.payments.reduce((sum, payment) => sum + payment.amount, 0))}</strong></div>
-                {(data.invoice_price != null || data.estimate) && <div className="cm-payments-total cm-payments-balance"><span>Balance due</span><strong>{money((data.invoice_price ?? Number(data.estimate?.price || 0)) - data.payments.reduce((sum, payment) => sum + payment.amount, 0))}</strong></div>}
+                {data.estimate && <div className="cm-payments-total cm-payments-balance"><span>Balance due</span><strong>{money(Number(data.estimate.price || 0) - data.payments.reduce((sum, payment) => sum + payment.amount, 0))}</strong></div>}
               </section>}
 
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
