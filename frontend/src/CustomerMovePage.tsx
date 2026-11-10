@@ -580,12 +580,12 @@ export default function CustomerMovePage() {
   }
   // What the inventory's Done does: once the service answers are saved, price the list (or start its report), then
   // reload the list, volume and price.
-  async function finishInventory() {
+  async function finishInventory(automatic = false) {
     await answerQueue.current;
     if (failedAnswers.current.size || failedPricing.current.size) {
       throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
     }
-    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
+    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {}, undefined, automatic);
     // Done changes the list, volume and price; the rest of the page is unchanged.
     await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
     setCalculationError('');
@@ -597,7 +597,7 @@ export default function CustomerMovePage() {
     if (!data.combined_inventory?.length || data.estimate || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
     autoFinished.current = true;
     setCalculatingPrice(true);
-    finishInventory().catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
+    finishInventory(true).catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
   });
   async function recalculatePrice() {
     if (priceCalculationRunning.current) return;
@@ -720,7 +720,8 @@ export default function CustomerMovePage() {
       report_history: previous.report_history?.map(report => report.id === signature.report_id
         ? {...report, signatures: [row, ...(report.signatures || []).filter(item => item.id !== signature.id)]} : report)} : previous);
   }
-  async function call(path:string, body?:unknown, method?:string) {
+  // automatic: a save the page made by itself, not someone's action, so the move's other pages show no notice for it.
+  async function call(path:string, body?:unknown, method?:string, automatic=false) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const controller = new AbortController();
     const timeout = (path === '/details' || path === '/summary' || path.startsWith('/sections/')) && httpMethod === 'GET'
@@ -728,7 +729,7 @@ export default function CustomerMovePage() {
     let response: Response;
     let result;
     try {
-      response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:controller.signal});
+      response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json',...(automatic?{'x-automatic':'1'}:{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:controller.signal});
       result=await response.json().catch(()=>null);
       if (controller.signal.aborted) throw new Error('Request timed out');
     } catch (error) {

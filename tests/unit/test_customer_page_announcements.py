@@ -33,6 +33,7 @@ def test_saves_announce_the_move_with_the_page_that_saved():
         client.post(f'/api/public-moves/{MOVE}/estimate-signatures/abc/sign', headers={'x-page-id': 'page-1'})
         client.post(f'/api/public-moves/{MOVE}/packing', headers={'x-public-link': 'rep-key'})
         client.post(f'/api/public-moves/{MOVE}/estimate-signatures')
+        client.post(f'/api/public-moves/{MOVE}/recalculate-price', headers={'x-automatic': '1'})
         client.patch(f'/api/public-moves/{MOVE}/inventory/actions')
         client.post(f'/api/public-moves/{MOVE}/bill-of-lading/1/rev/sign')
         client.post(f'/api/public-moves/{MOVE}/estimate-signatures/abc/resign')
@@ -42,7 +43,8 @@ def test_saves_announce_the_move_with_the_page_that_saved():
         client.post(f'/api/public-moves/{MOVE}/fails')
         client.post('/api/public-moves/22222222-2222-3333-4444-555555555555/files')
     assert sent == [('lead', 'page-1', 'estimate_signed', 'customer', 'Jane Doe'), ('lead', '', 'packing_changed', 'team', 'Eli Jones'),
-                    ('lead', '', '', 'customer', 'Jane Doe'), ('lead', '', 'inventory_updated', 'customer', 'Jane Doe'),
+                    ('lead', '', '', 'customer', 'Jane Doe'), ('lead', '', '', 'customer', 'Jane Doe'),
+                    ('lead', '', 'inventory_updated', 'customer', 'Jane Doe'),
                     ('lead', '', 'bill_of_lading_signed', 'customer', 'Jane Doe'),
                     ('lead', '', 'estimate_signature_cancelled', 'customer', 'Jane Doe')]
     assert activity == [{'type': 'customer_activity', 'lead_id': 'lead'}] * 3
