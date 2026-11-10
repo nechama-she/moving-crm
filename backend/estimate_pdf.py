@@ -238,11 +238,11 @@ def _template(output, company):
                              bottomMargin=53, title='Moving estimate', author=company.get('name') or '')
 
 
-def _price_table(data, styles, p, table, link=True, total_label='TOTAL ESTIMATED PRICE'):
-    """The price breakdown: the volume, each price line, the transportation package's discount and subtotal, the
-    additional services and fees total (linking to their table), then the total."""
+def _price_table(data, styles, p, table, link=True, total_label='TOTAL ESTIMATED PRICE', volume=True):
+    """The price breakdown: the volume (without volume, left out), each price line, the transportation package's
+    discount and subtotal, the additional services and fees total (linking to their table), then the total."""
     estimate = data['estimate']
-    story = [p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")]
+    story = [p(f"Estimated shipment volume: {ceil(float(estimate.get('cuft') or 0))} cu ft")] if volume else []
     package = data.get('packing_package') or {}
     minimum = package.get('minimum_cubic_feet')
     if minimum and float(minimum) > float(estimate.get('cuft') or 0):

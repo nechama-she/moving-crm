@@ -900,12 +900,12 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     pricing_data['bill_of_lading'] = _bill_of_lading_status(access, db, pricing_data['signature_status'] == 'signed')
     pricing_data['discount_choices'] = None if individual_charges else _discount_choices(lead, job, db)
-    if pricing_only:
-        return pricing_data
     # The CRM payments, as the customer sees them; SmartMoving's are not shown.
     payments = [{'id': row.id, 'amount': float(row.amount or 0), 'paid_at': row.paid_at.isoformat() if row.paid_at else '',
                  'method': row.method or '', 'confirmation_number': row.confirmation_number or ''}
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
+    if pricing_only:
+        return dict(pricing_data, payments=payments)
     return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,

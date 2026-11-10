@@ -1,11 +1,11 @@
-"""The invoice for a job: the company, who is billed and where, the estimate's price lines and its additional services and
-fees (a fee with no charge shows $0.00), then each CRM payment with its confirmation number, and the balance due."""
+"""The invoice for a job: the company, who is billed and where, the estimate's price lines, then each CRM payment with its
+confirmation number and the balance due; on the next page, the additional services and fees (no charge shows $0.00)."""
 from datetime import date
 from decimal import Decimal
 from io import BytesIO
 
 from reportlab.lib import colors
-from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, Spacer, Table, TableStyle
 
 from estimate_pdf import _kit, _price_table, _services_table, _services_total, _template, money
 
@@ -19,7 +19,8 @@ def build_invoice_pdf(data, payments, invoice_number, invoice_date: date):
     total = Decimal(str(estimate.get('price') or 0))
     # The company on the left, the invoice number on the right.
     company_block = [p(value, 'NoteEstimate') for value in [
-        ' - '.join(filter(None, [company.get('name') or data.get('company'), company.get('phone')])), company.get('office_address')] if value]
+        ' - '.join(filter(None, [company.get('name') or data.get('company'), company.get('phone')])), company.get('office_address'),
+        company.get('dot_number') and f"USDOT: {company['dot_number']}"] if value]
     logo = company_logo_image(company.get('logo'))
     header = Table([[[logo, *company_block] if logo else company_block, p(f'INVOICE {invoice_number}', 'CompanyEstimate')]],
                    colWidths=[322, 200], hAlign='LEFT')
@@ -38,11 +39,7 @@ def build_invoice_pdf(data, payments, invoice_number, invoice_date: date):
     ]], colWidths=[322, 200], hAlign='LEFT')
     details.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'), ('LEFTPADDING', (0, 0), (-1, -1), 0)]))
     story = [header, Spacer(1, 10), details, p('Charges', 'SectionEstimate')]
-    story += _price_table(data, styles, p, table, total_label='TOTAL')
-    # The additional services and fees, each with its charge: $0.00 where there is none.
-    if _services_total(estimate)[0] or any(data.get(key) for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage', 'shuttle')):
-        story += [Paragraph('<a name="additional-services"/>Additional services and fees', styles['SectionEstimate']),
-                  _services_table(data, p, table, styles, no_charge=money(0))]
+    story += _price_table(data, styles, p, table, total_label='TOTAL', volume=False)
     # Each payment with its confirmation number, then the balance.
     story.append(p('Payments', 'SectionEstimate'))
     body = [[p('DATE'), p('METHOD'), p('CONFIRMATION NUMBER'), p('AMOUNT', 'RightEstimate')]]
@@ -56,6 +53,10 @@ def build_invoice_pdf(data, payments, invoice_number, invoice_date: date):
                                       + [('SPAN', (0, len(body) - n), (2, len(body) - n)) for n in range(1, len(totals) + 1)]
                                       + [('BACKGROUND', (0, len(body) - 1), (-1, len(body) - 1), colors.HexColor('#edf2f5'))]))
     story.append(payment_table)
+    # On the next page, the additional services and fees, each with its charge: $0.00 where there is none.
+    if _services_total(estimate)[0] or any(data.get(key) for key in ('extra_stops', 'elevator', 'long_carry', 'stairs', 'storage', 'shuttle')):
+        story += [PageBreak(), Paragraph('<a name="additional-services"/>Additional services and fees', styles['SectionEstimate']),
+                  _services_table(data, p, table, styles, no_charge=money(0))]
     output = BytesIO()
     _template(output, company).build(story)
     return output.getvalue()
