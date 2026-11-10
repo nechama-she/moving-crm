@@ -1205,14 +1205,10 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
 
 @router.get('/api/public-moves/{access_id}/invoice.pdf')
 def invoice_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    """One invoice for the job: the signed estimate's prices (the current estimate's when none is signed), each CRM
-    payment with its confirmation number, and the balance due."""
+    """One invoice for the job: the estimate's live prices, each CRM payment with its confirmation number, and the balance due."""
     from invoice_pdf import build_invoice_pdf
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    signed = db.query(EstimateSignature).filter(
-        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
-        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
-    data = json.loads(signed.snapshot)['data'] if signed else _estimate_document(access, db)[0]
+    data = _estimate_document(access, db)[0]
     if not data.get('estimate'):
         raise HTTPException(409, 'The invoice is ready once the estimate has a price.')
     payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
