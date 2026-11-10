@@ -23,7 +23,7 @@ import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
-import CustomerChangeBubbles, { type MoveChange } from './CustomerChangeBubbles';
+import CustomerChangeBubbles, { SIGNATURE_CHANGES, type MoveChange } from './CustomerChangeBubbles';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readCustomerBootstrap } from './customerBootstrap';
@@ -580,12 +580,12 @@ export default function CustomerMovePage() {
   }
   // What the inventory's Done does: once the service answers are saved, price the list (or start its report), then
   // reload the list, volume and price.
-  async function finishInventory(automatic = false) {
+  async function finishInventory() {
     await answerQueue.current;
     if (failedAnswers.current.size || failedPricing.current.size) {
       throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
     }
-    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {}, undefined, automatic);
+    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
     // Done changes the list, volume and price; the rest of the page is unchanged.
     await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
     setCalculationError('');
@@ -597,7 +597,7 @@ export default function CustomerMovePage() {
     if (!data.combined_inventory?.length || data.estimate || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
     autoFinished.current = true;
     setCalculatingPrice(true);
-    finishInventory(true).catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
+    finishInventory().catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
   });
   async function recalculatePrice() {
     if (priceCalculationRunning.current) return;
@@ -720,8 +720,7 @@ export default function CustomerMovePage() {
       report_history: previous.report_history?.map(report => report.id === signature.report_id
         ? {...report, signatures: [row, ...(report.signatures || []).filter(item => item.id !== signature.id)]} : report)} : previous);
   }
-  // automatic: a save the page made by itself, not someone's action, so the move's other pages show no notice for it.
-  async function call(path:string, body?:unknown, method?:string, automatic=false) {
+  async function call(path:string, body?:unknown, method?:string) {
     const httpMethod = method || (body===undefined ? 'GET' : 'POST');
     const controller = new AbortController();
     const timeout = (path === '/details' || path === '/summary' || path.startsWith('/sections/')) && httpMethod === 'GET'
@@ -729,7 +728,7 @@ export default function CustomerMovePage() {
     let response: Response;
     let result;
     try {
-      response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json',...(automatic?{'x-automatic':'1'}:{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:controller.signal});
+      response=await fetch(base+path,{method:httpMethod,headers:{...headers,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:controller.signal});
       result=await response.json().catch(()=>null);
       if (controller.signal.aborted) throw new Error('Request timed out');
     } catch (error) {
@@ -978,11 +977,12 @@ export default function CustomerMovePage() {
     return state.loading && !state.ready ? <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
-  // Changes saved on the move's other open pages, newest first, as bubbles until closed.
+  // Signatures on the move's other open pages (signed, cancelled, ready to sign), newest first, as bubbles until closed.
+  // Other changes update the page without one.
   const [moveChanges, setMoveChanges] = useState<MoveChange[]>([]);
   const updatesUnavailable = useCustomerUpdates(base, key, session, pageId, initial => refreshDetails(true, false, initial),
     ({ change, by, name }) => {
-      setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]);
+      if (SIGNATURE_CHANGES.has(change)) setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]);
       if (['inventory_updated', 'item_questions_answered', 'inventory_report_chosen'].includes(change)) {
         if (showInventoryList) inventoryChangedElsewhere.current = true;
         else setInventoryVersion(version => version + 1);

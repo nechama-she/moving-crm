@@ -5,29 +5,14 @@ import './CustomerChangeBubbles.css';
  *  or the lead's rep's name (blank when unknown). */
 export type MoveChange = { id: string; change: string; by: 'customer' | 'team'; name: string; at: number };
 
-// What each change did, after who did it ("The customer signed the estimate").
+// The signature changes shown as bubbles, and what each did, after who did it ("The customer signed the estimate").
 const WHAT: Record<string, string> = {
   estimate_signed: 'signed the estimate',
   estimate_signature_cancelled: 'cancelled the estimate signature',
-  estimate_approved: 'approved the estimate',
+  estimate_approved: 'made the estimate ready to sign',
   bill_of_lading_signed: 'signed the Bill of Lading',
-  inventory_updated: 'updated the inventory',
-  item_questions_answered: 'answered questions about items',
-  inventory_report_chosen: 'chose an inventory report',
-  estimate_updated: 'updated the estimate',
-  packing_changed: 'changed packing or extra services',
-  details_updated: 'updated the move details',
-  discount_chosen: 'chose a discount',
-  discounts_changed: 'changed the discounts',
-  files_uploaded: 'uploaded files',
-  file_deleted: 'deleted a file',
-  walkthrough_requested: 'requested a virtual walkthrough',
-  reschedule_requested: 'asked to reschedule',
 };
-const SIGNED = new Set(['estimate_signed', 'estimate_signature_cancelled', 'estimate_approved', 'bill_of_lading_signed']);
-const MONEY = new Set(['estimate_updated', 'packing_changed', 'discount_chosen', 'discounts_changed']);
-const FILES = new Set(['files_uploaded', 'file_deleted']);
-const INVENTORY = new Set(['inventory_updated', 'item_questions_answered', 'inventory_report_chosen']);
+export const SIGNATURE_CHANGES = new Set(Object.keys(WHAT));
 const SHOWN = 6;
 
 export function describeChange(item: MoveChange, repPage: boolean) {
@@ -37,13 +22,8 @@ export function describeChange(item: MoveChange, repPage: boolean) {
   return repPage ? `${item.name || 'The customer'} ${what}` : `You ${what} on another device`;
 }
 
-function ChangeIcon({ change }: { change: string }) {
-  const path = SIGNED.has(change) ? 'M3 21h18M5 17l9.5-9.5 3 3L8 20H5v-3Zm11-11 2-2 3 3-2 2'
-    : MONEY.has(change) ? 'M12 3v18M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.6 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3'
-    : FILES.has(change) ? 'M14 3H6v18h12V7l-4-4Zm0 0v4h4'
-    : INVENTORY.has(change) ? 'M3 7l9-4 9 4-9 4-9-4Zm0 0v10l9 4 9-4V7M12 11v10'
-    : 'M8 3v3m8-3v3M4 8h16M5 5h14v15H5V5Z';
-  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={path} /></svg>;
+function SignatureIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 21h18M5 17l9.5-9.5 3 3L8 20H5v-3Zm11-11 2-2 3 3-2 2" /></svg>;
 }
 
 function ago(at: number, now: number) {
@@ -79,7 +59,7 @@ export default function CustomerChangeBubbles({ items, repPage, onDismiss, onCle
       {shown.slice(0, SHOWN).map(item => <li key={item.id}>
         <button type="button" className={`cm-change-bubble${item.id === open ? ' is-open' : ''}`} aria-expanded={item.id === open}
           aria-label={describeChange(item, repPage)} title={describeChange(item, repPage)} onClick={() => toggle(item.id)}>
-          <ChangeIcon change={item.change} />
+          <SignatureIcon />
           {!seen.has(item.id) && <span className="cm-change-unread" aria-hidden="true" />}
         </button>
       </li>)}

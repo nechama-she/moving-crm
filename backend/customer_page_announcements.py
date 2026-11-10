@@ -8,7 +8,8 @@ from starlette.concurrency import run_in_threadpool
 CUSTOMER_PAGE_READS = {'realtime-token', 'send-code', 'verify', 'address-search', 'address-resolve', 'inventory.pdf',
                        'mileage', 'availability', 'question-images', 'prepare-upload'}
 
-# What a save did, for the other open pages' notice (the page words it). A save not listed updates them without one.
+# What a save did, for the other open pages: they show signatures as notices, and reload the inventory list after its
+# changes. A save not listed only updates them.
 CHANGES = [
     (re.compile(r'estimate-signatures/[^/]+/sign'), 'estimate_signed'),
     (re.compile(r'estimate-signatures/[^/]+/resign'), 'estimate_signature_cancelled'),
@@ -54,13 +55,12 @@ def _move_of(access_id, link):
         db.close()
 
 
-def _announce(access_id, path, link, origin, automatic):
+def _announce(access_id, path, link, origin):
     from realtime import publish_move_change, publish_realtime_event
     lead_id, by_rep, name = _move_of(access_id, link)
     if not lead_id:
         return
-    # A save the page made by itself (pricing a list on opening) updates the other pages without a notice.
-    change = '' if automatic else next((kind for pattern, kind in CHANGES if pattern.fullmatch(path)), '')
+    change = next((kind for pattern, kind in CHANGES if pattern.fullmatch(path)), '')
     publish_move_change(lead_id, origin, change, 'team' if by_rep else 'customer', name)
     if change in CUSTOMER_ACTIVITY:
         publish_realtime_event({'type': 'customer_activity', 'lead_id': lead_id})
@@ -72,5 +72,5 @@ async def announce_customer_page_changes(request, call_next):
     if (match and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and response.status_code < 300
             and match.group(2) not in CUSTOMER_PAGE_READS):
         await run_in_threadpool(_announce, match.group(1), match.group(2), request.headers.get('x-public-link', ''),
-                                request.headers.get('x-page-id', '')[:64], request.headers.get('x-automatic') == '1')
+                                request.headers.get('x-page-id', '')[:64])
     return response
