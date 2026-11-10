@@ -5,6 +5,15 @@ import colorsys
 from company_colors import normalize_company_color
 
 
+def with_title(template, title):
+    """The page's title, also the title of its link preview (Messenger, texts, email): read by the previewer without
+    the link's key, so it holds only what the link's message already shows."""
+    if not title:
+        return template
+    value = html.escape(title, quote=True)
+    return template.replace('<title>Moving CRM</title>', f'<title>{value}</title><meta property="og:title" content="{value}">', 1)
+
+
 def render(template, bootstrap=None):
     if not bootstrap:
         return template
