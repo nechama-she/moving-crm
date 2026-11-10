@@ -418,6 +418,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         'options': options,
         'customer_can_edit': CUSTOMER_CAN_EDIT,
         'link_sms': customer_link_sms_notice(access),
+        'link_email': customer_link_email_notice(access),
         'company': {key: shown[key] for key in ('name', 'color', 'logo')},
     }
 
@@ -726,7 +727,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
         return dict(name=lead.full_name, phone=lead.phone or '', email=lead.email or '', move_date=job.move_date or '', pickup=pickup, delivery=delivery,
                     contacts=[row.to_dict() for row in lead.contacts],
                     stops=_typed_stops(job, stops), company=details['name'], company_details=details,
-                    link_sms=customer_link_sms_notice(access))
+                    link_sms=customer_link_sms_notice(access), link_email=customer_link_email_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
         return dict(inventory_draft=None, combined_inventory=_combined_inventory(state, db, job.id),
@@ -900,15 +901,20 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     pricing_data['bill_of_lading'] = _bill_of_lading_status(access, db, pricing_data['signature_status'] == 'signed')
     pricing_data['discount_choices'] = None if individual_charges else _discount_choices(lead, job, db)
+    # The CRM payments, as the customer sees them; SmartMoving's are not shown.
+    payments = [{'id': row.id, 'amount': float(row.amount or 0), 'paid_at': row.paid_at.isoformat() if row.paid_at else '',
+                 'method': row.method or '', 'confirmation_number': row.confirmation_number or ''}
+                for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
-        return pricing_data
-    return {'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+        return dict(pricing_data, payments=payments)
+    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
             'company': company_data['name'],
             'company_details': company_data,
             'link_sms': customer_link_sms_notice(access),
+            'link_email': customer_link_email_notice(access),
             'estimate': estimate,
             'spark': spark_info,
             'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
@@ -1071,21 +1077,42 @@ def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: S
     return {'items': signed_estimates(db, access.lead_id, access.job_id)}
 
 
+class EstimateViewing(BaseModel):
+    # The copy the page is showing, when it asks again because the estimate changed or was approved while it was open.
+    viewing: str | None = Field(default=None, max_length=36)
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures')
-def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), body: EstimateViewing | None = None):
     from fastapi.encoders import jsonable_encoder
     from models import EstimateSignature
     from estimate_pdf import build_estimate_pdf
     job = db.get(LeadJob, access.job_id)
     if job.estimate_approved_id:
-        # The copy the rep approved, exactly as saved: nothing is built.
-        return {'id': job.estimate_approved_id, 'signed': False, 'approved': True}
+        # The copy the rep approved, exactly as saved: nothing is built. same: the copy the page shows says the same, so
+        # the page keeps it on screen and signs the approved one.
+        same = False
+        if body and body.viewing and body.viewing != job.estimate_approved_id:
+            from estimate_signature_history import estimate_state
+            shown, approved = db.get(EstimateSignature, body.viewing), db.get(EstimateSignature, job.estimate_approved_id)
+            if shown and approved and shown.job_id == job.id and not shown.signed_at:
+                states = [json.loads(row.snapshot) for row in (shown, approved)]
+                same = estimate_state(states[0]['data'], states[0]['rows']) == estimate_state(states[1]['data'], states[1]['rows'])
+        return {'id': job.estimate_approved_id, 'signed': False, 'approved': True, 'same': same}
     # A new, unsigned estimate from what is saved, as the page shows it: nothing is recalculated or compared.
     # A signed estimate is opened from its saved copy instead (estimate-signatures/{id}/pdf).
     data, rows = _estimate_document(access, db)
     pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
     if pending:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
+    # The page asks again after a change elsewhere: the copy it shows is kept when it still says the same.
+    if body and body.viewing:
+        from estimate_signature_history import estimate_state
+        shown = db.get(EstimateSignature, body.viewing)
+        if shown and shown.job_id == job.id and not shown.signed_at:
+            saved = json.loads(shown.snapshot)
+            if estimate_state(saved['data'], saved['rows']) == estimate_state(data, rows):
+                return {'id': shown.id, 'signed': False, 'approved': False, 'same': True}
     record_id = str(uuid4())  # Returned as is: reading it from the row after the commit would load the row again.
     db.add(EstimateSignature(id=record_id, lead_id=access.lead_id, job_id=access.job_id,
         report_id=(data.get('spark') or {}).get('id'),
@@ -1173,6 +1200,27 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
         'documents': documents_for(db.get(Lead, access.lead_id), job, db, 'work_order')})
     return Response(pdf, media_type='application/pdf', headers={
         'Content-Disposition': 'inline; filename="work-order-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@router.get('/api/public-moves/{access_id}/invoice.pdf')
+def invoice_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """One invoice for the job: the signed estimate's prices (the current estimate's when none is signed), each CRM
+    payment with its confirmation number, and the balance due."""
+    from invoice_pdf import build_invoice_pdf
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    signed = db.query(EstimateSignature).filter(
+        EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+        EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
+    data = json.loads(signed.snapshot)['data'] if signed else _estimate_document(access, db)[0]
+    if not data.get('estimate'):
+        raise HTTPException(409, 'The invoice is ready once the estimate has a price.')
+    payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
+    zone = _company_for(lead, db)
+    today = datetime.now(ZoneInfo(zone.timezone if zone else 'America/New_York')).date()
+    pdf = build_invoice_pdf(data, payments, job_number(lead, job), today)
+    return Response(pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="invoice-' + job_number(lead, job) + '.pdf"',
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
@@ -2392,7 +2440,8 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     job = db.get(LeadJob, access.job_id)
     meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
-    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'job_id': job.id, 'company_id': lead.company_id or '',
+    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
+            'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
 
@@ -2431,11 +2480,25 @@ def send_customer_link(lead_id: str, user: User = Depends(get_current_user), db:
     return deliver_customer_link_sms(lead, access, db)
 
 
+@router.post('/api/leads/{lead_id}/customer-page/email')
+def email_customer_link(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    lead, access = staff_access(lead_id, user, db)
+    if access.revoked or access.expires_at < NOW(): raise HTTPException(400, 'Customer link is inactive')
+    if not (lead.email or '').strip(): raise HTTPException(400, 'This lead has no email address')
+    return deliver_customer_link_email(lead, access, db)
+
+
 def customer_link_sms_notice(access):
     if not access.link_sms_sent_at:
         return None
     return {'sent_at': access.link_sms_sent_at.isoformat() + 'Z',
             'phone_last4': access.link_sms_phone_last4 or ''}
+
+
+def customer_link_email_notice(access):
+    if not access.link_email_sent_at:
+        return None
+    return {'sent_at': access.link_email_sent_at.isoformat() + 'Z', 'email_hint': access.link_email_hint or ''}
 
 
 def customer_link_message(access):
@@ -2463,17 +2526,13 @@ def deliver_customer_link_sms(lead, access, db):
 def deliver_customer_link_email(lead, access, db):
     if not lead.email or not lead.email.strip():
         return {'ok': True, 'skipped': True}
-    sender = setting('PUBLIC_MOVE_EMAIL_FROM')
-    if not sender:
-        raise HTTPException(503, 'Customer email sending is not configured')
-    message = customer_link_message(access)
-    try:
-        boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
-            Source=sender, Destination={'ToAddresses': [lead.email.strip()]}, Message={
-                'Subject': {'Data': 'Your moving estimate', 'Charset': 'UTF-8'},
-                'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
-    except Exception:
-        raise HTTPException(502, 'Could not send email. Please retry.')
+    # From the company's own address, the way the verification codes are sent.
+    from customer_email_auth import send_company_email
+    send_company_email(lead.email, 'Your moving estimate', customer_link_message(access), _company_for(lead, db))
+    local, _, domain = lead.email.strip().partition('@')
+    access.link_email_sent_at = NOW()
+    access.link_email_hint = local[:1] + '***@' + domain
+    db.commit()
     return {'ok': True}
 
 

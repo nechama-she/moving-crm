@@ -1292,6 +1292,7 @@ export default function LeadDetail() {
           takenByUser: String(item.takenByUser ?? "").trim(),
           paidAt: String(item.paidAt ?? ""),
           method: String(item.method ?? ""),
+          confirmationNumber: String(item.confirmationNumber ?? ""),
           repPaid: Boolean(item.repPaid ?? false),
           repPaidAt: String(item.repPaidAt ?? "").trim(),
           repCommissionPercent: item.repCommissionPercent == null ? null : Number(item.repCommissionPercent),
@@ -1305,6 +1306,7 @@ export default function LeadDetail() {
         takenByUser: string;
         paidAt: string;
         method: string;
+        confirmationNumber: string;
         repPaid: boolean;
         repPaidAt: string;
         repCommissionPercent: number | null;
@@ -2899,6 +2901,7 @@ export default function LeadDetail() {
                           {payment.takenByUser || `Payment ${index + 1}`}
                           {payment.paidAt ? <span className="lead-payment-date">{new Date(`${payment.paidAt}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span> : null}
                           {payment.method ? <span className="lead-payment-date">{payment.method}</span> : null}
+                          {payment.confirmationNumber ? <span className="lead-payment-date" title="Confirmation number">{payment.confirmationNumber}</span> : null}
                           <span className={`lead-payment-source is-${payment.source === "smartmoving" ? "smartmoving" : "crm"}`}
                             title={payment.source === "smartmoving" ? "Synced from SmartMoving; change it in SmartMoving" : "Entered in the CRM; the SmartMoving sync never changes it"}>
                             {payment.source === "smartmoving" ? "SmartMoving" : "CRM"}

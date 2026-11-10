@@ -4,9 +4,12 @@ import PdfPages from './PdfPages';
 import './PdfViewer.css';
 
 /** The Bill of Lading filled from the signed estimate: read it, sign each of its spots, download it. */
-export default function BillOfLadingViewer({ base, headers, customerName, filename, onSigned, onClose }: {
+export default function BillOfLadingViewer({ base, headers, customerName, filename, onSigned, onClose, changedElsewhere = 0 }: {
   base: string; headers: Record<string, string>; customerName: string; filename: string;
   onSigned: () => void; onClose: () => void;
+  // Counts changes on another open page of the move (a spot signed, the estimate signed or its signature removed):
+  // the Bill of Lading then loads again in place.
+  changedElsewhere?: number;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [url, setUrl] = useState('');
@@ -37,6 +40,8 @@ export default function BillOfLadingViewer({ base, headers, customerName, filena
     } catch (e) { setError((e as Error).message); }
   }
   useEffect(() => { void load(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (changedElsewhere) { setToNextSpot(false); void load(); } }, [changedElsewhere]);
   return <dialog ref={dialog} className="pdf-viewer" aria-labelledby="bill-of-lading-title" onCancel={e => { e.preventDefault(); if (signing === null) onClose(); }}>
     <header className="pdf-viewer-header">
       <div><h2 id="bill-of-lading-title">Bill of Lading</h2><p>{signed ? 'Your signature has been saved.' : 'Click each Sign here on the Bill of Lading to sign it.'}</p></div>

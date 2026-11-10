@@ -146,6 +146,13 @@ html.aur-dark .cm-address-results li[aria-selected="true"] { background-color: v
 html.aur-dark .cm-address-attribution { color: var(--aur-muted); }
 html.aur-dark .cm-field-error { color: var(--aur-red-fg); }
 
+/* CustomerChangeBubbles.css */
+html.aur-dark .cm-change-bubble { border: 2px solid var(--aur-line); }
+html.aur-dark .cm-change-unread { border: 2px solid var(--aur-line); }
+html.aur-dark .cm-change-more { background-color: var(--aur-surface); }
+html.aur-dark .cm-change-card { background-color: var(--aur-surface); }
+html.aur-dark .cm-change-card-actions button { background-color: var(--aur-surface); }
+
 /* CustomerLongCarryQuestion.css */
 html.aur-dark .customer-move .cm-carry-range { border: 1px solid var(--aur-line-strong); background-color: var(--aur-surface); }
 html.aur-dark .customer-move .cm-carry-range:hover { background-color: var(--aur-subtle); }
@@ -154,6 +161,7 @@ html.aur-dark .customer-move .cm-carry-over { border: 1px solid var(--aur-line-s
 html.aur-dark .customer-move .cm-carry-over.is-selected { background-color: var(--aur-red-bg); }
 
 /* CustomerMovePage.css */
+html.aur-dark .cm-payments { background-color: var(--aur-surface); }
 html.aur-dark .customer-move { background-color: var(--aur-subtle); }
 html.aur-dark .cm-brand>span { background-color: var(--aur-green-bg); }
 html.aur-dark .cm-brand>small { color: var(--aur-muted); }

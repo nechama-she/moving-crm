@@ -18,8 +18,9 @@ from database import SessionLocal
 import estimate_approval  # noqa: F401  Saved changes to an estimate clear a rep's approval.
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
+from customer_page_announcements import announce_customer_page_changes
 from access_errors import capture_response_error, exception_message, audit_body
-from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
+from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
 from routes.meta import messenger, instagram
 
@@ -106,7 +107,7 @@ async def enforce_authentication(request: Request) -> None:
         return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
         return  # Middleware validates the inventory key before body parsing.
-    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|estimate|pricing)|estimate\.pdf|work-order\.pdf|bill-of-lading\.pdf|bill-of-lading/[0-9]+/[^/]+/sign|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog(?:/search)?|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|rep-discounts|customer-discount|mileage|reports/[^/]+/select|estimate-signatures(?:/[^/]+/(?:pdf|sign|resign|approve))?)", request.url.path):
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|estimate|pricing)|estimate\.pdf|work-order\.pdf|invoice\.pdf|bill-of-lading\.pdf|bill-of-lading/[0-9]+/[^/]+/sign|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|item-answer|question-images|realtime-token|address-search|address-resolve|file-preview/[^/]+|inventory-catalog(?:/search)?|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|rep-discounts|customer-discount|mileage|reports/[^/]+/select|estimate-signatures(?:/[^/]+/(?:pdf|sign|resign|approve))?)", request.url.path):
         return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return
@@ -313,6 +314,10 @@ async def protect_public_move_responses(request: Request, call_next):
     return response
 
 
+# After a customer page saves, its other open copies update.
+app.middleware("http")(announce_customer_page_changes)
+
+
 @app.middleware("http")
 async def audit_lead_mutations(request: Request, call_next):
     should_audit = (
@@ -436,6 +441,7 @@ app.include_router(instagram.router, dependencies=[Depends(get_current_user)])
 app.include_router(sms.router, dependencies=[Depends(get_current_user)])
 app.include_router(chats.router)
 app.include_router(unanswered_messages.router)
+app.include_router(customer_activity.router)
 app.include_router(communication_associations.router)
 app.include_router(stats.router)
 app.include_router(duplication_rules.router)

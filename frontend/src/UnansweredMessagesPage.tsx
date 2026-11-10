@@ -22,7 +22,9 @@ function SmartMovingCell({ row }: { row: SmartMovingFields }) {
 const smartMovingHeader = <th style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", background: "#f8fafc" }}>SmartMoving</th>;
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls" | "leads" | "followups" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
+type QueueTab = "messages" | "calls" | "leads" | "followups" | "signatures" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
+// An estimate or a Bill of Lading spot signed on a customer page.
+type SignatureRow = { id: string; kind: "estimate" | "bill_of_lading"; spot: number | null; spots: number; lead_id: string; client: string; job_id: string; job_number: string; company: string; signer: string; signed_at: string };
 type LeadTab = "new" | "overdue";
 type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
@@ -141,7 +143,7 @@ export default function UnansweredMessagesPage() {
   const [queueTab, setQueueTab] = useState<QueueTab>(() => {
     try {
       const saved = sessionStorage.getItem("sales-work-queue.tab");
-      return (["messages", "calls", "leads", "followups", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
+      return (["messages", "calls", "leads", "followups", "signatures", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
     } catch { return "messages"; }
   });
   const [tab, setTab] = useState<MessageTab>(() => {
@@ -606,7 +608,8 @@ export default function UnansweredMessagesPage() {
       return promise;
     };
     void (async () => {
-      await ensureLoaded(queueTab);
+      // Signatures load on their own, with the page.
+      if (queueTab in loaders) await ensureLoaded(queueTab as keyof typeof loaders);
       if (cancelled) return;
       // Once the selected tab finishes, fetch the remaining data in parallel.
       const backgroundKeys = (Object.keys(loaders) as (keyof typeof loaders)[])
@@ -733,7 +736,27 @@ export default function UnansweredMessagesPage() {
     });
   }, []);
 
+  // Signatures from the last 30 days; loaded when the page opens and again live when one is added or removed.
+  const [signatures, setSignatures] = useState<SignatureRow[]>([]);
+  const [loadingSignatures, setLoadingSignatures] = useState(true);
+  const [signaturesError, setSignaturesError] = useState("");
+  const loadSignatures = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/customer-activity`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error("Could not load customer activity");
+      setSignatures(((await response.json()).items || []) as SignatureRow[]);
+      setSignaturesError("");
+    } catch (reason) { setSignaturesError(reason instanceof Error ? reason.message : "Could not load customer activity"); }
+    finally { setLoadingSignatures(false); }
+  }, [token]);
+  useEffect(() => { void loadSignatures(); }, [loadSignatures]);
+  const signedToday = signatures.filter((row) => new Date(row.signed_at).toDateString() === new Date().toDateString()).length;
+
   useRealtimeUpdates(token, (event) => {
+    if (event.type === "customer_activity") {
+      void loadSignatures();
+      return;
+    }
     if (event.type === "followup_tasks_changed") {
       tabLoads.current.delete("followups");
       scheduleQueueRefresh(false, true);
@@ -995,6 +1018,11 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0}</strong>
           <span style={queueCardDescription}>Tasks scheduled across all priorities</span>
         </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("signatures")} style={{ ...queueCard, ...(queueTab === "signatures" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Customer Activity</span>
+          <strong style={queueCardCount}>{loadingSignatures ? "Loading..." : signedToday}</strong>
+          <span style={queueCardDescription}>Actions on customer pages today</span>
+        </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Message State Table</span>
           <strong style={queueCardCount}>{messageStates.length}</strong>
@@ -1052,6 +1080,33 @@ export default function UnansweredMessagesPage() {
         {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
         {queueTab === 'followups' && <FollowupFilters datesOnly counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => { setFollowupFrom(from); setFollowupTo(to); }} />}
       </div> : null}
+
+      {queueTab === "signatures" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ padding: "16px 18px" }}>
+          <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>Customer Activity ({signatures.length})</h2>
+          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>Actions on customer pages in the last 30 days, newest first. New ones appear here as they happen.</p>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", minWidth: 800, borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>
+              {["When", "Client", "Job", "Company", "Action", "By"].map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+            </tr></thead>
+            <tbody>
+              {loadingSignatures && signatures.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading customer activity…</td></tr> : null}
+              {signaturesError ? <tr><td colSpan={6} style={{ padding: 32, color: "#ba0517", textAlign: "center" }}>{signaturesError}</td></tr> : null}
+              {!loadingSignatures && !signaturesError && signatures.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No customer activity in the last 30 days.</td></tr> : null}
+              {signatures.map((row) => <tr key={`${row.kind}:${row.id}`}>
+                <td style={{ ...cell, whiteSpace: "nowrap" }}>{new Date(row.signed_at).toLocaleString()}</td>
+                <td style={cell}><a href={`/leads/${encodeURIComponent(row.lead_id)}?job_id=${encodeURIComponent(row.job_id)}`} style={{ color: "#0b5cab", fontWeight: 700 }}>{row.client || "Unnamed lead"}</a></td>
+                <td style={{ ...cell, whiteSpace: "nowrap" }}>{row.job_number}</td>
+                <td style={cell}>{row.company || "—"}</td>
+                <td style={cell}>{row.kind === "estimate" ? "Signed the estimate" : `Signed the Bill of Lading (${row.spot} of ${row.spots})`}</td>
+                <td style={cell}>{row.signer || "—"}</td>
+              </tr>)}
+            </tbody>
+          </table>
+        </div>
+      </section> : null}
 
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>

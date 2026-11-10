@@ -2578,9 +2578,11 @@ def test_send_customer_link_dry_run_and_both_channels(portal, monkeypatch):
     monkeypatch.setattr(mod, 'staff_access', lambda *args: (lead, access))
     sms = MagicMock(return_value={'ok': True})
     ses = MagicMock()
+    import customer_email_auth
     monkeypatch.setattr(mod, 'send_customer_link', sms)
-    monkeypatch.setattr(mod.boto3, 'client', MagicMock(return_value=ses))
-    monkeypatch.setattr(mod, 'setting', lambda key: {'PUBLIC_MOVE_LINK_DRY_RUN': 'false', 'PUBLIC_MOVE_EMAIL_FROM': 'sender@example.test', 'PUBLIC_MOVE_ORIGIN': 'https://move.example.test', 'AWS_REGION': 'us-east-1'}.get(key, ''))
+    monkeypatch.setattr(customer_email_auth, 'ses_client', lambda: ses)
+    monkeypatch.setattr(mod, '_company_for', lambda *args: SimpleNamespace(name='Movers', sender_email='sender@example.test'))
+    monkeypatch.setattr(mod, 'setting', lambda key: {'PUBLIC_MOVE_LINK_DRY_RUN': 'false', 'PUBLIC_MOVE_ORIGIN': 'https://move.example.test', 'AWS_REGION': 'us-east-1'}.get(key, ''))
     result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=True), object(), db)
     assert result['dry_run'] and len(result['deliveries']) == 2
     assert mod.public_url(access) in result['message']
@@ -3250,17 +3252,19 @@ def test_intake_also_emails_link_once(traced_intake, monkeypatch, sms_fails):
     assert sms.call_count == email.call_count == 1
 
 
-def test_link_email_uses_configured_sender_and_same_customer_url(portal, monkeypatch):
+def test_link_email_uses_company_sender_and_same_customer_url(portal, monkeypatch):
     mod, db, lead, access = portal
-    monkeypatch.setenv('PUBLIC_MOVE_EMAIL_FROM', 'moves@example.com')
+    import customer_email_auth
     monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://example.com')
     client = MagicMock()
-    monkeypatch.setattr(mod.boto3, 'client', lambda *args, **kwargs: client)
+    monkeypatch.setattr(customer_email_auth, 'ses_client', lambda: client)
+    monkeypatch.setattr(mod, '_company_for', lambda *args: SimpleNamespace(name='Movers', sender_email='moves@example.com'))
     assert mod.deliver_customer_link_email(lead, access, db) == {'ok': True}
     payload = client.send_email.call_args.kwargs
-    assert payload['Source'] == 'moves@example.com'
+    assert payload['FromEmailAddress'] == 'Movers <moves@example.com>'
     assert payload['Destination']['ToAddresses'] == [lead.email]
-    assert mod.public_url(access) in payload['Message']['Body']['Text']['Data']
+    assert mod.public_url(access) in payload['Content']['Simple']['Body']['Text']['Data']
+    assert db.get(models.PublicMoveAccess, access.id).link_email_sent_at
     lead.email = None
     client.reset_mock()
     assert mod.deliver_customer_link_email(lead, access, db)['skipped']

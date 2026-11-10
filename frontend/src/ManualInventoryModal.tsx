@@ -171,12 +171,14 @@ function RoomCard({ room, selected, busy, locked = false, summary, onSelect, onR
     <button type="button" className="mi-remove" disabled={busy || locked} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ loadCatalog, searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true }: {
+export default function ManualInventoryModal({ loadCatalog, searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true, reload=0 }: {
   visible?: boolean;
   // Whether the list has a price: without one, Done prices it even when nothing changed.
   priced?: boolean;
   // The list can be seen, rooms filtered and the PDF opened, but nothing changed or saved.
   readOnly?: boolean;
+  // Changes when the list was changed on another page: the open list loads it again.
+  reload?: number;
   submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string}>;
   loadInventory: () => Promise<{revision:string; report_id:string|null; rooms:Room[]}>;
   draftKey: string;
@@ -392,6 +394,26 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
     }).catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
   }, []);
+  // The list changed on another page: load it again in place, keeping the open room. Edits here not yet saved are kept
+  // instead; saving them then reports the conflict.
+  useEffect(() => {
+    if (!reload || !savedRooms.current) return;
+    if (dirty.current || pending.current || saving.current) return;
+    let active = true;
+    inventoryLoader.current().then(editor => {
+      if (!active || dirty.current || pending.current || saving.current) return;
+      revision.current = editor.revision;
+      reportId.current = editor.report_id;
+      const missing = [...new Set(editor.rooms.flatMap(r => Object.keys(r.items)))].filter(id => !knownRef.current.has(id));
+      if (missing.length) searcher.current('', missing).then(list => { if (active) addKnown(list); }).catch(() => undefined);
+      const loaded: Room[] = structuredClone(editor.rooms);
+      loadedRooms.current = loaded;
+      savedRooms.current = editor.rooms;
+      setRoomsState(loaded);
+      setSelected(current => loaded.some(room => room.id === current) ? current : '');
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [reload]);
   useEffect(() => {
     // The first opening loads catalog and inventory together above. Later
     // openings refresh services without replacing saved or unsaved item edits.
@@ -505,7 +527,9 @@ export default function ManualInventoryModal({ loadCatalog, searchCatalog, submi
     if (busy) return;
     if (!catalog || (readOnly && priced)) { onClose(false); return; }
     if (rooms.some(r => !r.name.trim())) { setError('Enter a name for each room before closing.'); return; }
-    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current && priced) { onClose(false); return; }
+    // An empty list has nothing to price: unpriced, closing it unchanged just closes.
+    const empty = rooms.every(r => !Object.values(r.items).some(qty => qty > 0) && !(r.custom_items || []).length);
+    if (!dirty.current && !pending.current && !saving.current && !savedChanges.current && (priced || empty)) { onClose(false); return; }
     setBusy(true); setError('');
     try {
       if (dirty.current || pending.current || saving.current) {

@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import Signing, { type SignResult } from './Signing';
-import PdfPages, { useDrawnPages } from './PdfPages';
+import PdfPages from './PdfPages';
 
 // The Re-sign answer: the signature removed, and the estimate's status without it.
 export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean;
   bill_of_lading: { signed: boolean } | null };
 import './PdfViewer.css';
 
-export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved, onSigned }: {
+export default function EstimateViewer({ base, headers, customerName, version, url, error, onClose, alreadySigned = false, approved = true, rep = false, onApproved, filename, onSignatureRemoved, onSigned, signedElsewhere = 0, signatureRemovedElsewhere = 0 }: {
   base: string; headers: Record<string, string>; customerName: string; version: string; filename: string;
   url: string; error: string; onClose: () => void;
   alreadySigned?: boolean;
@@ -18,13 +18,16 @@ export default function EstimateViewer({ base, headers, customerName, version, u
   onSignatureRemoved: (result: SignatureRemoved) => void;
   // Called once the signature is saved: the page shows the estimate signed right away.
   onSigned: (signature: SignResult) => void;
+  // Counts the estimate signed on another open page of the move: this one then shows it signed.
+  signedElsewhere?: number;
+  // Counts the signature removed on another open page (Re-sign): this one then shows the unsigned copy the page gives.
+  signatureRemovedElsewhere?: number;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [signing, setSigning] = useState(false);
   // On a phone the form opens above the pages: brought into view when it opens.
   const signForm = useRef<HTMLElement>(null);
   useEffect(() => { if (signing) signForm.current?.scrollIntoView({ block: 'nearest' }); }, [signing]);
-  const drawPages = useDrawnPages();
   const [savedHere, setSigned] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -62,6 +65,16 @@ export default function EstimateViewer({ base, headers, customerName, version, u
       setSignedUrl(URL.createObjectURL(await response.blob()));
     } catch (e) { setLoadError((e as Error).message); }
   }
+  // Signed on another open page while this shows the approved copy: the signed copy takes its place.
+  useEffect(() => {
+    if (signedElsewhere && approved && version && !signed) void showSigned(version);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedElsewhere]);
+  // The signature was removed on another open page: back to the unsigned copy.
+  useEffect(() => {
+    if (!signatureRemovedElsewhere) return;
+    setCleared(true); setSigned(false); setSignedUrl(''); setSigning(false); setLoadError('');
+  }, [signatureRemovedElsewhere]);
   return <dialog ref={dialog} className="pdf-viewer" aria-labelledby="estimate-viewer-title" onCancel={e => { e.preventDefault(); if (!signing && !clearing) onClose(); }}>
     <header className="pdf-viewer-header">
       <div><h2 id="estimate-viewer-title">Your estimate</h2><p>{signed ? 'Your signature has been saved.' : !approved ? (rep ? 'Review this estimate, then approve it for signing.' : 'Your moving team is reviewing this estimate. You can sign it once they approve it.') : 'Review your estimate, then sign here.'}</p></div>
@@ -76,8 +89,8 @@ export default function EstimateViewer({ base, headers, customerName, version, u
     {error && <p role="alert">{error}</p>}
     {loadError && <p role="alert">{loadError} <button className="cm-secondary-btn" onClick={() => void showSigned(version)}>Retry signed PDF</button></p>}
     <div className="pdf-viewer-content">
-      {url ? drawPages ? <PdfPages url={signedUrl || url} title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} />
-        : <iframe title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} src={signedUrl || url} /> : !error && <p role="status">Preparing your latest estimate...</p>}
+      {/* Drawn on every device: a copy arriving from another page (approved, signed, changed) replaces the pages in place. */}
+      {url ? <PdfPages url={signedUrl || url} title={signed ? 'Signed estimate PDF' : 'Estimate PDF'} /> : !error && <p role="status">Preparing your latest estimate...</p>}
       {signing && <aside ref={signForm}><Signing base={base} headers={headers} customerName={customerName} disabled={false} version={version} hideHistory onClose={() => setSigning(false)} onSigned={signature => { onSigned(signature); void showSigned(signature.id); }} /></aside>}
     </div>
   </dialog>;

@@ -48,6 +48,27 @@ def _code_email(code, company_name):
     return subject, text, body
 
 
+def send_company_email(email, subject, text, company):
+    """A plain email from the company's own address, the same SES sender the codes use."""
+    sender = ((getattr(company, 'sender_email', None) or '') if company else '').strip()
+    if not sender:
+        raise HTTPException(503, "This company has no sender email set up, so the email can't be sent.")
+    company_name = (getattr(company, 'name', None) or '').strip() or 'Your moving team'
+    try:
+        ses_client().send_email(
+            FromEmailAddress=formataddr((company_name, sender)), ReplyToAddresses=[sender],
+            Destination={'ToAddresses': [email.strip()]},
+            Content={'Simple': {'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                                'Body': {'Text': {'Data': text, 'Charset': 'UTF-8'}}}})
+    except ClientError as exc:
+        error = exc.response.get('Error', {})
+        logger.error(json.dumps({'event': 'company_email_send', 'sender': sender, 'error_code': error.get('Code'),
+                                 'error_message': str(error.get('Message', ''))[:1000]}))
+        raise HTTPException(502, 'Could not send email. Please retry.') from exc
+    except BotoCoreError as exc:
+        raise HTTPException(502, 'Could not confirm the email was sent. Please retry.') from exc
+
+
 def send_email_code(email, code, access_id, company=None):
     pool = os.getenv('PUBLIC_MOVE_COGNITO_POOL_ID', '')
     email = email.strip().lower()

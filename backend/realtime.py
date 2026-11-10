@@ -16,6 +16,14 @@ def publish_customer_update(lead_id: str) -> None:
     publish_report_update(lead_id)
 
 
+def publish_move_change(lead_id: str, origin: str = '', change: str = '', by: str = '', name: str = '') -> None:
+    # Every open customer page of the move (customer or rep) loads its details again, except the page whose save it was,
+    # and shows what changed and who changed it (the customer or the moving team, by name). Only the move's own pages
+    # receive it.
+    publish_realtime_event({'type': 'customer_move_updated', 'customer_lead_id': lead_id, 'origin': origin,
+                            'change': change, 'by': by, 'name': name})
+
+
 def publish_report_update(lead_id: str) -> None:
     publish_realtime_event({'type': 'report_updated', 'report_lead_id': lead_id})
 

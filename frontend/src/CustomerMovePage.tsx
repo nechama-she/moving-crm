@@ -23,6 +23,7 @@ import ReportHistory, { type ReportRun } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
+import CustomerChangeBubbles, { SIGNATURE_CHANGES, type MoveChange } from './CustomerChangeBubbles';
 import { browserDrivingMeters, browserPricingLocation } from './googlePlaces';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readCustomerBootstrap } from './customerBootstrap';
@@ -32,6 +33,7 @@ import RepDiscounts, { type DiscountResult } from './RepDiscounts';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
+type LinkEmail = { sent_at: string; email_hint: string };
 type Shuttle = { automatic: boolean; answer: boolean | null; unknown?: boolean; revision: string; required: boolean; question: string; rate: number; total: number; cubic_feet: number; inventory_cubic_feet: number; minimum_cubic_feet: number };
 // What saving one answer returns: only the data that answer changed.
 type PricingDelta = {
@@ -56,12 +58,15 @@ type Details = {
 
   item_questions?: ItemQuestion[];
   link_sms?: LinkSms | null;
+  link_email?: LinkEmail | null;
   list_changed?: boolean;
   combined_inventory?: {name:string;room?:string;amount?:number;quantity?:number;cuft?:number;unit_cuft?:number;reference_name?:string;going?:boolean}[];
   report_history?: ReportRun[];
   signature_status?: 'unsigned' | 'signed' | 'changed';
   // Rep pages only: the estimate is signed.
   work_order_available?: boolean;
+  // The payments entered in the CRM, each with its confirmation number (none on earlier ones).
+  payments?: { id: string; amount: number; paid_at: string; method: string; confirmation_number: string }[];
   // Once the estimate is signed and the company has a Bill of Lading: whether it is signed.
   bill_of_lading?: { signed: boolean } | null;
   // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
@@ -110,6 +115,11 @@ function CompletionIcon({complete, label}: {complete: boolean; label: string}) {
 const emptyDetails = (): Details => ({name:'', phone:'', email:'', move_date:'', pickup:'', delivery:'', company:'', stops:[], estimate:null, packing_package:null, packing_items:[], packing_saved:false, walkthrough:null, participant_url:'', files:[]});
 // 'estimate' is the saved price alone, so it shows before the pricing section's work finishes.
 const pageSections = ['move', 'inventory', 'media', 'volume', 'estimate', 'pricing'] as const;
+// Changes on another page that change the open estimate: it then shows the estimate to sign now.
+const ESTIMATE_CHANGES = new Set(['estimate_approved', 'estimate_updated', 'packing_changed', 'discount_chosen', 'discounts_changed',
+  'details_updated', 'inventory_updated', 'item_questions_answered', 'inventory_report_chosen']);
+// Changes on another page that change the open Bill of Lading: it then loads again.
+const BILL_OF_LADING_CHANGES = new Set(['bill_of_lading_signed', 'estimate_signed', 'estimate_signature_cancelled']);
 type PageSection = typeof pageSections[number];
 type SectionState = { loading: boolean; error: string; ready: boolean };
 const initialSections = () => Object.fromEntries(pageSections.map(key => [key, {loading:true, error:'', ready:false}])) as Record<PageSection, SectionState>;
@@ -123,6 +133,7 @@ export default function CustomerMovePage() {
     document.getElementById('move-first-style')?.remove();
   }, []);
   const [linkSms, setLinkSms] = useState<LinkSms | null>(null);
+  const [linkEmail, setLinkEmail] = useState<LinkEmail | null>(null);
   const [repPage, setRepPage] = useState(() => bootstrap?.rep ?? new URLSearchParams(window.location.hash.slice(1)).get('audience') === 'rep');
   const sessionKey = `cm_session_${accessId}${repPage ? '_rep' : ''}`;
   // Whether customers can change their move: the server's one switch (CUSTOMER_CAN_EDIT), read-only until it answers.
@@ -227,6 +238,10 @@ export default function CustomerMovePage() {
   }, [answersSaving]);
   const [showInventoryList, setShowInventoryList] = useState(false);
   const [inventoryOpened, setInventoryOpened] = useState(false);
+  // The list window loads the list once and stays loaded while hidden. When another page changes the list, the open
+  // window loads it again in place; a hidden one is replaced, to load it when opened.
+  const [inventoryVersion, setInventoryVersion] = useState(0);
+  const [inventoryReload, setInventoryReload] = useState(0);
   useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'items'>('bulky');
@@ -448,7 +463,9 @@ export default function CustomerMovePage() {
   const [themeColor, setThemeColor] = useState<string>(() => bootstrap?.move?.company_details?.color || '#214c3e');
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
-  const headers={'x-public-link':key,'x-public-session':session};
+  // This open page's id: its saves are announced to the move's other open pages, not back to it.
+  const [pageId] = useState(() => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  const headers={'x-public-link':key,'x-public-session':session,'x-page-id':pageId};
 
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
@@ -616,10 +633,23 @@ export default function CustomerMovePage() {
   const [preparedEstimate, setPreparedEstimate] = useState('');
   const [preparedSigned, setPreparedSigned] = useState(false);
   const [preparedApproved, setPreparedApproved] = useState(false);
+  const shownEstimate = useRef('');
+  shownEstimate.current = preparedEstimate;
+  // Whether the open estimate shows a signature (signed here, elsewhere, or opened signed).
+  const viewerSigned = useRef(false);
   const [estimateViewerOpen, setEstimateViewerOpen] = useState(false);
+  // Each opening of the estimate is a new viewer; the approved copy arriving while it is open keeps the same one.
+  const [estimateOpening, setEstimateOpening] = useState(0);
+  // Counts the estimate signed on another open page while the viewer is open: it then shows the signed copy.
+  const [estimateSignedElsewhere, setEstimateSignedElsewhere] = useState(0);
+  // Counts the signature removed on another open page while the viewer is open: it then shows the unsigned copy.
+  const [estimateSignatureRemovedElsewhere, setEstimateSignatureRemovedElsewhere] = useState(0);
   const [inventoryPdf, setInventoryPdf] = useState<{ url: string; filename: string; title?: string; description?: string } | null>(null);
   const [workOrderBusy, setWorkOrderBusy] = useState(false);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [billOfLadingOpen, setBillOfLadingOpen] = useState(false);
+  // Counts changes to the Bill of Lading on another open page while it is open: it then loads again in place.
+  const [billOfLadingChanged, setBillOfLadingChanged] = useState(0);
   // Downloaded PDFs are named "<kind> - <customer> - <company>.pdf".
   function pdfName(kind: string) {
     const clean = (value: string) => value.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '').trim().replace(/\.+$/, '');
@@ -643,6 +673,24 @@ export default function CustomerMovePage() {
       setWorkOrderBusy(false);
     }
   }
+  // One invoice for the job: its prices, each payment with its confirmation number, and the balance due.
+  async function openInvoice() {
+    setPdfError('');
+    setInvoiceBusy(true);
+    try {
+      const response = await fetch(base + '/invoice.pdf', { headers, cache: 'no-store' });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(typeof result.detail === 'string' ? result.detail : `Could not open the invoice (HTTP ${response.status}). Please try again.`);
+      }
+      setInventoryPdf({ url: URL.createObjectURL(await response.blob()), filename: pdfName('Invoice'),
+        title: 'Invoice', description: 'Your charges, your payments and the balance due.' });
+    } catch (error) {
+      setPdfError((error as Error).message);
+    } finally {
+      setInvoiceBusy(false);
+    }
+  }
   const [estimatePdfUrl, setEstimatePdfUrl] = useState('');
   // After Re-sign clears the signature: the status it answered with, the signature off its report, then the current
   // estimate (a new copy if anything changed).
@@ -652,6 +700,43 @@ export default function CustomerMovePage() {
       bill_of_lading: result.bill_of_lading,
       report_history: previous.report_history?.map(report => ({...report, signatures: (report.signatures || []).filter(item => item.id !== result.removed_id)}))} : previous);
     void openEstimate(true);
+  }
+  // The open estimate follows changes made on the move's other pages: approved, signature removed, or anything that
+  // changes the estimate. It asks for the estimate to sign now, keeping the copy on screen when it says the same, and
+  // otherwise shows the new one in its place without closing. One check runs at a time; changes meanwhile run one more.
+  const estimateSync = useRef<{ running: boolean; again: boolean; removed: boolean }>({ running: false, again: false, removed: false });
+  async function syncOpenEstimate(signatureRemoved = false) {
+    const sync = estimateSync.current;
+    sync.removed ||= signatureRemoved;
+    if (sync.running) { sync.again = true; return; }
+    sync.running = true;
+    try {
+      do {
+        sync.again = false;
+        const viewing = shownEstimate.current;
+        const removed = sync.removed;
+        sync.removed = false;
+        if (!viewing || (viewerSigned.current && !removed)) continue;
+        try {
+          const prepared = await call('/estimate-signatures', {viewing});
+          if (!prepared.id) continue;
+          let url = '';
+          if (!prepared.same) {
+            const response = await fetch(base + '/estimate-signatures/' + encodeURIComponent(prepared.id) + '/pdf', { headers, cache: 'no-store' });
+            if (!response.ok) continue;
+            url = URL.createObjectURL(new Blob([await response.blob()], {type:'application/pdf'}));
+            previews.current.push(url);
+          }
+          // The viewer was closed or shows another copy by now.
+          if (shownEstimate.current !== viewing) continue;
+          if (url) setEstimatePdfUrl(url);
+          setPreparedEstimate(prepared.id);
+          setPreparedSigned(false);
+          setPreparedApproved(prepared.approved === true);
+          if (removed) { viewerSigned.current = false; setEstimateSignatureRemovedElsewhere(count => count + 1); }
+        } catch { /* The viewer keeps the copy it shows; reopening it shows the current estimate. */ }
+      } while (sync.again);
+    } finally { sync.running = false; }
   }
   async function openEstimate(current = false) {
     setPdfError('');
@@ -665,6 +750,8 @@ export default function CustomerMovePage() {
       return;
     }
     setEstimateViewerOpen(true);
+    setEstimateOpening(count => count + 1);
+    viewerSigned.current = false;
     setEstimatePdfUrl('');
     setPdfBusy(true);
     setPreparedEstimate('');
@@ -686,6 +773,7 @@ export default function CustomerMovePage() {
       setEstimatePdfUrl(url);
       setPreparedEstimate(prepared.id);
       setPreparedSigned(prepared.signed === true);
+      viewerSigned.current = prepared.signed === true;
       setPreparedApproved(prepared.signed === true || prepared.approved === true);
     } catch (error) {
       const failure = error as Error & {detail?: {unanswered_questions?: string[]}};
@@ -749,7 +837,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -970,7 +1058,23 @@ export default function CustomerMovePage() {
     return state.loading && !state.ready ? <p role="status" className="cm-section-loading"><span className="cm-loading-spinner" aria-hidden="true" />Loading {label}...</p> : state.error ? <p role="alert" className="cm-error">Could not load {label}. <button type="button" className="cm-secondary-btn" onClick={() => void loadSection(section)}>Retry</button></p> : null;
   }
 
-  const updatesUnavailable = useCustomerUpdates(base, key, session, initial => refreshDetails(true, false, initial));
+  // Signatures on the move's other open pages (signed, cancelled, ready to sign), newest first, as bubbles until closed.
+  // Other changes update the page without one.
+  const [moveChanges, setMoveChanges] = useState<MoveChange[]>([]);
+  const updatesUnavailable = useCustomerUpdates(base, key, session, pageId, initial => refreshDetails(true, false, initial),
+    ({ change, by, name }) => {
+      if (SIGNATURE_CHANGES.has(change)) setMoveChanges(current => [{ id: `${Date.now()}-${Math.random()}`, change, by: by === 'team' ? 'team' : 'customer', name, at: Date.now() }, ...current]);
+      if (estimateViewerOpen) {
+        if (change === 'estimate_signed') { viewerSigned.current = true; setEstimateSignedElsewhere(count => count + 1); }
+        else if (change === 'estimate_signature_cancelled') void syncOpenEstimate(true);
+        else if (ESTIMATE_CHANGES.has(change)) void syncOpenEstimate();
+      }
+      if (billOfLadingOpen && BILL_OF_LADING_CHANGES.has(change)) setBillOfLadingChanged(count => count + 1);
+      if (['inventory_updated', 'item_questions_answered', 'inventory_report_chosen'].includes(change)) {
+        if (showInventoryList) setInventoryReload(count => count + 1);
+        else setInventoryVersion(version => version + 1);
+      }
+    });
   const estimateResult = useRef<HTMLDivElement>(null);
   const reportMessage = useRef<HTMLParagraphElement>(null);
   const pdfMessage = useRef<HTMLParagraphElement>(null);
@@ -1041,10 +1145,16 @@ export default function CustomerMovePage() {
 
   return (
     <div className="customer-move" style={paletteStyle}>
+      <CustomerChangeBubbles items={moveChanges} repPage={repPage} onDismiss={id => setMoveChanges(current => current.filter(item => item.id !== id))} onClear={() => setMoveChanges([])} />
       <div className="cm-wrap">
         {!repPage && (data?.link_sms || linkSms) && (
           <p role="status" className="cm-link-sms-notice">
             We sent a text message to your phone{(data?.link_sms || linkSms)?.phone_last4 ? ` ending in ${(data?.link_sms || linkSms)?.phone_last4}` : ''} with a link to this page. You can use it to return anytime.
+          </p>
+        )}
+        {!repPage && (data?.link_email || linkEmail) && (
+          <p role="status" className="cm-link-sms-notice">
+            We sent an email{(data?.link_email || linkEmail)?.email_hint ? ` to ${(data?.link_email || linkEmail)?.email_hint}` : ''} with a link to this page. You can use it to return anytime.
           </p>
         )}
         {!session ? (
@@ -1413,7 +1523,7 @@ export default function CustomerMovePage() {
               </ol>;
               })()}
               {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
-              {billOfLadingOpen && <BillOfLadingViewer base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
+              {billOfLadingOpen && <BillOfLadingViewer changedElsewhere={billOfLadingChanged} base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
                 onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onClose={() => setBillOfLadingOpen(false)} />}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
@@ -1493,16 +1603,33 @@ export default function CustomerMovePage() {
                 </div>
               )}
 
+              {!!data.payments?.length && <section className="cm-payments" aria-label="Payments">
+                <div className="cm-payments-header">
+                  <strong>Payments</strong>
+                  <button type="button" className="cm-secondary-btn" disabled={invoiceBusy} onClick={() => void openInvoice()}>{invoiceBusy ? 'Preparing invoice...' : 'View invoice'}</button>
+                </div>
+                <ul>
+                  {data.payments.map(payment => <li key={payment.id}>
+                    <div>
+                      <span>{payment.paid_at ? new Date(payment.paid_at + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date not set'}{payment.method ? ` \u00b7 ${payment.method}` : ''}</span>
+                      {payment.confirmation_number && <small>Confirmation number: {payment.confirmation_number}</small>}
+                    </div>
+                    <strong>{money(payment.amount)}</strong>
+                  </li>)}
+                </ul>
+                <div className="cm-payments-total"><span>Total paid</span><strong>{money(data.payments.reduce((sum, payment) => sum + payment.amount, 0))}</strong></div>
+              </section>}
+
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
-              {estimateViewerOpen && <EstimateViewer key={preparedEstimate} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={showSignature} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
+              {estimateViewerOpen && <EstimateViewer key={estimateOpening} signedElsewhere={estimateSignedElsewhere} signatureRemovedElsewhere={estimateSignatureRemovedElsewhere} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={signature => { viewerSigned.current = true; showSignature(signature); }} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               {(data.estimate_needs_update || data.list_changed) && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} key={`${accessId}:${data.spark?.id || 'draft'}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
+            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} reload={inventoryReload} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} loadCatalog={() => call('/inventory-catalog')} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
@@ -1522,7 +1649,10 @@ export default function CustomerMovePage() {
               // Saving the list does not reprice; the estimate is only marked as needing an update.
               setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
               return result;
-            }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => { setShowInventoryList(false); if (changed) void loadSection('inventory', true); }} />}
+            }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => {
+              setShowInventoryList(false);
+              if (changed) void loadSection('inventory', true);
+            }} />}
             {inventoryPdf && <InventoryViewer url={inventoryPdf.url} filename={inventoryPdf.filename} title={inventoryPdf.title} description={inventoryPdf.description} onClose={() => { URL.revokeObjectURL(inventoryPdf.url); setInventoryPdf(null); }} />}
             {showQuestions && (
               <div className="cm-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="packing-title" onClick={event => { if (event.target === event.currentTarget) setShowQuestions(false); }}>

@@ -4152,9 +4152,13 @@ def add_lead_payment(lead_id: str, body: LeadPaymentPayload, user: User = Depend
     if user.role not in ("admin", "sales_rep"):
         raise HTTPException(status_code=403, detail="Only admin and sales reps can add payments")
     lead = _get_visible_lead_or_404(lead_id, user, db)
+    from models import generate_confirmation_number
+    number = generate_confirmation_number()
+    while db.query(LeadPayment.id).filter(LeadPayment.confirmation_number == number).first():
+        number = generate_confirmation_number()
     payment = LeadPayment(lead_id=lead.id, source="crm", sort_order=len(lead.payments),
                           amount=Decimal(str(body.amount)), taken_by_user=body.taken_by_user.strip(), paid_at=body.paid_at,
-                          method=body.method.strip() or None)
+                          method=body.method.strip() or None, confirmation_number=number)
     _check_payment(payment)
     db.add(payment)
     db.commit()
