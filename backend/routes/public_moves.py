@@ -1071,21 +1071,42 @@ def list_estimate_signatures(access: PublicMoveAccess = Depends(verified), db: S
     return {'items': signed_estimates(db, access.lead_id, access.job_id)}
 
 
+class EstimateViewing(BaseModel):
+    # The copy the page is showing, when it asks again because the estimate changed or was approved while it was open.
+    viewing: str | None = Field(default=None, max_length=36)
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures')
-def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def prepare_estimate_signature(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), body: EstimateViewing | None = None):
     from fastapi.encoders import jsonable_encoder
     from models import EstimateSignature
     from estimate_pdf import build_estimate_pdf
     job = db.get(LeadJob, access.job_id)
     if job.estimate_approved_id:
-        # The copy the rep approved, exactly as saved: nothing is built.
-        return {'id': job.estimate_approved_id, 'signed': False, 'approved': True}
+        # The copy the rep approved, exactly as saved: nothing is built. same: the copy the page shows says the same, so
+        # the page keeps it on screen and signs the approved one.
+        same = False
+        if body and body.viewing and body.viewing != job.estimate_approved_id:
+            from estimate_signature_history import estimate_state
+            shown, approved = db.get(EstimateSignature, body.viewing), db.get(EstimateSignature, job.estimate_approved_id)
+            if shown and approved and shown.job_id == job.id and not shown.signed_at:
+                states = [json.loads(row.snapshot) for row in (shown, approved)]
+                same = estimate_state(states[0]['data'], states[0]['rows']) == estimate_state(states[1]['data'], states[1]['rows'])
+        return {'id': job.estimate_approved_id, 'signed': False, 'approved': True, 'same': same}
     # A new, unsigned estimate from what is saved, as the page shows it: nothing is recalculated or compared.
     # A signed estimate is opened from its saved copy instead (estimate-signatures/{id}/pdf).
     data, rows = _estimate_document(access, db)
     pending = [c.get('name') or 'Unnamed charge' for c in data['estimate'].get('charges', []) if c.get('pending')]
     if pending:
         raise HTTPException(409, 'These charges still need calculation: ' + ', '.join(pending) + '.')
+    # The page asks again after a change elsewhere: the copy it shows is kept when it still says the same.
+    if body and body.viewing:
+        from estimate_signature_history import estimate_state
+        shown = db.get(EstimateSignature, body.viewing)
+        if shown and shown.job_id == job.id and not shown.signed_at:
+            saved = json.loads(shown.snapshot)
+            if estimate_state(saved['data'], saved['rows']) == estimate_state(data, rows):
+                return {'id': shown.id, 'signed': False, 'approved': False, 'same': True}
     record_id = str(uuid4())  # Returned as is: reading it from the row after the commit would load the row again.
     db.add(EstimateSignature(id=record_id, lead_id=access.lead_id, job_id=access.job_id,
         report_id=(data.get('spark') or {}).get('id'),

@@ -32,11 +32,17 @@ export default function PdfPages({ url, title, onSign, toNextSpot = false }: {
   const [pages, setPages] = useState<HTMLCanvasElement[]>([]);
   const [signAreas, setSignAreas] = useState<SignArea[]>([]);
   const [error, setError] = useState('');
+  // A new copy of a PDF already shown (signed elsewhere, a spot signed) replaces its pages all at once when drawn, so the
+  // reader stays where they are; a first PDF shows each page as it is drawn.
+  const shown = useRef(false);
+  shown.current = pages.length > 0;
 
   useEffect(() => {
     let cancelled = false;
     let task: { destroy: () => Promise<void> } | null = null;
-    setPages([]); setSignAreas([]); setError('');
+    const replacing = shown.current;
+    if (!replacing) { setPages([]); setSignAreas([]); }
+    setError('');
     (async () => {
       // Loaded with the viewer only, so the rest of the page does not carry it.
       const pdfjs = await import('pdfjs-dist');
@@ -64,9 +70,11 @@ export default function PdfPages({ url, title, onSign, toNextSpot = false }: {
           areas.push({ spot: Number(link.contentsObj.str.slice(SIGN_HERE.length + 1)), page: number - 1, left: Math.min(x1, x2) / viewport.width, top: Math.min(y1, y2) / viewport.height,
             width: Math.abs(x2 - x1) / viewport.width, height: Math.abs(y2 - y1) / viewport.height });
         }
-        setPages([...drawn]);
+        if (!replacing) setPages([...drawn]);
       }
-      if (!cancelled) setSignAreas(areas);
+      if (cancelled) return;
+      if (replacing) setPages(drawn);
+      setSignAreas(areas);
     })().catch(reason => { if (!cancelled) setError((reason as Error).message || 'Could not show the PDF.'); });
     return () => { cancelled = true; void task?.destroy(); };
   }, [url]);
