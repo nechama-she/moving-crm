@@ -19,7 +19,7 @@ import estimate_approval  # noqa: F401  Saved changes to an estimate clear a rep
 from lead_audit import begin_sql_capture, finish_sql_capture, record_lead_update_log
 from models import AccessAuditLog, Lead, User
 from access_errors import capture_response_error, exception_message, audit_body
-from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
+from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
 from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
 from routes.meta import messenger, instagram
 
@@ -436,6 +436,7 @@ app.include_router(instagram.router, dependencies=[Depends(get_current_user)])
 app.include_router(sms.router, dependencies=[Depends(get_current_user)])
 app.include_router(chats.router)
 app.include_router(unanswered_messages.router)
+app.include_router(customer_activity.router)
 app.include_router(communication_associations.router)
 app.include_router(stats.router)
 app.include_router(duplication_rules.router)
