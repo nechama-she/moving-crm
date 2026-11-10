@@ -2526,17 +2526,9 @@ def deliver_customer_link_sms(lead, access, db):
 def deliver_customer_link_email(lead, access, db):
     if not lead.email or not lead.email.strip():
         return {'ok': True, 'skipped': True}
-    sender = setting('PUBLIC_MOVE_EMAIL_FROM')
-    if not sender:
-        raise HTTPException(503, 'Customer email sending is not configured')
-    message = customer_link_message(access)
-    try:
-        boto3.client('ses', region_name=setting('AWS_REGION') or 'us-east-1').send_email(
-            Source=sender, Destination={'ToAddresses': [lead.email.strip()]}, Message={
-                'Subject': {'Data': 'Your moving estimate', 'Charset': 'UTF-8'},
-                'Body': {'Text': {'Data': message, 'Charset': 'UTF-8'}}})
-    except Exception:
-        raise HTTPException(502, 'Could not send email. Please retry.')
+    # From the company's own address, the way the verification codes are sent.
+    from customer_email_auth import send_company_email
+    send_company_email(lead.email, 'Your moving estimate', customer_link_message(access), _company_for(lead, db))
     local, _, domain = lead.email.strip().partition('@')
     access.link_email_sent_at = NOW()
     access.link_email_hint = local[:1] + '***@' + domain
