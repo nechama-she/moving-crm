@@ -1543,6 +1543,10 @@ export default function CustomerMovePage() {
                       const packageAfter = packageRows.reduce((sum, charge) => sum + charge.total, 0);
                       const packageBefore = packageRows.reduce((sum, charge) => sum + ((charge.discount_amount || 0) > 0 ? charge.subtotal || 0 : charge.total), 0);
                       const packageDiscount = Math.round((packageBefore - packageAfter) * 100) / 100;
+                      // The discount's name, from the note it adds to its lines (" | Name: -$12.34").
+                      const packageDiscountName = packageRows.filter(charge => (charge.discount_amount || 0) > 0)
+                        .map(charge => charge.description.match(/ \| ([^|]*): -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$/)?.[1]?.trim())
+                        .find(Boolean) || 'Discount';
                       return rows.map((charge, idx) => {
                       const target = charge.target;
                       // The package lines show their price before the discount, without its note; the discount is shown
@@ -1552,7 +1556,7 @@ export default function CustomerMovePage() {
                       const description = inPackage ? charge.description.replace(/ \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$/, '') : charge.description;
                       const choices = !repPage ? data.discount_choices : null;
                       const subtotal = idx === lastPackage && (repPage || packageDiscount > 0 || choices) ? <div className="cm-estimate-charge-row cm-package-subtotal">
-                        <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>Discount: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}
+                        <div><strong>Subtotal</strong>{packageDiscount > 0 && <small>{packageDiscountName}: -{money(packageDiscount)} ({Math.round(packageDiscount / packageBefore * 1000) / 10}%)</small>}
                           {choices && <label className="cm-discount-choice">Discount
                             <select value={choices.selected || ''} disabled={discountSaving || readOnly} onChange={event => void chooseDiscount(event.target.value || null)}>
                               <option value="">None</option>
