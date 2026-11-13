@@ -7,7 +7,7 @@ from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, func
-from models import (Lead, LeadJob, LeadLiveSwitch, LeadSparkInventoryItem, InventoryRoomType,
+from models import (Lead, LeadJob, LeadLiveSwitch, InventoryRoomType,
                     InventoryCatalogItem, InventoryEditState, InventoryEditRoom, InventoryEditItem)
 from item_selectors import inventory_selectors, ServiceSelections, default_selections
 
@@ -82,16 +82,9 @@ def validated_selections(values, definitions, previous=None):
     return json.dumps(default_selections({**(previous or {}), **values}, definitions))
 
 
-def source(details):
-    """The completed report the inventory tables import from; without one, the tables are the list."""
-    active = details.get('last_spark_status') == 'completed' and bool(details.get('last_spark_id'))
-    return (details.get('last_spark_id') if active else None,
-            details.get('spark_inventory_snapshot', []) if active else [],
-            details.get('manual_rooms', []) if active else [])
-
-
-def source_hash(details):
-    return hashlib.sha256(json.dumps(source(details), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+def active_report(details):
+    """The completed report the move's inventory belongs to, or None (no report, or new media archived it)."""
+    return details.get('last_spark_id') if details.get('last_spark_status') == 'completed' and details.get('last_spark_id') else None
 
 
 def lock(access, db):
@@ -132,80 +125,10 @@ def display_name(item, catalog_name):
 
 def load_inventory_editor(access, db):
     job, saved, details, state = lock(access, db)
-    report_id, rows, rooms = source(details)
-    fingerprint = source_hash(details)
-    if state is not None and state.source_hash != fingerprint and report_id is None:
-        # No report is active (new media archived it): the tables keep the list as it is.
-        state.source_hash, state.report_id, state.revision = fingerprint, None, str(uuid4())
-        db.commit()
-    if state is None or state.source_hash != fingerprint:
-        # Import a report once, or after another report producer changes it.
-        from catalog_names import resolve_catalog_names, catalog_items
-        # The rows carry their catalog ids from when the report ran; only those items are read.
-        resolved = resolve_catalog_names(rows, db)
-        catalog_ids = set(catalog_items(rows, db))
-        owned_items = {r.id for r in db.query(InventoryEditItem.id).filter_by(job_id=job.id)}
-        owned_rooms = {r.id for r in db.query(InventoryEditRoom.id).filter_by(job_id=job.id)}
-        db.query(InventoryEditItem).filter_by(job_id=job.id).delete(synchronize_session=False)
-        db.query(InventoryEditRoom).filter_by(job_id=job.id).delete(synchronize_session=False)
-        room_map, room_aliases = {}, {}
-        type_ids = [row.id for row in db.query(InventoryRoomType.id).order_by(InventoryRoomType.sort_order)]
-        default_type = type_ids[0] if type_ids else None
-        for room in rooms:
-            rid = room.get('id') or str(uuid4())
-            original_id = rid
-            if rid not in owned_rooms and db.get(InventoryEditRoom, rid) is not None: rid = str(uuid4())
-            room_aliases[original_id] = rid
-            room_map[rid] = InventoryEditRoom(id=rid, job_id=job.id, name=room['name'],
-                room_type_id=room.get('room_type_id') if room.get('room_type_id') in type_ids else default_type,
-                sort_order=len(room_map))
-        records = db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).all() if report_id else []
-        used, row_ids, pending_items = set(), set(), []
-        for index, (row, named) in enumerate(zip(rows, resolved)):
-            room_name = row.get('room') or 'Other items'
-            room = room_map.get(room_aliases.get(row.get('room_id'), row.get('room_id')))
-            if room is None:
-                room = next((r for r in room_map.values() if r.name == room_name), None)
-            if room is None:
-                room = InventoryEditRoom(id=str(uuid4()), job_id=job.id, name=room_name,
-                    room_type_id=default_type, sort_order=len(room_map))
-                room_map[room.id] = room
-            record = next((r for r in records if r.id == row.get('_inventory_record_id') and r.id not in used), None)
-            if record is None and row.get('going') is not False:
-                record = next((r for r in records if r.id not in used and r.name == row['name']
-                               and r.amount == Decimal(str(row.get('amount') or 0))
-                               and abs(r.cuft - Decimal(str(row.get('cuft') or 0))) < Decimal('0.0051')), None)
-            if record: used.add(record.id)
-            cid = named.get('catalog_item_id') or named.get('item_id')
-            cid = cid if cid in catalog_ids else None
-            qty = max(1, int(row.get('amount') or 1))
-            name = row['name']
-            pack = row.get('mover_pack')
-            if pack is None and re.search(r'\((?:CP|PBO)\)\s*$', name, re.I):
-                pack = bool(re.search(r'\(CP\)\s*$', name, re.I))
-            # Preserve custom names; store no duplicate name for catalog defaults.
-            override = base_name(name) if cid is None or row.get('name_override') else None
-            row_id = row.get('inventory_row_id') or (record.id if record else str(uuid4()))
-            if row_id in row_ids or (row_id not in owned_items and db.get(InventoryEditItem, row_id) is not None): row_id = str(uuid4())
-            row_ids.add(row_id)
-            item = InventoryEditItem(id=row_id, job_id=job.id,
-                room_id=room.id, catalog_item_id=cid, name=override,
-                quantity=qty, unit_cuft=Decimal(str(row.get('unit_cuft') or float(row.get('cuft') or 0)/qty or 0.01)),
-                unit_weight=Decimal(str(row.get('unit_weight') or float(row.get('weight') or 0)/qty)),
-                going=row.get('going') is not False, mover_pack=pack, sort_order=index,
-                mover_pack_count=row.get('mover_pack_count'), manual=row.get('manual'),
-                selections=json.dumps(row.get('selections') or {}),
-                set_id=row.get('set_id'), set_name=row.get('set_name'),
-                inventory_record_id=record.id if record else None)
-            pending_items.append(item)
-        # Flush parents first, including databases that enforce foreign keys immediately.
-        for room in room_map.values(): db.add(room)
-        db.flush()
-        db.add_all(pending_items)
-        if state is None:
-            state = InventoryEditState(job_id=job.id)
-            db.add(state)
-        state.source_hash, state.report_id, state.revision, state.receipts = fingerprint, report_id, str(uuid4()), '{}'
+    report_id = active_report(details)
+    if state is None or state.report_id != report_id:
+        # The tables keep the list; a new or archived report gives the window a new revision.
+        state = _editor_state(job, state, db, report_id)
         db.commit()
     rooms = db.query(InventoryEditRoom).filter_by(job_id=job.id).order_by(InventoryEditRoom.sort_order).all()
     result = {room.id: dict(id=room.id, name=room.name, room_type_id=room.room_type_id or '', items={}, custom_items=[]) for room in rooms}
@@ -219,25 +142,32 @@ def load_inventory_editor(access, db):
             item.selections = json.dumps(selections)
             defaults_saved = True
     if defaults_saved:
-        project(job, access, details, inventory_rows, db)
-        if saved is None:
-            saved = LeadLiveSwitch(lead_id=access.lead_id)
-            db.add(saved)
-        saved.details = json.dumps(details)
-        state.source_hash = source_hash(details)
+        if report_id:
+            # Saved like an edit: the list is answered again and the estimate needs updating.
+            list_edited(job, details, db)
+            inventory_rows = joined_rows(job.id, db)
+            if saved is None:
+                saved = LeadLiveSwitch(lead_id=access.lead_id)
+                db.add(saved)
+            saved.details = json.dumps(details)
         state.revision = str(uuid4())
         db.commit()
     for item, name in inventory_rows:
+        # The window shows the list as it ships: units an item answer took off are not in it.
+        units = item.quantity - (item.excluded_quantity or 0)
+        if units <= 0:
+            continue
+        packed = pack_count(item)
         result[item.room_id]['custom_items'].append(dict(id=item.id, name=display_name(item, name),
             catalog_item_id=item.catalog_item_id, name_override=item.name is not None,
             set_id=item.set_id, set_name=item.set_name,
-            quantity=item.quantity, cuft=float(item.unit_cuft), unit_weight=float(item.unit_weight),
-            going=item.going, mover_pack=item.mover_pack, mover_pack_count=pack_count(item),
+            quantity=units, cuft=float(item.unit_cuft), unit_weight=float(item.unit_weight),
+            going=item.going, mover_pack=item.mover_pack, mover_pack_count=None if packed is None else min(packed, units),
             selections=json.loads(item.selections or '{}'),
             selectors=selectors.get(item.catalog_item_id, [])))
     # The room types a room can be added as, in the same response: the window needs nothing else to open.
     room_types = [dict(id=row.id, name=row.name) for row in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order)]
-    return dict(revision=state.revision, report_id=report_id, rooms=list(result.values()), room_types=room_types)
+    return dict(revision=state.revision, report_id=state.report_id, rooms=list(result.values()), room_types=room_types)
 
 
 def save_inventory_edits(body, access, db):
@@ -255,10 +185,12 @@ def save_inventory_edits(body, access, db):
         conflicts.append(f'editor revision mismatch (sent {body.revision}, current {state.revision})')
     if body.report_id != state.report_id:
         conflicts.append(f'report mismatch (sent {body.report_id}, current {state.report_id})')
-    if source_hash(details) != state.source_hash:
-        conflicts.append('report/draft inventory snapshot changed outside this editor revision')
     if conflicts:
         raise HTTPException(409, 'Inventory conflict: ' + '; '.join(conflicts) + '. Reopen it before editing.')
+    if active_report(details):
+        # The window edits the list as it ships: units item answers took off leave the list for good, as an edit
+        # answers the list again.
+        materialize_exclusions(job.id, db)
     for group in (body, body.rooms):
         ids = [str(x.id) for x in group.update] + [str(x) for x in group.delete] + [str(x.id) for x in group.add]
         if len(ids) != len(set(ids)): raise HTTPException(422, 'Each ID must appear only once per batch.')
@@ -326,39 +258,21 @@ def save_inventory_edits(body, access, db):
         db.add(row)
         changed.append(row)
     # UPDATE/DELETE only affected SQL inventory rows, always scoped to this move.
-    record_ids = {r.inventory_record_id for r in targets if r.inventory_record_id}
-    records = {r.id:r for r in db.query(LeadSparkInventoryItem).filter(
-        LeadSparkInventoryItem.job_id == job.id, LeadSparkInventoryItem.id.in_(record_ids)).all()} if record_ids else {}
     for key in deleted:
-        row = target_map[key]
-        if row.inventory_record_id in records: db.delete(records[row.inventory_record_id])
-        db.delete(row)
+        db.delete(target_map[key])
     db.flush()
     for key in deleted_rooms:
         db.query(InventoryEditRoom).filter_by(id=key, job_id=job.id).delete(synchronize_session=False)
     db.flush()
-    joined = joined_rows(job.id, db)
-    if len(joined) > 60000 or len(room_ids) > 100: raise HTTPException(422, 'Inventory is too large.')
-    names = {r.id:display_name(r,n) for r,n in joined}
-    if state.report_id:
-        for row in changed:
-            record = records.get(row.inventory_record_id)
-            if not row.going:
-                if record: db.delete(record)
-                row.inventory_record_id = None
-                continue
-            if record is None:
-                record = LeadSparkInventoryItem(id=row.id, job_id=job.id, sort_order=row.sort_order)
-                db.add(record)
-            record.name, record.amount, record.cuft = names[row.id], row.quantity, row.unit_cuft * row.quantity
-            row.inventory_record_id = record.id
-    # Named compatibility snapshots are derived from JOINs, not used as row identity.
-    project(job, access, details, joined, db)
+    if db.query(func.count(InventoryEditItem.id)).filter_by(job_id=job.id).scalar() > 60000 or len(room_ids) > 100:
+        raise HTTPException(422, 'Inventory is too large.')
+    if active_report(details):
+        list_edited(job, details, db)
     if saved is None:
         saved = LeadLiveSwitch(lead_id=access.lead_id)
         db.add(saved)
     saved.details = json.dumps(details)
-    state.source_hash, state.revision = source_hash(details), str(uuid4())
+    state.revision = str(uuid4())
     receipts[str(body.request_id)] = dict(digest=digest, revision=state.revision)
     state.receipts = json.dumps(dict(list(receipts.items())[-100:]))
     db.commit()
@@ -370,26 +284,230 @@ def list_rows(job_id, db, joined=None):
     joined = joined_rows(job_id, db) if joined is None else joined
     rooms = db.query(InventoryEditRoom).filter_by(job_id=job_id).order_by(InventoryEditRoom.sort_order).all()
     room_names = {r.id:r.name for r in rooms}
-    rows = [dict(inventory_row_id=r.id, room_id=r.room_id, name=display_name(r,name), room=room_names[r.room_id],
+    rows = [dict(inventory_row_id=r.id, room_id=r.room_id, name=(r.name if r.name is not None else name) or 'Item', room=room_names[r.room_id],
         amount=r.quantity, unit_cuft=float(r.unit_cuft), unit_weight=float(r.unit_weight),
         cuft=float(r.unit_cuft*r.quantity) if r.going else 0, weight=float(r.unit_weight*r.quantity) if r.going else 0,
         going=r.going, mover_pack=None if pack_count(r) is not None else r.mover_pack, mover_pack_count=pack_count(r),
         catalog_item_id=r.catalog_item_id, item_id=r.catalog_item_id or 'custom-'+r.id,
-        name_override=r.name is not None, _inventory_record_id=r.inventory_record_id,
+        name_override=r.name is not None, excluded_quantity=r.excluded_quantity or 0,
+        reference_name=r.reference_name, question_key=r.question_key or r.id,
         set_id=r.set_id, set_name=r.set_name, manual=r.manual,
         selections=json.loads(r.selections or '{}')) for r,name in joined]
     serialized_rooms = [dict(id=r.id, name=r.name, room_type_id=r.room_type_id or '', items=[x for x in rows if x['room_id']==r.id]) for r in rooms]
     return rows, serialized_rooms
 
 
-def project(job, access, details, joined, db):
-    report_id, old_rows, _ = source(details)
-    rows, serialized_rooms = list_rows(job.id, db, joined)
-    volume, weight = sum(r['cuft'] for r in rows), sum(r['weight'] for r in rows)
-    if report_id:
-        lead = db.get(Lead,access.lead_id)
-        lead.volume, lead.weight, access.published_cuft = Decimal(str(volume)), Decimal(str(weight)), Decimal(str(volume))
-        details.update(spark_inventory_snapshot=rows, question_original_rows=[dict(r) for r in rows], manual_rooms=serialized_rooms,
-                       spark_extracted_cuft=volume,spark_extracted_weight=weight,spark_extracted_id=report_id,spark_pricing_ready=False)
-        details.pop('report_question_answers',None)
-        details.pop('question_excluded_items',None)
+def _editor_state(job, state, db, report_id):
+    """The job's editor state with a new revision, so an open inventory window loads the list again."""
+    state = state or db.get(InventoryEditState, job.id)
+    if state is None:
+        state = InventoryEditState(job_id=job.id, source_hash='')
+        db.add(state)
+    state.report_id, state.revision, state.receipts = report_id, str(uuid4()), '{}'
+    return state
+
+
+def _money(value):
+    return Decimal(str(value or 0))
+
+
+def shipping_rows(job_id, db, rows=None):
+    """What ships: each going row less the units an item answer took off, with the volume and weight of those units."""
+    rows = list_rows(job_id, db)[0] if rows is None else rows
+    result = []
+    for row in rows:
+        units = row['amount'] - row.get('excluded_quantity', 0)
+        if row.get('going') is False or units <= 0:
+            continue
+        packed = row.get('mover_pack_count')
+        result.append(dict(row, amount=units, quantity=units,
+                           cuft=float(_money(row['unit_cuft']) * units), weight=float(_money(row['unit_weight']) * units),
+                           mover_pack_count=None if packed is None else min(packed, units)))
+    return result
+
+
+def _set_volume(job, details, volume, weight, db):
+    from models import PublicMoveAccess
+    lead = db.get(Lead, job.lead_id)
+    lead.volume, lead.weight = volume, weight
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        link.published_cuft = volume
+    details['spark_extracted_cuft'], details['spark_extracted_weight'] = float(volume), float(weight)
+
+
+def apply_inventory(job, details, db):
+    """After a report or an item answer: the move's volume is what ships, plus the part of the report's total its items
+    do not account for, rounded up to a whole cubic foot; its weight likewise, not rounded. Does not commit."""
+    from decimal import ROUND_CEILING
+    rows = shipping_rows(job.id, db)
+    volume = sum((_money(r['unit_cuft']) * r['amount'] for r in rows), Decimal(0)) + _money(details.get('report_volume_offset'))
+    weight = sum((_money(r['unit_weight']) * r['amount'] for r in rows), Decimal(0)) + _money(details.get('report_weight_offset'))
+    volume = max(Decimal(0), volume).to_integral_value(rounding=ROUND_CEILING)
+    weight = max(Decimal(0), weight)
+    _set_volume(job, details, volume, weight, db)
+    return volume, weight
+
+
+def materialize_exclusions(job_id, db):
+    """Units item answers took off leave the list for good. Does not commit."""
+    for item in db.query(InventoryEditItem).filter(InventoryEditItem.job_id == job_id, InventoryEditItem.excluded_quantity > 0).all():
+        if item.excluded_quantity >= item.quantity:
+            db.delete(item)
+            continue
+        item.quantity -= item.excluded_quantity
+        item.excluded_quantity = 0
+        # A changed row is a new item to its questions: the answers that took units off do not apply again.
+        item.question_key = str(uuid4())
+        if item.mover_pack_count is not None:
+            item.mover_pack_count = min(item.mover_pack_count, item.quantity)
+    db.flush()
+
+
+def list_edited(job, details, db):
+    """The list was edited while a report is current: its answers start over, its volume is exactly what the rows add up
+    to, and the estimate needs updating. Does not commit."""
+    materialize_exclusions(job.id, db)
+    for item, catalog_name in joined_rows(job.id, db):
+        if item.name is not None and item.mover_pack is not None and base_name(item.name) != item.name:
+            item.name = None if item.catalog_item_id and base_name(item.name) == catalog_name else base_name(item.name)
+    db.flush()
+    rows = list_rows(job.id, db)[0]
+    volume = sum((_money(r['unit_cuft']) * r['amount'] for r in rows if r['going']), Decimal(0))
+    weight = sum((_money(r['unit_weight']) * r['amount'] for r in rows if r['going']), Decimal(0))
+    _set_volume(job, details, volume, weight, db)
+    for key in ('report_question_answers', 'report_volume_offset', 'report_weight_offset'):
+        details.pop(key, None)
+    details.update(spark_extracted_id=active_report(details), spark_pricing_ready=False, report_edited=True)
+
+
+def _write_rows(job, rows, rooms, db, keep_rooms=()):
+    """Add the rows, and the rooms they are in, to the job's inventory tables. Rows carry their catalog ids from when
+    the report ran; nothing is matched by name. keep_rooms: the job's rooms already in the tables."""
+    from catalog_names import catalog_items
+    catalog = catalog_items(rows, db)
+    type_ids = [row.id for row in db.query(InventoryRoomType.id).order_by(InventoryRoomType.sort_order)]
+    default_type = type_ids[0] if type_ids else None
+    room_map = {room.id: room for room in keep_rooms}
+    by_name = {room.name: room for room in keep_rooms}
+    wanted = [room['id'] for room in rooms if room.get('id') and room['id'] not in room_map]
+    taken = {r.id for r in db.query(InventoryEditRoom.id).filter(InventoryEditRoom.id.in_(wanted))} if wanted else set()
+    aliases = {}
+    for room in rooms:
+        existing = room_map.get(room.get('id')) or by_name.get(room.get('name'))
+        if existing is None:
+            rid = room['id'] if room.get('id') and room['id'] not in taken else str(uuid4())
+            existing = InventoryEditRoom(id=rid, job_id=job.id, name=room['name'], sort_order=len(room_map),
+                room_type_id=room.get('room_type_id') if room.get('room_type_id') in type_ids else default_type)
+            room_map[rid] = by_name[existing.name] = existing
+            db.add(existing)
+        if room.get('id'):
+            aliases[room['id']] = existing.id
+    start = (db.query(func.max(InventoryEditItem.sort_order)).filter_by(job_id=job.id).scalar() or 0) + 1 if keep_rooms else 0
+    pending = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        room_id = row.get('room_id')
+        room = (room_map.get(aliases.get(room_id, room_id)) if room_id else None) or by_name.get(row.get('room') or 'Other items')
+        if room is None:
+            room = InventoryEditRoom(id=str(uuid4()), job_id=job.id, name=row.get('room') or 'Other items',
+                                     room_type_id=default_type, sort_order=len(room_map))
+            room_map[room.id] = by_name[room.name] = room
+            db.add(room)
+        cid = row.get('catalog_item_id') or row.get('item_id')
+        cid = cid if cid in catalog else None
+        amount = _money(row.get('amount') if row.get('amount') is not None else row.get('quantity'))
+        qty = max(1, int(amount))
+        name = str(row.get('name') or 'Item')
+        pack = row.get('mover_pack')
+        if pack is None and re.search(r'\((?:CP|PBO)\)\s*$', name, re.I):
+            pack = bool(re.search(r'\(CP\)\s*$', name, re.I))
+        reference = row.get('reference_name')
+        pending.append(InventoryEditItem(id=row.get('inventory_row_id') or str(uuid4()), job_id=job.id, room_id=room.id,
+            catalog_item_id=cid,
+            # The name as the list has it; a catalog item named exactly as the catalog names it takes the catalog's name.
+            name=None if cid and not row.get('name_override') and name == catalog[cid].name else name,
+            quantity=qty,
+            unit_cuft=_money(row['unit_cuft']) if row.get('unit_cuft') else (_money(row.get('cuft')) / qty or Decimal('0.01')),
+            unit_weight=_money(row['unit_weight']) if row.get('unit_weight') else _money(row.get('weight')) / qty,
+            # An item the report lists with no units ships nothing.
+            going=row.get('going') is not False and amount > 0, mover_pack=pack, sort_order=start + index,
+            mover_pack_count=row.get('mover_pack_count'), manual=row.get('manual'),
+            excluded_quantity=min(qty, max(0, int(row.get('excluded_quantity') or 0))),
+            reference_name=str(reference)[:200] if reference else None,
+            question_key=row.get('question_key'),
+            selections=json.dumps(row.get('selections') or {}), set_id=row.get('set_id'), set_name=row.get('set_name')))
+    ids = [item.id for item in pending]
+    taken_items = {r.id for r in db.query(InventoryEditItem.id).filter(InventoryEditItem.id.in_(ids))} if ids else set()
+    seen = set()
+    for item in pending:
+        if item.id in taken_items or item.id in seen:
+            item.id = str(uuid4())
+        if not item.question_key:
+            item.question_key = item.id
+        seen.add(item.id)
+    db.flush()  # Rooms first, for databases that enforce foreign keys immediately.
+    db.add_all(pending)
+    db.flush()
+
+
+def fill_inventory(job, rows, rooms, report_id, state, db):
+    """Replace the job's whole inventory with these rows (a past report chosen again, or a move's saved inventory being
+    moved into the tables); returns the job's editor state. Does not commit."""
+    db.query(InventoryEditItem).filter_by(job_id=job.id).delete(synchronize_session=False)
+    db.query(InventoryEditRoom).filter_by(job_id=job.id).delete(synchronize_session=False)
+    db.flush()
+    _write_rows(job, rows, rooms, db)
+    return _editor_state(job, state, db, report_id)
+
+
+def replace_report_items(job, rows, report_id, state, db):
+    """A report ran: its items replace the previous report's items; the customer's own items stay as they are, and
+    rooms only the previous report's items were in go. Returns the job's editor state. Does not commit."""
+    old = db.query(InventoryEditItem).filter(InventoryEditItem.job_id == job.id, InventoryEditItem.manual.is_(False)).all()
+    emptied = {row.room_id for row in old}
+    for row in old:
+        db.delete(row)
+    db.flush()
+    keep = db.query(InventoryEditRoom).filter_by(job_id=job.id).all()
+    _write_rows(job, [dict(row, manual=False) for row in rows], [], db, keep_rooms=keep)
+    used = {room_id for (room_id,) in db.query(InventoryEditItem.room_id).filter_by(job_id=job.id).distinct()}
+    for room in keep:
+        if room.id in emptied and room.id not in used:
+            db.delete(room)
+    db.flush()
+    return _editor_state(job, state, db, report_id)
+
+
+def lead_job_id(lead_id, db):
+    """The job a lead's inventory belongs to: its customer page's job, else its first job."""
+    from models import PublicMoveAccess
+    return (db.query(PublicMoveAccess.job_id).filter_by(lead_id=lead_id).scalar()
+            or db.query(LeadJob.id).filter_by(lead_id=lead_id).order_by(LeadJob.job_order).limit(1).scalar())
+
+
+def report_inventory(job_id, details, db):
+    """The current report's inventory in the form report history keeps it (and always kept it): the list as the
+    customer has it, the units item answers took off, what ships, and the customer's rooms."""
+    if not job_id or not active_report(details):
+        # A report still running (or none) has no inventory of its own yet.
+        return {'question_original_rows': [], 'question_excluded_items': [], 'spark_inventory_snapshot': [], 'manual_rooms': []}
+    rows, rooms = list_rows(job_id, db)
+    hidden = ('excluded_quantity', 'room_id')
+    def plain(row):
+        return {key: value for key, value in row.items() if key not in hidden}
+    excluded = []
+    for row in rows:
+        count = row['excluded_quantity']
+        if count:
+            excluded.append(dict(plain(row), excluded_quantity=count) if count < row['amount'] else plain(row))
+    source = details.get('report_source', 'liveswitch')
+    if details.get('report_edited') or source == 'manual':
+        listed = rooms
+    elif source == 'combined':
+        listed = [dict(room, items=[item for item in room['items'] if item.get('manual') is not False]) for room in rooms]
+    else:
+        listed = []
+    listed = [dict(room, items=[plain(item) for item in room['items']]) for room in listed if room['items']]
+    return {'question_original_rows': [plain(row) for row in rows], 'question_excluded_items': excluded,
+            'spark_inventory_snapshot': [plain(row) for row in shipping_rows(job_id, db, rows)], 'manual_rooms': listed}

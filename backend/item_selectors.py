@@ -138,8 +138,7 @@ def inventory_selectors(access, db, item_ids=None):
 def add_service_charges(lead, job, db, plan):
     """Price current inventory choices once per unit, including configured defaults."""
     from models import LeadLiveSwitch, LeadJobCharge
-    from inventory_edits import source
-    from catalog_names import resolve_catalog_names
+    from inventory_edits import active_report, shipping_rows
     definitions = {}
     for definition in service_rows(plan):
         for item_id in definition['item_ids']:
@@ -147,9 +146,10 @@ def add_service_charges(lead, job, db, plan):
     if not definitions:
         return Decimal(0)
     saved = db.get(LeadLiveSwitch, lead.id)
-    _, rows, _ = source(json.loads(saved.details or '{}') if saved else {})
+    # What ships, while a report is current.
+    rows = shipping_rows(job.id, db) if saved and active_report(json.loads(saved.details or '{}')) else []
     charges = {}
-    for row in resolve_catalog_names(rows, db):
+    for row in rows:
         if row.get('going') is False:
             continue
         item_id = row.get('catalog_item_id') or row.get('item_id')

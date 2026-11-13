@@ -28,6 +28,18 @@ def migrate() -> None:
     with engine.begin() as connection:
         add_column(connection, 'public_move_access', 'link_email_sent_at', 'TIMESTAMP')
         add_column(connection, 'public_move_access', 'link_email_hint', 'VARCHAR(255)')
+    # The inventory tables become the inventory: each row records the units item answers took off, the report's own
+    # name for it, and its question key. Then every move's saved inventory moves into the tables (approved estimates
+    # untouched), and the report items table, which only mirrored it, goes. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'inventory_edit_items', 'excluded_quantity', 'INTEGER NOT NULL DEFAULT 0')
+        add_column(connection, 'inventory_edit_items', 'reference_name', 'VARCHAR(200)')
+        add_column(connection, 'inventory_edit_items', 'question_key', 'VARCHAR(200)')
+    from database import SessionLocal
+    from inventory_migration import migrate_inventories
+    logger.info('Moved %s inventories into the inventory tables', migrate_inventories(SessionLocal))
+    with engine.begin() as connection:
+        connection.execute(text('DROP TABLE IF EXISTS lead_spark_inventory_items'))
 
 
 if __name__ == "__main__":

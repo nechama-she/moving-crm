@@ -1459,28 +1459,6 @@ class LeadLiveSwitch(Base):
     details = Column(Text, nullable=False)
 
 
-class LeadSparkInventoryItem(Base):
-    __tablename__ = "lead_spark_inventory_items"
-
-    id = Column(String(36), primary_key=True, default=_uuid)
-    job_id = Column(String(36), ForeignKey("lead_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(Text, nullable=False)
-    cuft = Column(Numeric(12, 2))
-    amount = Column(Numeric(12, 2))
-    sort_order = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime(timezone=True), default=_now)
-    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "job_id": self.job_id,
-            "name": self.name or "",
-            "cuft": float(self.cuft) if self.cuft is not None else None,
-            "amount": float(self.amount) if self.amount is not None else None,
-            "sort_order": int(self.sort_order or 0),
-        }
-
 class PublicMoveAccess(Base):
     __tablename__ = 'public_move_access'
     id = Column(String(36), primary_key=True, default=_uuid)
@@ -1680,6 +1658,12 @@ class InventoryEditItem(Base):
     # True for a row from the customer's list or edited by hand: a new report keeps it.
     # False for a row from a LiveSwitch report: the next report replaces it. None: saved before this was recorded.
     manual = Column(Boolean)
+    # Units of this row an item answer took off the move (not shipping); quantity stays what the customer has.
+    excluded_quantity = Column(Integer, nullable=False, default=0, server_default='0')
+    # A report item's name as the report gave it (its photos are found by it), when the catalog's name replaced it.
+    reference_name = Column(String(200))
+    # What this row's item questions are identified by: kept as the row moves, so its answers stay with it.
+    question_key = Column(String(200))
     selections = Column(Text, nullable=False, default='{}')
     sort_order = Column(Integer, nullable=False, default=0)
     inventory_record_id = Column(String(36))

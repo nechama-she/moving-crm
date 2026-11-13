@@ -167,21 +167,22 @@ def build_inventory(body, db, allow_empty=False):
     return rooms, resolved, float(cuft), float(weight)
 
 
-def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
+def submit_list_report(access, db):
+    """The customer's list, with no media, becomes the current report and is priced. Its items stay in the inventory
+    table (all now the customer's own); the record keeps no copy of them."""
+    from uuid import uuid4
     from routes.liveswitch import apply_spark_results_to_lead
+    from inventory_edits import report_inventory, materialize_exclusions
+    from models import InventoryEditItem
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
     saved = db.get(LeadLiveSwitch, access.lead_id)
     details = json.loads(saved.details or '{}') if saved else {}
-    report_id = 'manual-' + str(list_body['request_id'])
-    # The same list submitted again: the current report is priced again; a past one is selected from history instead.
-    if details.get('last_spark_id') == report_id:
-        return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)
-    if any(row.get('last_spark_id') == report_id for row in details.get('spark_history', [])):
-        raise HTTPException(409, 'This list is already in your history. Select it there.')
+    report_id = 'manual-' + str(uuid4())
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
-    remember_report(details)
-    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    remember_report(details, report_inventory(job.id, details, db))
+    details['carried_question_state'] = details.get('carried_question_state') or {
+        'report_question_answers': details.get('report_question_answers', {})}
     for key in REPORT_KEYS:
         if key != 'carried_question_state':
             details.pop(key, None)
@@ -189,10 +190,11 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
     details['report_customer_package'] = job.customer_packing_package
     for key in CONVERSATION_KEYS:
         details[key] = ''
+    # The list as it ships is the report: units answers took off leave it, and every item is the customer's own.
+    materialize_exclusions(job.id, db)
+    db.query(InventoryEditItem).filter_by(job_id=job.id).update({InventoryEditItem.manual: True}, synchronize_session=False)
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
-                   report_list_body=list_body, report_source='manual', manual_rooms=rooms,
-                   spark_inventory_snapshot=[dict(row, manual=True) for row in rows],
-                   spark_extracted_cuft=cuft, spark_extracted_weight=weight, report_files=[],
+                   report_list_body={'request_id': report_id, 'rooms': []}, report_source='manual', report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
     if not saved:
         saved = LeadLiveSwitch(lead_id=access.lead_id)

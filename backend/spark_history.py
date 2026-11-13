@@ -5,12 +5,15 @@ REPORT_KEYS = ('carried_question_state', 'report_question_answers', 'question_or
                'spark_extracted_id', 'spark_extracted_cuft', 'spark_extracted_weight',
                'spark_processing', 'spark_inventory_snapshot', 'spark_pricing_ready',
                'report_conversation', 'report_files', 'pending_spark_payload',
-               'report_customer_packing', 'report_customer_package', 'report_source', 'manual_rooms', 'report_list_body', 'report_list_rows', 'report_list_cuft', 'report_list_weight')
+               'report_customer_packing', 'report_customer_package', 'report_source', 'manual_rooms', 'report_list_body', 'report_list_rows', 'report_list_cuft', 'report_list_weight',
+               'report_edited', 'report_volume_offset', 'report_weight_offset')
 
 
 CONVERSATION_KEYS = ('id', 'name', 'hostJoinUrl', 'participantJoinUrl', 'conversationUrl', 'embeddedConversationUrl')
 
-def remember_report(details):
+def remember_report(details, inventory=None):
+    """Keep the current report in history. inventory: its inventory from the inventory table (report_inventory), kept
+    with it in the form history has always had."""
     report_id = details.get('last_spark_id')
     if not report_id:
         return
@@ -22,6 +25,8 @@ def remember_report(details):
         if 'report_conversation' not in legacy:
             legacy['report_conversation'] = deepcopy(details['report_conversation'])
     snapshot = {key: deepcopy(details[key]) for key in REPORT_KEYS if key in details}
+    if inventory is not None:
+        snapshot.update(deepcopy(inventory))
     index = next((i for i, row in enumerate(reports) if row.get('last_spark_id') == report_id), None)
     if index is None:
         reports.append(snapshot)
@@ -38,60 +43,29 @@ def _listing(rows, rooms, body=None):
 
 
 def list_for_next_report(details, table_rows=(), table_rooms=()):
-    """The item list a new report adds its media items to: the manual rows of the current inventory.
-    LiveSwitch rows are never carried; the new report analyzes the media again. Without a completed
-    report (new media archived it, or the list was never priced), the inventory tables hold the list."""
-    completed = details.get('last_spark_status') == 'completed'
-    # The current report, or, after new media archived it, the last report in history.
-    latest = details if completed or details.get('last_spark_id') else next(reversed(details.get('spark_history') or [{}]), {})
-    rows = details.get('question_original_rows', details.get('spark_inventory_snapshot', [])) if completed else list(table_rows)
-    rooms = details.get('manual_rooms', []) if completed else list(table_rooms)
-    source = latest.get('report_source')
-    listed = {(str(row.get('room') or ''), str(row.get('name') or '')) for row in latest.get('report_list_rows', [])}
-    if not completed or any('manual' in row for row in rows if isinstance(row, dict)):
-        def manual(row):
-            if row.get('manual') is not None:
-                return row['manual']
-            # Rows saved before this was recorded: manual when the report was a list, or when they are in its list part.
-            return not latest or source == 'manual' or (source == 'combined' and (str(row.get('room') or ''), str(row.get('name') or '')) in listed)
-        kept = [row for row in rows if isinstance(row, dict) and manual(row)]
-        return _listing(kept, rooms) if kept else None
-    # Rows saved before each row recorded where it came from: the list part as the report recorded it.
-    if source == 'manual':
-        # Before any item answers removed units; the new report applies the answers again.
-        return dict(body=details.get('report_list_body'), rows=rows,
-                    cuft=details.get('question_original_cuft', details.get('spark_extracted_cuft')) or 0,
-                    weight=details.get('question_original_weight', details.get('spark_extracted_weight')) or 0,
-                    rooms=rooms)
-    if source == 'combined' and details.get('report_list_rows'):
-        return dict(body=details.get('report_list_body'), rows=details['report_list_rows'],
-                    cuft=details.get('report_list_cuft', 0), weight=details.get('report_list_weight', 0),
-                    rooms=rooms)
-    return None
+    """The customer's own items in the inventory table: a new report keeps them and replaces only the report's items."""
+    kept = [row for row in table_rows if isinstance(row, dict) and row.get('manual') is not False]
+    return _listing(kept, list(table_rooms)) if kept else None
 
 
 def start_report_list(details, listing):
     """Record the list a new report combines with its media, or a media-only report without one."""
-    listing = listing or {}
-    details.update(report_list_body=listing.get('body'), report_list_rows=listing.get('rows', []),
-                   report_list_cuft=listing.get('cuft', 0), report_list_weight=listing.get('weight', 0),
-                   manual_rooms=listing.get('rooms', []), report_source='combined' if listing.get('rows') else 'liveswitch')
+    # The list's items stay in the inventory table; the report records only that it has them.
+    details.update(report_source='combined' if (listing or {}).get('rows') else 'liveswitch')
 
 
-def archive_report_for_new_media(details):
-    """Move the active run to history before starting a new media selection."""
+def archive_report_for_new_media(details, inventory=None):
+    """Move the active run to history before starting a new media selection. inventory: report_inventory."""
     if not details.get('last_spark_id'):
         return False
     if details.get('pending_spark_payload'):
         details['last_spark_status'] = 'cancelled'
         details.pop('pending_spark_payload', None)
         details.pop('spark_start_queued_for', None)
-    remember_report(details)
+    remember_report(details, inventory)
+    # The items stay in the inventory table until the next report replaces them; their answers wait with them.
     details['carried_question_state'] = details.get('carried_question_state') or {
-        key: deepcopy(details[key]) for key in
-        ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot')
-        if key in details
-    }
+        'report_question_answers': deepcopy(details.get('report_question_answers', {}))}
     for key in REPORT_KEYS:
         if key != 'carried_question_state':
             details.pop(key, None)
@@ -129,10 +103,11 @@ def _shipping_rows(rows, excluded, *, consume=False):
     return result
 
 
-def report_history(details, staff=False):
-    # Merge the live snapshot without requiring writes during read-only requests.
+def report_history(details, staff=False, inventory=None):
+    """The move's reports, newest first. inventory: the current report's inventory (report_inventory)."""
+    # Merge the live report without requiring writes during read-only requests.
     details = deepcopy(details)
-    remember_report(details)
+    remember_report(details, inventory)
     rows = [row for _, row in sorted(enumerate(details.get('spark_history', [])),
             key=lambda entry: (entry[1].get('last_spark_at') or 0, entry[0]), reverse=True)]
     result = []
@@ -154,8 +129,10 @@ def report_history(details, staff=False):
     return result
 
 
-def activate_report(details, report_id):
-    remember_report(details)
+def activate_report(details, report_id, inventory=None):
+    """Make a past report current again. inventory: the current report's (report_inventory), kept in history.
+    Returns the chosen report's rows and rooms, for the inventory table; the record keeps no copy of them."""
+    remember_report(details, inventory)
     row = next((row for row in details.get('spark_history', []) if row.get('last_spark_id') == report_id), None)
     if row is None:
         raise ValueError('Report does not belong to this move.')
@@ -167,3 +144,20 @@ def activate_report(details, report_id):
     details['report_files'] = deepcopy(row.get('report_files', []))
     for key in CONVERSATION_KEYS:
         details[key] = row.get('report_conversation', {}).get(key, '')
+    rows = deepcopy(row.get('question_original_rows') or row.get('spark_inventory_snapshot') or [])
+    rooms = deepcopy(row.get('manual_rooms') or [])
+    if rows and not any(isinstance(r, dict) and 'question_key' in r for r in rows):
+        # Kept before the inventory table: its rows get the keys their questions had, and who added each.
+        from inventory_migration import keyed_rows, listed_items
+        rows = keyed_rows(rows, row.get('report_source', 'liveswitch'), listed_items(row))
+    if 'report_volume_offset' not in details and row.get('question_original_cuft') is not None:
+        # Saved before the inventory table: its volume was the report's total less what answers took off.
+        details['report_volume_offset'] = float(row['question_original_cuft']) - sum(
+            float(r.get('cuft') or 0) for r in rows if isinstance(r, dict) and r.get('going') is not False)
+        details['report_weight_offset'] = float(row.get('question_original_weight') or 0) - sum(
+            float(r.get('weight') or 0) for r in rows if isinstance(r, dict) and r.get('going') is not False)
+    for key in ('spark_inventory_snapshot', 'question_original_rows', 'manual_rooms', 'question_excluded_items',
+                'question_original_cuft', 'question_original_weight', 'report_list_body', 'report_list_rows',
+                'report_list_cuft', 'report_list_weight'):
+        details.pop(key, None)
+    return rows, rooms

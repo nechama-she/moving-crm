@@ -38,7 +38,6 @@ from models import (
     Lead,
     LeadJob,
     LeadJobCharge,
-    LeadSparkInventoryItem,
     PublicMoveAccess,
     User,
     UserCompany,
@@ -616,47 +615,20 @@ def _material_item_names(materials: list[dict], db=None) -> list[str]:
 
 
 def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
+    """What ships, from the inventory table, while a report is current (a list not yet priced has none)."""
     from models import LeadJob, LeadLiveSwitch
+    from inventory_edits import active_report, shipping_rows
+    from box_packing import movers_pack_count
     if not job_id:
         return []
     job = db.get(LeadJob, job_id)
     report = db.get(LeadLiveSwitch, job.lead_id) if job else None
-    snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
-    if snapshot:
-        from catalog_names import resolve_catalog_names
-        snapshot = resolve_catalog_names(snapshot, db)
-        result = []
-        for row in snapshot:
-            if not isinstance(row, dict) or not row.get('name') or row.get('going') is False:
-                continue
-            try:
-                quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
-            except (TypeError, ValueError):
-                quantity = 1
-            try:
-                cuft = float(row['cuft']) if row.get('cuft') is not None else None
-            except (TypeError, ValueError):
-                cuft = None
-            from box_packing import movers_pack_count
-            result.append({'item_id': row.get('item_id'), 'catalog_item_id': row.get('catalog_item_id'),
-                           'name_override': row.get('name_override', False), 'unit_cuft': row.get('unit_cuft'), 'name': str(row['name']),
-                           'quantity': quantity, 'room': str(row.get('room') or ''), 'cuft': cuft,
-                           'mover_pack_count': movers_pack_count(row)})
-        return result
-    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
-    res = []
-    for item in items:
-        try:
-            qty = max(1, int(float(item.amount or 1)))
-        except (TypeError, ValueError):
-            qty = 1
-        index = item.sort_order or 0
-        source = snapshot[index] if 0 <= index < len(snapshot) else {}
-        room = source.get('room') or '' if source.get('name') == item.name else ''
-        res.append({"id": item.id, "name": item.name or "", "quantity": qty, "room": room,
-                    "cuft": float(item.cuft) if item.cuft is not None else None})
-    from catalog_names import resolve_catalog_names
-    return resolve_catalog_names(res, db)
+    if not report or not active_report(json.loads(report.details or '{}')):
+        return []
+    return [{'item_id': row['item_id'], 'catalog_item_id': row['catalog_item_id'], 'name_override': row['name_override'],
+             'unit_cuft': row['unit_cuft'], 'name': row['name'], 'quantity': row['amount'], 'room': row['room'] or '',
+             'cuft': row['cuft'], 'mover_pack_count': movers_pack_count(row)}
+            for row in shipping_rows(job_id, db)]
 
 
 def _rule_charges(rule: PricingRule) -> list[dict]:
@@ -1240,47 +1212,47 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
 
 
 def apply_box_packing_to_inventory(job, db, package, selection):
-    """Record on each box row how many of its boxes the movers pack."""
-    from models import LeadLiveSwitch, LeadSparkInventoryItem
+    """Record on the inventory table how many of each room's boxes of a type the movers pack: that room's rows of the
+    type become one row, which records it. As before, units item answers took off leave the list. Does not commit."""
+    from uuid import uuid4
+    from models import LeadLiveSwitch, InventoryEditRoom, InventoryEditState
+    from inventory_edits import active_report, joined_rows, display_name, materialize_exclusions
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=job.lead_id).with_for_update().first()
-    if not saved:
+    if not saved or not active_report(json.loads(saved.details or '{}')):
         return
-    details = json.loads(saved.details or '{}')
-    from catalog_names import resolve_catalog_names
-    rows = resolve_catalog_names(details.get('spark_inventory_snapshot') or [], db)
+    rooms = {room.id: room.name for room in db.query(InventoryEditRoom).filter_by(job_id=job.id)}
+    def groups():
+        rows = [(item, display_name(item, name)) for item, name in joined_rows(job.id, db) if item.going]
+        for box in package.get('box_items', []):
+            room_key = _normalize_item_name(box.get('room') or 'Other items')
+            name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
+            group = [(item, name) for item, name in rows
+                     if _normalize_item_name(rooms.get(item.room_id) or 'Other items') == room_key
+                     and _normalize_item_name(_box_base_name(name)) == name_key]
+            if group:
+                yield box, group
+    if not any(True for _ in groups()):
+        return
+    materialize_exclusions(job.id, db)
     quantities = selection.get('box_quantities', {})
-    changed = False
-    for box in package.get('box_items', []):
-        room_key = _normalize_item_name(box.get('room') or 'Other items')
-        name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
-        indexes = [index for index, row in enumerate(rows) if isinstance(row, dict)
-                   and row.get('going') is not False
-                   and _normalize_item_name(row.get('room') or 'Other items') == room_key
-                   and _normalize_item_name(_box_base_name(row.get('name') or '')) == name_key]
-        if not indexes:
-            continue
-        source = [rows[index] for index in indexes]
-        total_qty = sum(max(1, int(float(row.get('amount') or row.get('quantity') or 1))) for row in source)
-        cp_qty = max(0, min(total_qty, int(quantities.get(box['id'], 0) or 0)))
-        totals = {field: sum(float(row.get(field) or 0) for row in source) for field in ('cuft', 'weight')}
-        # One row per box type and room; it records how many of its boxes the movers pack.
-        row = dict(source[0])
-        row.update(name=_box_base_name(row.get('name') or box['label']), amount=total_qty, quantity=total_qty,
-                   cuft=round(totals['cuft'], 4), weight=round(totals['weight'], 4),
-                   mover_pack=None, mover_pack_count=cp_qty)
-        replacements = [row]
-        first = indexes[0]
-        rows = [row for index, row in enumerate(rows) if index not in set(indexes)]
-        rows[first:first] = replacements
-        changed = True
-    if not changed:
-        return
-    details['spark_inventory_snapshot'] = rows
-    if details.get('question_original_rows'):
-        details['question_original_rows'] = [dict(row) for row in rows]
-    saved.details = json.dumps(details)
-    from inventory_record_sync import sync_inventory_records
-    sync_inventory_records(job.id, rows, db)
+    for box, group in list(groups()):
+        first, first_name = group[0]
+        total = sum(item.quantity for item, _ in group)
+        cuft = sum(item.unit_cuft * item.quantity for item, _ in group)
+        weight = sum(item.unit_weight * item.quantity for item, _ in group)
+        first.quantity, first.unit_cuft, first.unit_weight = total, cuft / total, weight / total
+        first.mover_pack, first.mover_pack_count = None, max(0, min(total, int(quantities.get(box['id'], 0) or 0)))
+        if len(group) > 1:
+            first.question_key = str(uuid4())  # The merged row is a new item to its questions.
+        if first.name is not None:
+            first.name = _box_base_name(first_name)
+        for item, _ in group[1:]:
+            db.delete(item)
+        db.flush()
+    state = db.get(InventoryEditState, job.id)
+    if state:
+        state.revision = str(uuid4())  # An open inventory window loads the list again.
+    db.flush()
 
 
 def customer_package_lines(package, selection):

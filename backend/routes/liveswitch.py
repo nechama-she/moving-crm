@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from spark_processing import SparkProcessingLog
 from spark_history import archive_report_for_new_media, remember_report, report_history, activate_report, list_for_next_report, start_report_list
+from inventory_edits import report_inventory, lead_job_id
 from estimate_signature_history import attach_signatures, signed_estimates
 from urllib.parse import urlencode, urlsplit
 
@@ -402,7 +403,7 @@ def stage_selected_media(lead_id, body, db, actor_id=None):
     lead = db.query(Lead).filter_by(id=lead_id).with_for_update().one()
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
-    if archive_report_for_new_media(details):
+    if archive_report_for_new_media(details, report_inventory(lead_job_id(lead_id, db), details, db)):
         saved.details = json.dumps(details)
         db.commit()
     if not os.getenv('PUBLIC_MOVE_SYNC_QUEUE_URL', '').strip():
@@ -451,7 +452,7 @@ def generate_uploaded_report(lead_id, body, db):
     db.query(Lead).filter_by(id=lead_id).with_for_update().one()
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
     details = json.loads(saved.details or '{}') if saved else {}
-    if archive_report_for_new_media(details):
+    if archive_report_for_new_media(details, report_inventory(lead_job_id(lead_id, db), details, db)):
         saved.details = json.dumps(details)
         db.commit()
     files = selected_media(lead_id, body, db)
@@ -474,10 +475,13 @@ def generate_uploaded_report(lead_id, body, db):
     if not template_id:
         raise HTTPException(400, 'No Spark template is configured. Choose one in Settings.')
     payload = {'sparkTemplateId': template_id, 'shareWith': ['anyone']}
-    from inventory_edits import list_rows
-    listing = list_for_next_report(details, *list_rows(db.query(PublicMoveAccess.job_id).filter_by(lead_id=lead_id).scalar(), db))
-    remember_report(details)
-    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    from inventory_edits import list_rows, report_inventory, lead_job_id
+    inventory_job = lead_job_id(lead_id, db)
+    listing = list_for_next_report(details, *list_rows(inventory_job, db))
+    # The current report goes to history with its inventory; the items stay in the table until the new report
+    # replaces the report's own items, and their answers wait with them.
+    remember_report(details, report_inventory(inventory_job, details, db))
+    details['carried_question_state'] = details.get('carried_question_state') or {'report_question_answers': details.get('report_question_answers', {})}
     for key in REPORT_KEYS:
         if key != 'carried_question_state':
             details.pop(key, None)
@@ -548,10 +552,13 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
     job = db.get(LeadJob, access.job_id)
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
-    from inventory_edits import list_rows
-    listing = list_for_next_report(details, *list_rows(db.query(PublicMoveAccess.job_id).filter_by(lead_id=lead_id).scalar(), db))
-    remember_report(details)
-    details['carried_question_state'] = details.get('carried_question_state') or {key: details[key] for key in ('report_question_answers', 'question_original_rows', 'spark_inventory_snapshot') if key in details}
+    from inventory_edits import list_rows, report_inventory, lead_job_id
+    inventory_job = lead_job_id(lead_id, db)
+    listing = list_for_next_report(details, *list_rows(inventory_job, db))
+    # The current report goes to history with its inventory; the items stay in the table until the new report
+    # replaces the report's own items, and their answers wait with them.
+    remember_report(details, report_inventory(inventory_job, details, db))
+    details['carried_question_state'] = details.get('carried_question_state') or {'report_question_answers': details.get('report_question_answers', {})}
     for key in REPORT_KEYS:
         if key != 'carried_question_state':
             details.pop(key, None)
@@ -718,26 +725,26 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
     processing.mark('download', 'running')
     processing.persist(db, lead_id)
     try:
-        if use_snapshot or details.get('report_source') == 'manual':
-            cuft, weight = details.get('spark_extracted_cuft'), details.get('spark_extracted_weight')
-            inventory_rows = details.get('spark_inventory_snapshot', [])
-            processing.mark('download', 'success', 'Using saved room inventory; no LiveSwitch request')
-            processing.mark('extract', 'running')
-        else:
-            cuft, weight, inventory_rows = fetch_and_extract_spark_report(share_url, processing=processing)
+        from models import Company, LeadJob, InventoryEditState
+        from inventory_edits import replace_report_items, apply_inventory, list_rows
+        from inventory_questions import apply_answers, carried_answers
+        # A report downloaded from LiveSwitch brings new items. A report chosen again from history, a list, or a report
+        # being priced again uses the inventory table as it is.
+        fresh = not (use_snapshot or details.get('report_source') == 'manual')
+        if fresh:
+            report_cuft, report_weight, report_rows = fetch_and_extract_spark_report(share_url, processing=processing)
             from box_packing import report_box_defaults
             full_packing = json.loads(details.get('report_customer_package') or '{}').get('mode') == 'full'
-            inventory_rows = [dict(row, manual=False) for row in report_box_defaults(inventory_rows, full_packing)]
-            if details.get('report_source') == 'combined':
-                if not cuft or cuft <= 0:
-                    raise ValueError('No positive volume was found in the media report.')
-                cuft += details.get('report_list_cuft', 0)
-                weight = (weight or 0) + details.get('report_list_weight', 0)
-                inventory_rows = inventory_rows + [dict(row, manual=True) for row in details.get('report_list_rows', [])]
-        # The one place rows are matched to the catalog by name: when the report runs. A row with no match is saved
-        # with no catalog id, and nothing matches it by name again.
-        from catalog_names import match_catalog_names
-        inventory_rows = match_catalog_names(inventory_rows, db)
+            report_rows = report_box_defaults(report_rows, full_packing)
+            if details.get('report_source') == 'combined' and (not report_cuft or report_cuft <= 0):
+                raise ValueError('No positive volume was found in the media report.')
+            # The one place rows are matched to the catalog by name: when the report runs. A row with no match is
+            # saved with no catalog id, and nothing matches it by name again.
+            from catalog_names import match_catalog_names
+            report_rows = match_catalog_names(report_rows, db)
+        else:
+            processing.mark('download', 'success', 'Using saved room inventory; no LiveSwitch request')
+            processing.mark('extract', 'running')
         if saved:
             # A new run/selection may have arrived while downloading this report.
             db.refresh(saved, with_for_update=True)
@@ -746,48 +753,48 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
                 db.rollback()
                 return {'ok': False, 'detail': 'A different report is now current. Refresh to see its results.'}
             details = current_details
-        if (not cuft or cuft <= 0) and not details.get('question_original_rows'):
-            raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
-
-        from inventory_questions import adjusted_inventory
-        from models import Company
-        question_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
-        inventory_rows, cuft, weight = adjusted_inventory(question_company, details, inventory_rows, cuft, weight, db)
-        processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
-        processing.mark('inventory', 'running')
-        lead.volume = Decimal(str(cuft))
-        if weight is not None:
-            lead.weight = Decimal(str(weight))
-
-        details["spark_extracted_id"] = details.get("last_spark_id")
-        details["spark_extracted_cuft"] = cuft
-        details["spark_extracted_weight"] = weight
-        details["last_spark_share_url"] = share_url
-        details["spark_inventory_snapshot"] = inventory_rows
-        from models import LeadJob, LeadSparkInventoryItem
         job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
         price = None
         if not job:
             raise ValueError('No job found for this lead')
-        from item_selectors import job_selectors, default_selections
-        selectors = job_selectors(lead, job, db, {row.get('catalog_item_id') or row.get('item_id') for row in inventory_rows})
-        for row in inventory_rows:
-            row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
-        details['spark_inventory_snapshot'] = inventory_rows
+        question_company = lead.company or db.query(Company).filter(Company.is_default_company.is_(True)).one_or_none()
+        carried = details.pop('carried_question_state', None)
+        if fresh:
+            if not report_cuft or report_cuft <= 0:
+                raise ValueError('No positive volume could be extracted from structuredResult item-list rows or the report total')
+            from item_selectors import job_selectors, default_selections
+            selectors = job_selectors(lead, job, db, {row.get('catalog_item_id') or row.get('item_id') for row in report_rows})
+            for row in report_rows:
+                row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
+            old_rows = list_rows(job.id, db)[0]
+            # The report's items replace the previous report's; the customer's own items stay as they are.
+            replace_report_items(job, report_rows, details.get('last_spark_id'), db.get(InventoryEditState, job.id), db)
+            new_rows = list_rows(job.id, db)[0]
+            # The move's volume is the report's total (which can differ from adding up its items) with the list.
+            listed = [row for row in new_rows if row.get('manual') is False and row.get('going') is not False]
+            details['report_volume_offset'] = float(report_cuft) - sum(float(Decimal(str(row['unit_cuft'])) * row['amount']) for row in listed)
+            details['report_weight_offset'] = float(report_weight or 0) - sum(float(Decimal(str(row['unit_weight'])) * row['amount']) for row in listed)
+            details.pop('report_edited', None)
+            details["last_spark_share_url"] = share_url
+            if 'report_question_answers' not in details:
+                previous = (carried or {}).get('report_question_answers', {})
+                details['report_question_answers'] = carried_answers(question_company, previous, old_rows, new_rows, db) if previous else {}
+        elif carried and 'report_question_answers' not in details:
+            # A list made the current report: the items that did not change keep their answers.
+            details['report_question_answers'] = carried.get('report_question_answers', {})
+        apply_answers(question_company, details, job.id, db)
+        volume, weight = apply_inventory(job, details, db)
+        cuft, weight = float(volume), float(weight)
+        inventory_rows = list_rows(job.id, db)[0]
+        processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
+        processing.mark('inventory', 'running')
+        # The inventory lives in the inventory table only: the record keeps no copy of it.
+        for key in ('spark_inventory_snapshot', 'question_original_rows', 'manual_rooms', 'question_excluded_items',
+                    'question_original_cuft', 'question_original_weight', 'report_list_rows', 'report_list_body',
+                    'report_list_cuft', 'report_list_weight'):
+            details.pop(key, None)
+        details["spark_extracted_id"] = details.get("last_spark_id")
         if job:
-            db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job.id).delete(synchronize_session=False)
-            for index, row in enumerate(inventory_rows):
-                if row.get("going") is False:
-                    continue
-                db.add(LeadSparkInventoryItem(
-                    job_id=job.id,
-                    name=str(row.get("name") or "Item"),
-                    cuft=Decimal(str(row.get("cuft") or 0)),
-                    amount=Decimal(str(row.get("amount") or 0)),
-                    sort_order=index,
-                ))
-
-            db.flush()
             processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')
             if calculate_price:
                 processing.mark('pricing', 'running')
@@ -864,9 +871,14 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         details['report_customer_packing'] = job.customer_packing
         details['report_customer_package'] = job.customer_packing_package
     try:
-        activate_report(details, report_id)
+        rows, rooms = activate_report(details, report_id, report_inventory(job.id if job else None, details, db))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+    if job and rows:
+        # The chosen report's inventory, as it was kept, goes back into the inventory table.
+        from inventory_edits import fill_inventory
+        from models import InventoryEditState
+        fill_inventory(job, rows, rooms, report_id, db.get(InventoryEditState, job.id), db)
     if job:
         job.customer_packing = details.get('report_customer_packing')
         selected_package = json.loads(details.get('report_customer_package') or '{}')
@@ -890,14 +902,16 @@ def select_spark_report(lead_id: str, report_id: str, db: Session):
         access.published_cuft = None
         access.published_at = None
     db.commit()
-    return apply_spark_results_to_lead(lead_id, details.get('last_spark_share_url', ''), db, expected_report_id=report_id)
+    return apply_spark_results_to_lead(lead_id, details.get('last_spark_share_url', ''), db, expected_report_id=report_id,
+                                       use_snapshot=bool(job and rows))
 
 
 @router.get('/leads/{lead_id}/report-history')
 def get_report_history(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lead = _get_visible_lead_or_404(lead_id, user, db)
     saved = db.get(LeadLiveSwitch, lead.id)
-    reports = report_history(json.loads(saved.details or '{}') if saved else {}, staff=True)
+    staff_details = json.loads(saved.details or '{}') if saved else {}
+    reports = report_history(staff_details, staff=True, inventory=report_inventory(lead_job_id(lead_id, db), staff_details, db))
     return {'reports': attach_signatures(reports, signed_estimates(db, lead.id))}
 
 
@@ -956,17 +970,19 @@ def get_lead_spark_inventory(
     _ensure_not_dispatch_write(user)
     lead = _get_visible_lead_or_404(lead_id, user, db)
 
-    from models import LeadJob, LeadSparkInventoryItem
+    from models import LeadJob
+    from inventory_edits import active_report, shipping_rows
     job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order).first()
     if not job:
         return {"job_id": None, "rows": []}
-
-    rows = db.query(LeadSparkInventoryItem).filter_by(job_id=job.id).order_by(
-        LeadSparkInventoryItem.sort_order.asc(), LeadSparkInventoryItem.created_at.asc()
-    ).all()
+    # What ships, from the inventory table, while a report is current.
+    saved = db.get(LeadLiveSwitch, lead.id)
+    current = bool(saved and active_report(json.loads(saved.details or '{}')))
     return {
         "job_id": job.id,
-        "rows": [row.to_dict() for row in rows],
+        "rows": [{"id": row["inventory_row_id"], "job_id": job.id, "name": row["name"], "cuft": row["cuft"],
+                  "amount": float(row["amount"]), "sort_order": index}
+                 for index, row in enumerate(shipping_rows(job.id, db) if current else [])],
     }
 
 

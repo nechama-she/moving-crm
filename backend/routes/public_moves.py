@@ -1,5 +1,5 @@
 from catalog_names import resolve_catalog_names
-from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits
+from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits, report_inventory, lead_job_id
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput
 from spark_history import archive_report_for_new_media, report_history
@@ -631,12 +631,23 @@ def _customer_charge_description(name: str, desc: str) -> str:
     return text_val
 
 
-def _has_inventory_list(state):
-    # A completed report is the active inventory. Its media-derived rows must
-    # not be hidden by an empty manual draft used as input to that report.
-    if state.get('last_spark_status') == 'completed' and state.get('spark_inventory_snapshot'):
-        return True
-    return bool(state.get('spark_inventory_snapshot'))
+def _has_inventory_list(state, job_id, db):
+    """Whether the move's inventory is a completed report's (only then is it priced): a current report with items in
+    the inventory table."""
+    from inventory_edits import active_report
+    from models import InventoryEditItem
+    from request_cache import cached
+    if not active_report(state) or not job_id:
+        return False
+    return cached(db, ('has-inventory', job_id), lambda: db.query(InventoryEditItem.id).filter_by(job_id=job_id).first() is not None)
+
+
+def _inventory_rows(job_id, db):
+    """The inventory table's rows (the list as the customer has it), read once per request: the item questions and
+    the estimate number rows by their position in it."""
+    from inventory_edits import list_rows
+    from request_cache import cached
+    return cached(db, ('inventory-rows', job_id), lambda: list_rows(job_id, db)[0])
 
 
 @router.get('/api/public-moves/{access_id}/details')
@@ -645,7 +656,7 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     conversation = db.get(LeadLiveSwitch, access.lead_id)
     state = json.loads(conversation.details or '{}') if conversation else {}
-    if lead and job and _has_inventory_list(state):
+    if lead and job and _has_inventory_list(state, job.id, db):
         refresh_expired_price(lead, job, db)
     return _move_details(access, db, individual_charges=is_rep_request(access, request))
 
@@ -720,7 +731,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
                     link_sms=customer_link_sms_notice(access), link_email=customer_link_email_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
-        return dict(inventory_draft=None, list_changed=False, report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
+        return dict(inventory_draft=None, list_changed=False, report_history=attach_signatures(report_history(state, inventory=report_inventory(job.id, state, db)), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state, job.id, db))
     if section == 'media':
         meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
@@ -735,7 +746,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
         return {'estimate': saved_estimate(access, lead, job, state, is_rep_request(access, request))}
     if section == 'volume':
         return {'spark': _report_status(state)}
-    if _has_inventory_list(state):
+    if _has_inventory_list(state, job.id, db):
         from price_validity import refresh_expired_price
         refresh_expired_price(lead, job, db)
     saved = lambda: (job.pricing_match_key, job.minimum_cuft)
@@ -791,7 +802,7 @@ def _estimate_from(access, lead, job, charges):
 def saved_estimate(access, lead, job, state, individual_charges=False):
     """The estimate as saved, with no pricing work, so the page can show it at once."""
     spark_id = state.get('last_spark_id')
-    if not _has_inventory_list(state) or json.loads(job.customer_packing_package or '{}').get('pricing_pending'):
+    if not _has_inventory_list(state, job.id, db) or json.loads(job.customer_packing_package or '{}').get('pricing_pending'):
         return None
     if spark_id and (state.get('last_spark_status', 'queued') in ('queued', 'running') or state.get('spark_extracted_id') != spark_id):
         return None
@@ -826,7 +837,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     elevator = None
     long_carry = None
     stairs = None
-    pricing_required = _has_inventory_list(conv_details)
+    pricing_required = _has_inventory_list(conv_details, job.id, db)
     pricing_pending = saved_package.get('pricing_pending', False)
     pricing_error = 'Your changes are saved. An updated estimate is pending because pricing is not available for this route yet.' if pricing_pending else ''
     pricing_error = job.price_refresh_error or pricing_error
@@ -853,7 +864,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                 raise
             pricing_error = pricing_error or 'We could not load pricing options for your address. Your saved details and estimate have not changed. Please retry or contact your moving team.'
     from inventory_questions import questions
-    item_questions = questions(active_company, conv_details, db) if spark_info and spark_info.get('status') == 'completed' else []
+    item_questions = questions(active_company, conv_details, db, _inventory_rows(job.id, db)) if spark_info and spark_info.get('status') == 'completed' else []
     from estimate_questions import unanswered_questions
     required_questions = unanswered_questions(dict(extra_stops=extra_stops, elevator=elevator, long_carry=long_carry,
         stairs=stairs, storage=storage, shuttle=shuttle, packing_package=packing_package,
@@ -872,8 +883,8 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             stops=_typed_stops(job, stops),
             company_details=company_data, item_services=inventory_selectors(access, db),
             documents=documents_for(lead, job, db))
-        rows = resolve_catalog_names(conv_details.get('question_original_rows', conv_details.get('spark_inventory_snapshot', [])), db)
-        return details, rows
+        # The list as the customer has it, numbered as the item questions number it.
+        return details, _inventory_rows(job.id, db)
     estimate_needs_update = conv_details.get('spark_pricing_ready') is False
     if estimate_only:
         # The estimate PDF shows this same data: what the page shows, as the page builds it.
@@ -906,7 +917,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'link_email': customer_link_email_notice(access),
             'estimate': estimate,
             'spark': spark_info,
-            'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
+            'report_history': attach_signatures(report_history(conv_details, inventory=report_inventory(job.id, conv_details, db)), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
             'inventory_draft': None,
             'list_changed': False,
@@ -973,7 +984,7 @@ def _item_answer_delta(access, lead, company, db, inventory_changed, individual_
     from estimate_questions import unanswered_questions
     conversation = db.get(LeadLiveSwitch, lead.id)
     state = json.loads(conversation.details or '{}') if conversation else {}
-    item_questions = questions(company, state, db)
+    item_questions = questions(company, state, db, _inventory_rows(access.job_id, db))
     delta = {'saved': True, 'item_questions': item_questions, 'options': {},
              'unanswered': unanswered_questions({'item_questions': item_questions}), 'unanswered_scope': ['items']}
     if inventory_changed:
@@ -2287,21 +2298,12 @@ def customer_generate_inventory_report(access: PublicMoveAccess = Depends(verifi
     # Verify that this customer actually uploaded files
     count = len(active_report_files(access, db))
     if count == 0:
-        saved = db.get(LeadLiveSwitch, access.lead_id)
-        details = json.loads(saved.details or '{}') if saved else {}
-        rows, rooms = details.get('spark_inventory_snapshot') or [], details.get('manual_rooms') or []
-        if not (rows and details.get('last_spark_status') == 'completed'):
-            # Not priced yet: the list is in the inventory tables.
-            from inventory_edits import list_rows
-            rows, rooms = list_rows(access.job_id, db)
-            rows = [dict(row, manual=True) for row in rows]
-        if not rows:
+        # No media: the list in the inventory table becomes the current report, and is priced.
+        from inventory_edits import list_rows
+        if not list_rows(access.job_id, db)[0]:
             raise HTTPException(400, 'Add files or items to your list before generating a report.')
-        from manual_inventory import submit_inventory_snapshot
-        result = submit_inventory_snapshot(
-            {'request_id': str(uuid4()), 'rooms': []}, rooms, rows,
-            sum(float(row.get('cuft') or 0) for row in rows if row.get('going') is not False),
-            sum(float(row.get('weight') or 0) for row in rows if row.get('going') is not False), access, db)
+        from manual_inventory import submit_list_report
+        result = submit_list_report(access, db)
         if not result.get('ok'):
             raise HTTPException(422, result.get('detail'))
         if result.get('price') is None:
@@ -2379,7 +2381,7 @@ def upload(background_tasks: BackgroundTasks, file: UploadFile = File(...), x_up
         saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
         if saved:
             details = json.loads(saved.details or '{}')
-            if archive_report_for_new_media(details): saved.details = json.dumps(details)
+            if archive_report_for_new_media(details, report_inventory(lead_job_id(access.lead_id, db), details, db)): saved.details = json.dumps(details)
         db.commit()
     except Exception:
         db.rollback(); _delete_s3_url(stored); raise
@@ -2687,7 +2689,7 @@ def delete_staff_report_file(lead_id: str, attachment_id: str, user: User = Depe
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
     if saved:
         details = json.loads(saved.details or '{}')
-        if archive_report_for_new_media(details):
+        if archive_report_for_new_media(details, report_inventory(lead_job_id(lead_id, db), details, db)):
             saved.details = json.dumps(details)
     db.commit()
     return {'ok': True}
@@ -2719,7 +2721,7 @@ def import_lead_files(lead_id: str, body: ImportLeadFiles, user: User = Depends(
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
     if saved:
         details = json.loads(saved.details or '{}')
-        if archive_report_for_new_media(details): saved.details = json.dumps(details)
+        if archive_report_for_new_media(details, report_inventory(lead_job_id(lead_id, db), details, db)): saved.details = json.dumps(details)
     db.commit()
     return {'files': file_list(rows)}
 
@@ -2786,7 +2788,7 @@ def import_chat_files(lead_id: str, body: ImportChatFilesRequest, user: User = D
             saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).with_for_update().first()
             if saved:
                 details = json.loads(saved.details or '{}')
-                if archive_report_for_new_media(details): saved.details = json.dumps(details)
+                if archive_report_for_new_media(details, report_inventory(lead_job_id(lead_id, db), details, db)): saved.details = json.dumps(details)
         db.commit()
         failed += max(0, expected - imported)
     cursor = response.get('LastEvaluatedKey')
@@ -2922,7 +2924,7 @@ def finish_upload(body: FinishUpload, background_tasks: BackgroundTasks, access:
         saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
         if saved:
             details = json.loads(saved.details or '{}')
-            if archive_report_for_new_media(details): saved.details = json.dumps(details)
+            if archive_report_for_new_media(details, report_inventory(lead_job_id(access.lead_id, db), details, db)): saved.details = json.dumps(details)
         db.commit()
     except Exception:
         db.rollback();_delete_s3_url(stored);raise
@@ -2984,7 +2986,7 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         raise HTTPException(409, 'Your inventory report changed. Refresh before answering.')
     lead = db.get(Lead, access.lead_id)
     company = _company_for(lead, db)
-    current_questions = questions(company, state, db)
+    current_questions = questions(company, state, db, _inventory_rows(access.job_id, db))
     question = next((q for q in current_questions if q['id'] == body.question_id), None)
     if not question: raise HTTPException(409, 'This question changed. Refresh before answering.')
     option = next((a for a in question['answers'] if a['id'] == body.answer_id), None)
@@ -3013,16 +3015,10 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         state['report_question_answers'][question['id']]['selected_item_labels'] = [
             f"{item['label']} - {item['room']}" if item['room'] else item['label']
             for item in question['items'] if item['id'] in selected_items]
-    # Only rebuild inventory and recalculate pricing if shipping actually changes.
-    # Pending acknowledgments and informational answers still save immediately.
-    from copy import deepcopy
-    from inventory_questions import adjusted_inventory
-    inventory = state.get('spark_inventory_snapshot', [])
-    volume, weight = state.get('spark_extracted_cuft'), state.get('spark_extracted_weight')
-    adjusted_rows, adjusted_volume, adjusted_weight = adjusted_inventory(
-        company, deepcopy(state), inventory, volume, weight, db)
-    inventory_changed = (adjusted_rows != inventory or adjusted_volume != float(volume or 0)
-                         or adjusted_weight != float(weight or 0))
+    # Only recalculate the volume and price if what ships actually changes; the units an answer takes off are
+    # recorded on the inventory rows. Pending acknowledgments and informational answers still save immediately.
+    from inventory_questions import apply_answers
+    inventory_changed = apply_answers(company, state, access.job_id, db)
     saved.details = json.dumps(state)
     db.commit()
     if not inventory_changed:
