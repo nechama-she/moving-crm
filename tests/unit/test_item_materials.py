@@ -12,6 +12,13 @@ from long_distance_packing import PACKING_CARD_PREFIX
 from packing_rows import PackingPlan
 
 
+
+def use_catalog(db, items):
+    """The fake database answers both the whole-catalog read and the by-id lookup with these catalog items."""
+    db.info = {}
+    db.query.return_value.all.return_value = items
+    db.query.return_value.filter.return_value = items
+
 @pytest.mark.parametrize('name', ['27 Gallon Plastic Bin', '40 Gallon Plastic Bin', 'Storage Bins'])
 @pytest.mark.parametrize('explicit', [False, True])
 def test_bins_never_offer_customer_packing(name, explicit):
@@ -20,7 +27,7 @@ def test_bins_never_offer_customer_packing(name, explicit):
     assignment = dict(material_id='cover', requirement='optional', quantity=1)
     plan.item_materials = json.dumps({'rows': [dict(assignment, item_id='bin')] if explicit else [],
                                      'defaults': [assignment]})
-    db.query.return_value.all.return_value = [SimpleNamespace(id='bin', name=name, cuft=6, deleted=False)]
+    use_catalog(db, [SimpleNamespace(id='bin', name=name, cuft=6, deleted=False)])
     inventory = [dict(item_id='bin', name=name, amount=2, cuft=12)]
     assert customer_item_materials(plan, inventory, db)[0] == []
     assert inventory_material_options(inventory) == []
@@ -37,19 +44,20 @@ def setup():
     return plan, db
 
 
-def test_legacy_custom_id_uses_unique_catalog_assignment_instead_of_defaults():
+def test_item_without_catalog_id_is_never_matched_by_name():
+    # Names are matched only when the report runs; a row saved without a catalog id gets the defaults.
     plan, db = setup()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='tv', name='TV Flat Screen - 33 - 59', cuft=10, deleted=False)]
+    use_catalog(db, [SimpleNamespace(id='tv', name='TV Flat Screen - 33 - 59', cuft=10, deleted=False)])
     plan.item_materials = json.dumps({'rows':[dict(item_id='tv',material_id='cover',requirement='required',quantity=1)],
                                      'defaults':[dict(material_id='cover',requirement='optional',quantity=1)]})
     rows, _ = customer_item_materials(plan,[dict(item_id='custom-old',name='TV Flat Screen - 33 - 59',cuft=12,amount=1,room='Bedroom')],db)
     assert len(rows) == 1
-    assert rows[0]['requirement'] == 'required'
+    assert rows[0]['requirement'] == 'optional'
 
 
 def test_legacy_name_match_does_not_guess_between_catalog_duplicates():
     plan, db = setup()
-    db.query.return_value.all.return_value = [SimpleNamespace(id=id, name='TV', cuft=10, deleted=False) for id in ['a','b']]
+    use_catalog(db, [SimpleNamespace(id=id, name='TV', cuft=10, deleted=False) for id in ['a','b']])
     plan.item_materials = json.dumps({'rows':[dict(item_id='a',material_id='cover',requirement='required',quantity=1)],'defaults':[]})
     rows, _ = customer_item_materials(plan,[dict(item_id='custom-old',name='TV',cuft=12,amount=1)],db)
     assert rows == []
@@ -96,14 +104,14 @@ def test_edit_and_explicit_removal_keep_plan_id():
 
 def test_customer_required_and_optional_materials_use_catalog_and_quantity():
     plan, db = setup()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='bed',name='King bed')]
+    use_catalog(db, [SimpleNamespace(id='bed',name='King bed')])
     card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
     card['materials'].append(dict(id='wrap',name='Bed wrap',material_price=18,packing_price=12,unpacking_price=0))
     plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
     plan.item_materials=json.dumps([
         dict(item_id='bed',material_id='cover',quantity=1,requirement='required'),
         dict(item_id='bed',material_id='wrap',quantity=2,requirement='optional')])
-    inventory=[dict(name='Bed King',room='Bedroom',amount=2)]
+    inventory=[dict(item_id='bed',name='Bed King',room='Bedroom',amount=2)]
     rows, matched=customer_item_materials(plan,inventory,db)
     assert len(rows)==4 and len({row['id'] for row in rows})==4
     assert rows[0]['requirement']=='required' and rows[0]['material_name']=='King cover'
@@ -112,7 +120,7 @@ def test_customer_required_and_optional_materials_use_catalog_and_quantity():
     assert rows[1]['labor_price']==24 and rows[1]['material_price']==36
     assert 'bed king' in matched
     assert customer_item_materials(plan,inventory,db)[0]==rows
-    assert inventory==[dict(name='Bed King',room='Bedroom',amount=2)]
+    assert inventory==[dict(item_id='bed',name='Bed King',room='Bedroom',amount=2)]
 
 
 def test_configured_customer_price_charges_only_selected_material():
@@ -139,7 +147,7 @@ def test_configured_materials_do_not_require_fabric_question():
 
 def test_default_material_applies_only_without_item_specific_materials():
     plan, db = setup()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='bed', name='King bed')]
+    use_catalog(db, [SimpleNamespace(id='bed', name='King bed')])
     card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
     card['materials'].append(dict(id='wrap',name='Default wrap',material_price=10,packing_price=5,unpacking_price=0))
     plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
@@ -161,7 +169,7 @@ def test_default_material_applies_only_without_item_specific_materials():
 
 def test_multiple_default_materials_have_separate_choices_in_one_item_group():
     plan, db = setup()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='tv', name='TV')]
+    use_catalog(db, [SimpleNamespace(id='tv', name='TV')])
     card = json.loads(plan.services[0].comments[len(PACKING_CARD_PREFIX):])
     card['materials'].append(dict(id='wrap', name='Shrink Wrap', material_price=10, packing_price=5, unpacking_price=0))
     plan.services[0].comments = PACKING_CARD_PREFIX + json.dumps(card)
@@ -182,10 +190,10 @@ def test_multiple_default_materials_have_separate_choices_in_one_item_group():
 
 def test_defaults_do_not_apply_to_boxes_but_explicit_box_materials_do():
     plan, db = setup()
-    db.query.return_value.all.return_value = [
+    use_catalog(db, [
         SimpleNamespace(id='small-box', name='Small Box (CP)', active=True, cuft=2),
         SimpleNamespace(id='vase', name='Vase', active=True, cuft=3),
-    ]
+    ])
     db.query.return_value.order_by.return_value.all.return_value = db.query.return_value.all.return_value
     save_material_assignments(plan, ItemMaterialsInput(rows=[], defaults=[
         dict(material_id='cover', requirement='optional', quantity=1),

@@ -42,7 +42,8 @@ def list_for_next_report(details, table_rows=(), table_rooms=()):
     LiveSwitch rows are never carried; the new report analyzes the media again. Without a completed
     report (new media archived it, or the list was never priced), the inventory tables hold the list."""
     completed = details.get('last_spark_status') == 'completed'
-    latest = details if completed else next(reversed(details.get('spark_history') or [{}]), {})
+    # The current report, or, after new media archived it, the last report in history.
+    latest = details if completed or details.get('last_spark_id') else next(reversed(details.get('spark_history') or [{}]), {})
     rows = details.get('question_original_rows', details.get('spark_inventory_snapshot', [])) if completed else list(table_rows)
     rooms = details.get('manual_rooms', []) if completed else list(table_rooms)
     source = latest.get('report_source')

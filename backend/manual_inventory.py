@@ -150,10 +150,11 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
     saved = db.get(LeadLiveSwitch, access.lead_id)
     details = json.loads(saved.details or '{}') if saved else {}
     report_id = 'manual-' + str(list_body['request_id'])
-    if any(row.get('last_spark_id') == report_id for row in details.get('spark_history', [])):
-        if details.get('last_spark_id') != report_id:
-            raise HTTPException(409, 'This list is already in your history. Select it there.')
+    # The same list submitted again: the current report is priced again; a past one is selected from history instead.
+    if details.get('last_spark_id') == report_id:
         return apply_spark_results_to_lead(access.lead_id, '', db, expected_report_id=report_id)
+    if any(row.get('last_spark_id') == report_id for row in details.get('spark_history', [])):
+        raise HTTPException(409, 'This list is already in your history. Select it there.')
     details['report_customer_packing'] = job.customer_packing
     details['report_customer_package'] = job.customer_packing_package
     remember_report(details)
@@ -170,7 +171,6 @@ def submit_inventory_snapshot(list_body, rooms, rows, cuft, weight, access, db):
                    spark_inventory_snapshot=[dict(row, manual=True) for row in rows],
                    spark_extracted_cuft=cuft, spark_extracted_weight=weight, report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
-    remember_report(details)
     if not saved:
         saved = LeadLiveSwitch(lead_id=access.lead_id)
         db.add(saved)

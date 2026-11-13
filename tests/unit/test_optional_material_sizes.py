@@ -9,6 +9,13 @@ from long_distance_packing import MaterialRate
 from packing_rows import PackingPlan
 
 
+
+def use_catalog(db, items):
+    """The fake database answers both the whole-catalog read and the by-id lookup with these catalog items."""
+    db.info = {}
+    db.query.return_value.all.return_value = items
+    db.query.return_value.filter.return_value = items
+
 @pytest.mark.parametrize('volume,expected', [(20, {'cm','ws'}),(25, {'cl','ws'}),(26, {'cl','wl'}),(100, {'cx','wl'}),(501,set()),(None,set())])
 def test_optional_sizes_respect_each_configured_limit(volume, expected):
     specs = [('cm','Carton Crate Medium',24),('cl','Carton Crate Large',90),('cx','Carton Crate Extra Large',500),('ws','Shrink Wrap small',25),('wl','Shrink Wrap large',500)]
@@ -40,9 +47,9 @@ def test_required_tv_box_wins_over_optional_defaults(inventory_id):
     from item_materials import customer_item_materials
     name = 'TV Flat Screen - 33 - 59'
     db = Mock()
-    db.query.return_value.all.return_value = [
+    use_catalog(db, [
         SimpleNamespace(id='deleted-tv',name=name,cuft=10,deleted=True),
-        SimpleNamespace(id='current-tv',name=name,cuft=15,deleted=False)]
+        SimpleNamespace(id='current-tv',name=name,cuft=15,deleted=False)])
     plan = PackingPlan(id='book',item_materials=json.dumps({
         'rows':[dict(item_id='current-tv',material_id='tv-box',requirement='required',quantity='1')],
         'defaults':[dict(material_id='crate',requirement='optional',quantity='1')]}),
@@ -51,8 +58,13 @@ def test_required_tv_box_wins_over_optional_defaults(inventory_id):
             for id,label in [('tv-box','TV Box up to 59 inches'),('crate','Carton Crate Large')]]}))])
     rows,_ = customer_item_materials(plan,[dict(item_id=inventory_id,name=name,cuft=10,quantity=1)],db)
     assert len(rows) == 1
-    assert rows[0]['requirement'] == 'required'
-    assert rows[0]['material_name'] == 'TV Box up to 59 inches'
+    if inventory_id == 'current-tv':
+        assert rows[0]['requirement'] == 'required'
+        assert rows[0]['material_name'] == 'TV Box up to 59 inches'
+    else:
+        # Not matched by name on a read: a custom row, or one saved with a deleted item's id, gets the defaults.
+        assert rows[0]['requirement'] == 'optional'
+        assert rows[0]['material_name'] == 'Carton Crate Large'
 
 
 def test_wizard_questions_use_current_name_and_per_item_volume():
@@ -67,8 +79,8 @@ def test_wizard_questions_use_current_name_and_per_item_volume():
         {'material_id':id,'requirement':'optional','quantity':'1'} for id in ['small','big']]}),
         services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
     db = Mock()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='sofa',name='L Shaped Sofa - 2 Piece',cuft=100,deleted=False)]
-    rows,_ = customer_item_materials(plan,[{'item_id':'custom-old','name':'L Shaped Sofa','amount':2,'cuft':200,'unit_cuft':100,'room':'Dining Room'}],db)
+    use_catalog(db, [SimpleNamespace(id='sofa',name='L Shaped Sofa - 2 Piece',cuft=100,deleted=False)])
+    rows,_ = customer_item_materials(plan,[{'item_id':'sofa','name':'L Shaped Sofa','amount':2,'cuft':200,'unit_cuft':100,'room':'Dining Room'}],db)
     assert len(rows) == 2
     assert all(row['material_name']=='big' for row in rows)
     assert all(row['label'].startswith('L Shaped Sofa - 2 Piece') for row in rows)
@@ -95,7 +107,7 @@ def test_inventory_filters_saved_item_options_and_defaults(explicit):
     choices = [dict(material_id=id,requirement='optional',quantity='1',**({'item_id':'chair'} if explicit else {})) for id,_,_ in specs]
     plan = PackingPlan(id='book', item_materials=json.dumps({'rows':choices if explicit else [],'defaults':[] if explicit else choices}), services=[SimpleNamespace(comments='__ld_packing__:'+json.dumps({'materials':materials}))])
     db = Mock()
-    db.query.return_value.all.return_value = [SimpleNamespace(id='chair',name='Accent Chair',cuft=30,deleted=False)]
+    use_catalog(db, [SimpleNamespace(id='chair',name='Accent Chair',cuft=30,deleted=False)])
     rows,_ = customer_item_materials(plan,[dict(item_id='chair',name='Accent Chair',amount=2,cuft=60)],db)
     assert len(rows)==(10 if explicit else 4)
     assert {row['materials'][0]['id'] for row in rows} == ({'small','large','xl','under','over'} if explicit else {'large','over'})

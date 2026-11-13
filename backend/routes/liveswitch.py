@@ -494,7 +494,6 @@ def generate_uploaded_report(lead_id, body, db):
     media.pop('report_id', None)
     details['media_upload'] = media
     details.pop('upload_error', None)
-    remember_report(details)
     saved.details = json.dumps(details)
     access.published_price = access.published_cuft = access.published_at = None
     db.commit()
@@ -565,7 +564,6 @@ def trigger_lead_spark(lead_id: str, body: dict | None = None, db: Session = Non
                    report_conversation=conversation, pending_spark_payload=payload,
                    report_files=[{'id': f.id, 'name': f.file_name, 'size': f.file_size, 'content_type': f.content_type} for f in files])
     details.pop('upload_error', None)
-    remember_report(details)
     if not saved:
         saved = LeadLiveSwitch(lead_id=lead_id)
         db.add(saved)
@@ -636,7 +634,6 @@ def start_ready_report(lead_id: str, db: Session):
     if {row.get('id') for row in media.get('files', [])} == set(file_ids):
         media['report_id'] = result['id']
         details['media_upload'] = media
-    remember_report(details)
     saved.details = json.dumps(details)
     db.commit()
     from customer_report_updates import queue_report_check
@@ -737,6 +734,10 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
                 cuft += details.get('report_list_cuft', 0)
                 weight = (weight or 0) + details.get('report_list_weight', 0)
                 inventory_rows = inventory_rows + [dict(row, manual=True) for row in details.get('report_list_rows', [])]
+        # The one place rows are matched to the catalog by name: when the report runs. A row with no match is saved
+        # with no catalog id, and nothing matches it by name again.
+        from catalog_names import match_catalog_names
+        inventory_rows = match_catalog_names(inventory_rows, db)
         if saved:
             # A new run/selection may have arrived while downloading this report.
             db.refresh(saved, with_for_update=True)
@@ -768,9 +769,7 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         price = None
         if not job:
             raise ValueError('No job found for this lead')
-        from catalog_names import resolve_catalog_names
         from item_selectors import job_selectors, default_selections
-        inventory_rows = resolve_catalog_names(inventory_rows, db)
         selectors = job_selectors(lead, job, db, {row.get('catalog_item_id') or row.get('item_id') for row in inventory_rows})
         for row in inventory_rows:
             row['selections'] = default_selections(row.get('selections'), selectors.get(row.get('catalog_item_id') or row.get('item_id'), []))
