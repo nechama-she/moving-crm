@@ -257,7 +257,9 @@ def test_deleting_a_list_reports_whole_list_ends_the_report(move, source, ends):
     assert list_rows(job.id, db)[0] == []
     if ends:
         assert result['report_id'] is None and 'last_spark_id' not in saved and 'report_source' not in saved
-        assert 'spark_history' in saved
+        # It goes to history as it was before the delete.
+        [past] = saved['spark_history']
+        assert past['last_spark_id'] == 'report-1' and [row['name'] for row in past['question_original_rows']] == ['Sofa']
         # The window keeps working: the next edit belongs to no report.
         view = load_inventory_editor(access, db)
         assert view['report_id'] is None

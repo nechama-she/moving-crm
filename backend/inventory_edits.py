@@ -187,6 +187,16 @@ def save_inventory_edits(body, access, db):
         conflicts.append(f'report mismatch (sent {body.report_id}, current {state.report_id})')
     if conflicts:
         raise HTTPException(409, 'Inventory conflict: ' + '; '.join(conflicts) + '. Reopen it before editing.')
+    ending = None
+    if active_report(details) and details.get('report_source') == 'manual' and (body.delete or body.rooms.delete) and not body.add:
+        # Deleting the whole list ends a list report, which goes to history as it was: read it before the edit.
+        from sqlalchemy import or_
+        gone, rooms_gone = [str(x) for x in body.delete], [str(x) for x in body.rooms.delete]
+        left = db.query(InventoryEditItem.id).filter(InventoryEditItem.job_id == job.id,
+            ~InventoryEditItem.id.in_(gone), or_(InventoryEditItem.room_id.is_(None), ~InventoryEditItem.room_id.in_(rooms_gone))).first()
+        if left is None:
+            from copy import deepcopy
+            ending = (deepcopy(details), report_inventory(job.id, details, db))
     if active_report(details):
         # The window edits the list as it ships: units item answers took off leave the list for good, as an edit
         # answers the list again.
@@ -269,9 +279,13 @@ def save_inventory_edits(body, access, db):
     if active_report(details):
         list_edited(job, details, db)
         if details.get('report_source') == 'manual' and not db.query(InventoryEditItem.id).filter_by(job_id=job.id).first():
-            # The whole list was deleted. A list report is only its list, so it ends with it: the move has no report,
-            # as before the list was added. Past reports in history stay.
-            from spark_history import REPORT_KEYS
+            # The whole list was deleted. A list report is only its list, so it ends with it: it goes to history as it
+            # was before the delete, and the move has no current report, as before the list was added.
+            from spark_history import REPORT_KEYS, remember_report
+            if ending:
+                before, inventory = ending
+                remember_report(before, inventory)
+                details['spark_history'] = before['spark_history']
             for key in REPORT_KEYS:
                 details.pop(key, None)
             state.report_id = None

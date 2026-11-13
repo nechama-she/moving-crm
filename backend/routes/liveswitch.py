@@ -832,8 +832,13 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
             processing.attach(details)
             saved.details = json.dumps(details)
         db.commit()
-        from realtime import publish_customer_update
-        publish_customer_update(lead_id)
+        from realtime import publish_customer_update, publish_move_change, publish_report_update
+        if use_snapshot:
+            publish_customer_update(lead_id)
+        else:
+            # A report run wrote its items into the list: open pages load the list again with the rest of the page.
+            publish_move_change(lead_id, change='inventory_updated')
+            publish_report_update(lead_id)
         if not use_snapshot:
             from inventory_ready_sms import try_notify_inventory_ready
             try_notify_inventory_ready(lead_id, details.get("last_spark_id"), db)
