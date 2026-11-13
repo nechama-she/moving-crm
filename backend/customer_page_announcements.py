@@ -19,7 +19,7 @@ CHANGES = [
     (re.compile(r'item-answer'), 'item_questions_answered'),
     (re.compile(r'reports/[^/]+/select'), 'inventory_report_chosen'),
     (re.compile(r'generate-inventory-report|recalculate-price|calculate-price'), 'estimate_updated'),
-    (re.compile(r'packing'), 'packing_changed'),
+    (re.compile(r'packing|no-extra-fees'), 'packing_changed'),
     (re.compile(r'details'), 'details_updated'),
     (re.compile(r'customer-discount'), 'discount_chosen'),
     (re.compile(r'rep-discounts'), 'discounts_changed'),

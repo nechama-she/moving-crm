@@ -754,7 +754,10 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
     result = _move_details(access, db, pricing_only=True, individual_charges=is_rep_request(access, request))
     from delivery_fees import browser_fee_routes
     from price_validity import price_is_locked
-    result['mileage_routes'] = [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)
+    locked = price_is_locked(lead, job)
+    # A booked or closed move keeps its price: list changes save, and Done does not price them.
+    result['price_locked'] = locked
+    result['mileage_routes'] = [] if locked else browser_fee_routes(lead, job, db)
     # Keep a newly worked-out plan match, so the next load reads it instead of working it out again.
     # Compared by value: an automatic flush before a later query clears SQLAlchemy's change history.
     if saved() != before:
@@ -1746,15 +1749,20 @@ class CustomerPackingPatch(BaseModel):
 
 @router.post('/api/public-moves/{access_id}/packing')
 def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), compact: bool = False, request: Request = None):
+    _save_packing_change(body, access, db)
+    if not compact:
+        return _move_details(access, db, refresh_report=False)
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    return _pricing_delta(access, lead, job, db, body.change.kind if body.change else None, is_rep_request(access, request))
+
+
+def _save_packing_change(body, access, db):
+    """Saves one answer or packing choice and its charges (commits). The response is the caller's."""
     from models import LeadJobCharge
     from routes.pricing import customer_packing_options, customer_packing_charge_id
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
-    def saved_response():
-        if not compact:
-            return _move_details(access, db, refresh_report=False)
-        return _pricing_delta(access, lead, job, db, body.change.kind if body.change else None, is_rep_request(access, request))
     if body.change and body.change.kind == 'extra_stops':
         from extra_stops import option as stops_option, sync_charges
         change=body.change
@@ -1816,7 +1824,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         from pricing_save import attempt_pricing
         attempt_pricing(lead,job,db,lambda: sync_charges(lead,job,db,refresh=False))
         db.commit()
-        return saved_response()
+        return
     if body.change and body.change.kind == 'elevator':
         from routes.pricing import customer_elevator, sync_elevator_charges
         change = body.change
@@ -1831,7 +1839,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_elevator_charges(lead, job, db, change.location)
         db.commit()
-        return saved_response()
+        return
     if body.change and body.change.kind == 'long_carry':
         from routes.pricing import customer_long_carry, sync_long_carry_charges
         change = body.change
@@ -1847,7 +1855,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_long_carry_charges(lead, job, db, change.location)
         db.commit()
-        return saved_response()
+        return
     if body.change and body.change.kind == 'stairs':
         from routes.pricing import customer_stairs, sync_stairs_charges
         change = body.change
@@ -1862,7 +1870,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_stairs_charges(lead, job, db, change.location)
         db.commit()
-        return saved_response()
+        return
     if body.change and body.change.kind == 'storage':
         from routes.pricing import customer_storage, sync_storage_charge
         from datetime import date
@@ -1880,7 +1888,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         job.customer_packing_package = json.dumps(selection)
         sync_storage_charge(lead, job, db)
         db.commit()
-        return saved_response()
+        return
     if body.change and body.change.kind == 'shuttle':
         from routes.pricing import customer_shuttle, sync_customer_shuttle_charge
         if 'enabled' not in body.change.model_fields_set and not body.change.access_unknown:
@@ -1899,7 +1907,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         from routes.pricing import sync_long_carry_charges
         sync_long_carry_charges(lead, job, db, 'delivery')
         db.commit()
-        return saved_response()
+        return
     options = customer_packing_options(lead, job, db)
     change = body.change
     touched = None
@@ -2069,7 +2077,7 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
         if body.package is not None:
             job.customer_packing_package = json.dumps(stored_selection(selection))
         db.commit()
-        return saved_response()
+        return
     previous = set(json.loads(job.customer_packing or '[]'))
     ids = [customer_packing_charge_id(job.id, item_id) for item_id in previous | selected]
     ids.extend(customer_packing_charge_id(job.id, item_id) for item_id in package_old_ids)
@@ -2105,7 +2113,88 @@ def save_customer_packing(body: CustomerPackingPatch, access: PublicMoveAccess =
             link.published_price += delta
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()
-    return saved_response()
+    return
+
+
+@router.post('/api/public-moves/{access_id}/no-extra-fees')
+def answer_no_extra_fees(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+    """The rep's one click: every extra-services question answered with the choice that adds no charge, each saved
+    exactly as the customer's own answer is; moving terms still unanswered get their no-change answer."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Only the rep can answer these questions for the customer.')
+    lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
+    options = _customer_pricing_options(lead, job, db)
+    changes = []
+    for group in (options['extra_stops'] or {}).get('locations', []):
+        changes.append(dict(kind='extra_stops', location=group['location'], has_stops=False))
+    for row in (options['elevator'] or {}).get('locations', []):
+        changes.append(dict(kind='elevator', location=row['location'], revision=row['revision'], elevator=False))
+    for row in (options['stairs'] or {}).get('locations', []):
+        changes.append(dict(kind='stairs', location=row['location'], revision=row['revision'], flights=0))
+    storage = options['storage']
+    if storage and storage.get('pickup_date'):
+        # Delivery available from the pickup date: no storage.
+        changes.append(dict(kind='storage', available_date=storage['pickup_date']))
+    shuttle = options['shuttle']
+    asks_shuttle = bool(shuttle and not shuttle.get('automatic'))
+    if asks_shuttle:
+        # Yes, a semi-trailer can reach the delivery address: no shuttle.
+        changes.append(dict(kind='shuttle', enabled=True, revision=shuttle['revision']))
+    carry = options['long_carry']
+    for row in (carry or {}).get('locations', []):
+        if row['location'] == 'delivery' and asks_shuttle:
+            continue  # With semi-trailer access the page asks no delivery carry question.
+        # Yes, the truck parks within the included distance: no long carry.
+        changes.append(dict(kind='long_carry', location=row['location'], revision=row['revision'], carry_feet=int(carry['included_feet'])))
+    package = options['packing_package']
+    if package:
+        selection = package.get('selection') or {}
+        if selection.get('mode', 'none') != 'none':
+            changes.append(dict(kind='mode', mode='none'))
+        if selection.get('unpacking'):
+            changes.append(dict(kind='unpacking', enabled=False))
+        for item_id in selection.get('item_ids') or []:
+            changes.append(dict(kind='box', item_id=item_id, enabled=False))
+        for item_id in selection.get('additional_items') or {}:
+            changes.append(dict(kind='material', item_id=item_id))
+        changes.append(dict(kind='additional_protection', enabled=False))
+    for item in options['packing_items'] or []:
+        if item.get('selected'):
+            changes.append(dict(kind='bulky', item_id=item['id'], service=None))
+    for change in changes:
+        _save_packing_change(CustomerPackingPatch(change=CustomerPackingChange(**change)), access, db)
+    _answer_open_terms(access, lead, db)
+    return _move_details(access, db, refresh_report=False)
+
+
+def _answer_open_terms(access, lead, db):
+    """Moving terms not answered yet get the answer that changes nothing (no item taken off, nothing to acknowledge).
+    Answers already given stay as they are."""
+    from inventory_questions import questions, apply_answers
+    saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
+    state = json.loads(saved.details or '{}') if saved else {}
+    if state.get('last_spark_status') != 'completed':
+        return
+    company = _company_for(lead, db)
+    current = questions(company, state, db, _inventory_rows(access.job_id, db))
+    answers = {q['id']: q['saved'] for q in current if q.get('saved')}
+    for question in current:
+        saved_answer = answers.get(question['id'])
+        if saved_answer and not saved_answer.get('pending'):
+            continue
+        option = (next((a for a in question['answers'] if a['action'] == 'none' and not a.get('acknowledge')), None)
+                  or next((a for a in question['answers'] if a['action'] == 'none'), None))
+        if not option:
+            continue
+        answers[question['id']] = {'answer_id': option['id'], 'name': question['name'], 'room': question['room'],
+            'question': question['question'], 'answer': option['label'], 'acknowledged': bool(option.get('acknowledge')),
+            'pending': False, 'action': option['action'], 'notice': option['notice'], 'answered_at': NOW().isoformat() + 'Z'}
+        if question.get('all_items'):
+            answers[question['id']].update(selected_items=[], selected_item_labels=[])
+    state['report_question_answers'] = answers
+    apply_answers(company, state, access.job_id, db)
+    saved.details = json.dumps(state)
+    db.commit()
 
 
 class CustomerAddressSelection(BaseModel):
