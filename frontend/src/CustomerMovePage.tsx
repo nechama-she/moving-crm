@@ -350,39 +350,6 @@ export default function CustomerMovePage() {
       if (!answerPending.current) setAnswersSaving(false);
     }
   }
-  // The rep's one click: every extra-services question answered with the choice that adds no charge, saved on the
-  // server as one request. The window's answers then show what was saved.
-  const [noFeesSaving, setNoFeesSaving] = useState(false);
-  async function answerNoExtraFees() {
-    if (readOnly || !repPage) return;
-    answerPending.current += 1;
-    answerRevision.current += 1;
-    setAnswersSaving(true); setNoFeesSaving(true); setPackingError('');
-    const task = answerQueue.current.then(async () => {
-      const result: Details = await call('/no-extra-fees', {});
-      setData(previous => ({...(previous || emptyDetails()), ...result}));
-      setPackingSelection(Object.fromEntries(result.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
-      setPackageSelection(result.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
-      setShuttleAnswer(result.shuttle?.unknown ? 'unknown' : result.shuttle?.answer ?? null);
-      setStorageDate(result.storage?.available_date || '');
-      setElevatorAnswers(Object.fromEntries((result.elevator?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.uses_elevator])));
-      setCarryAnswers(Object.fromEntries((result.long_carry?.locations || []).map(row => [row.location, row.unknown && row.acknowledged ? 'unknown' : row.distance_feet])));
-      setStairsAnswers(Object.fromEntries((result.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights])));
-      setStopsIncomplete({});
-      setStopsMissing(false); setElevatorMissing(false); setCarryMissing(false); setStairsMissing(false); setShuttleMissing(false); setStorageMissing(false);
-      failedPricing.current.clear(); failedAnswers.current.clear();
-      // Packing set to none can change the box rows: the list window loads the list again.
-      setInventoryVersion(version => version + 1);
-    });
-    answerQueue.current = task.catch(() => {});
-    try { await task; }
-    catch (error) { setPackingError((error as Error).message); }
-    finally {
-      answerPending.current -= 1;
-      if (!answerPending.current) setAnswersSaving(false);
-      setNoFeesSaving(false);
-    }
-  }
   const distanceRepairs = useRef(new Set<string>());
   const stopDistanceState = JSON.stringify([session, data?.pickup, data?.delivery, data?.extra_stops]);
   useEffect(() => {
@@ -1698,7 +1665,6 @@ export default function CustomerMovePage() {
                     </div>
                     <button type="button" className="cm-modal-close" aria-label="Close" onClick={() => setShowQuestions(false)}>&times;</button>
                   </div>
-                    {repPage && !readOnly && <button type="button" className="cm-secondary-btn" disabled={noFeesSaving || answersSaving} onClick={() => void answerNoExtraFees()}>{noFeesSaving ? 'Saving...' : 'No extra fees'}</button>}
                     <nav className="cm-question-tabs" aria-label="Questions">
                       {pricingSteps.flatMap<{id:string; step:PricingStep; index:number; label:string}>(step => step === 'items'
                         ? termsGroups.map((group, index) => ({id:`items:${index}`, step, index, label:group[0]?.question || `Moving terms ${index+1}`}))
