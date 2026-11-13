@@ -141,29 +141,22 @@ def customer_item_materials(plan, inventory, db):
         return [], set()
     card = plan_packing_card(plan)
     rates = {row.id: row for row in card.materials} if card else {}
-    catalog = db.query(InventoryCatalogItem).all()
-    catalog_by_id = {item.id: item for item in catalog}
+    from catalog_names import resolve_catalog_names, catalog_items
+    # Rows carry the catalog ids they were saved with; only those items are read, and nothing is matched by name.
+    catalog_by_id = catalog_items(inventory, db)
     def key(name):
         return ' '.join(sorted(re.findall(r'\w+', str(name).casefold())))
-    by_name = defaultdict(list)
-    for item in catalog:
-        if not getattr(item, 'deleted', False):
-            by_name[key(item.name)].append(item.id)
     by_item = defaultdict(list)
     for assignment in assignments:
         by_item[assignment['item_id']].append(assignment)
     result, matched = [], set()
     occurrences = Counter()
-    from catalog_names import resolve_catalog_names
-    for row in resolve_catalog_names(inventory, catalog=catalog):
+    for row in resolve_catalog_names(inventory, db):
         if not isinstance(row, dict) or row.get('going') is False:
             continue
         if re.search(r'\bbins?\b', str(row.get('name') or ''), re.IGNORECASE):
             continue
-        item_id = row.get('item_id')
-        if item_id not in catalog_by_id and not row.get('name_override'):
-            candidates = by_name[key(row.get('name', ''))]
-            item_id = candidates[0] if len(candidates) == 1 else None
+        item_id = row.get('item_id') if row.get('item_id') in catalog_by_id else None
         item_assignments = by_item.get(item_id)
         using_defaults = not item_assignments
         if not item_assignments:

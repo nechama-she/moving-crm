@@ -2998,7 +2998,6 @@ class ItemAnswerInput(BaseModel):
 @router.post('/api/public-moves/{access_id}/item-answer')
 def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), compact: bool = False, request: Request = None):
     from inventory_questions import questions
-    from spark_history import remember_report
     from routes.liveswitch import apply_spark_results_to_lead
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
     state = json.loads(saved.details or '{}') if saved else {}
@@ -3045,7 +3044,6 @@ def save_item_answer(body: ItemAnswerInput, access: PublicMoveAccess = Depends(v
         company, deepcopy(state), inventory, volume, weight, db)
     inventory_changed = (adjusted_rows != inventory or adjusted_volume != float(volume or 0)
                          or adjusted_weight != float(weight or 0))
-    remember_report(state)
     saved.details = json.dumps(state)
     db.commit()
     if not inventory_changed:

@@ -1278,8 +1278,6 @@ def apply_box_packing_to_inventory(job, db, package, selection):
     details['spark_inventory_snapshot'] = rows
     if details.get('question_original_rows'):
         details['question_original_rows'] = [dict(row) for row in rows]
-    from spark_history import remember_report
-    remember_report(details)
     saved.details = json.dumps(details)
     from inventory_record_sync import sync_inventory_records
     sync_inventory_records(job.id, rows, db)

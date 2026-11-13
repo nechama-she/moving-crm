@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, func
 from models import (Lead, LeadJob, LeadLiveSwitch, LeadSparkInventoryItem, InventoryRoomType,
                     InventoryCatalogItem, InventoryEditState, InventoryEditRoom, InventoryEditItem)
-from spark_history import remember_report
 from item_selectors import inventory_selectors, ServiceSelections, default_selections
 
 
@@ -141,10 +140,10 @@ def load_inventory_editor(access, db):
         db.commit()
     if state is None or state.source_hash != fingerprint:
         # Import a report once, or after another report producer changes it.
-        from catalog_names import resolve_catalog_names
-        catalog = db.query(InventoryCatalogItem).all()
-        resolved = resolve_catalog_names(rows, catalog=catalog)
-        catalog_ids = {row.id for row in catalog}
+        from catalog_names import resolve_catalog_names, catalog_items
+        # The rows carry their catalog ids from when the report ran; only those items are read.
+        resolved = resolve_catalog_names(rows, db)
+        catalog_ids = set(catalog_items(rows, db))
         owned_items = {r.id for r in db.query(InventoryEditItem.id).filter_by(job_id=job.id)}
         owned_rooms = {r.id for r in db.query(InventoryEditRoom.id).filter_by(job_id=job.id)}
         db.query(InventoryEditItem).filter_by(job_id=job.id).delete(synchronize_session=False)
@@ -392,4 +391,3 @@ def project(job, access, details, joined, db):
                        spark_extracted_cuft=volume,spark_extracted_weight=weight,spark_extracted_id=report_id,spark_pricing_ready=False)
         details.pop('report_question_answers',None)
         details.pop('question_excluded_items',None)
-    if report_id: remember_report(details)
