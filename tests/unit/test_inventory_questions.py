@@ -230,3 +230,36 @@ def test_migration_keeps_question_ids_answers_exclusions_and_volume(move):
     assert questions(company, migrated, db, rows)[0]['saved']['acknowledged'] is True
     assert shipped(db, job)[0] == 26
     assert apply_inventory(job, migrated, db)[0] == 27
+
+
+@pytest.mark.parametrize('source, ends', [('manual', True), ('liveswitch', False)])
+def test_deleting_a_list_reports_whole_list_ends_the_report(move, source, ends):
+    """A list report is only its list: deleting all of it leaves the move with no report. A report with photos or
+    videos stays current."""
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+    from models import PublicMoveAccess
+    from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits
+    db, job, _ = move
+    access = PublicMoveAccess(id='A1', lead_id='L1', job_id=job.id, token_hash='t', key_hash='k', request_hash='r',
+                              expires_at=datetime.utcnow() + timedelta(days=1))
+    details = {'last_spark_id': 'report-1', 'last_spark_status': 'completed', 'spark_extracted_id': 'report-1',
+               'report_source': source, 'spark_history': []}
+    db.add_all([access, LeadLiveSwitch(lead_id='L1', details=json.dumps(details))])
+    db.flush()
+    fill_inventory(job, [dict(name='Sofa', room='Living Room', inventory_row_id=str(uuid4()), amount=1, cuft=40, unit_cuft=40,
+                              unit_weight=100, weight=100, going=True, manual=source == 'manual')], [], 'report-1', None, db)
+    db.commit()
+    view = load_inventory_editor(access, db)
+    result = save_inventory_edits(InventoryEdits(request_id=uuid4(), revision=view['revision'], report_id=view['report_id'],
+                                                 rooms={'delete': [room['id'] for room in view['rooms']]}), access, db)
+    saved = json.loads(db.get(LeadLiveSwitch, 'L1').details)
+    assert list_rows(job.id, db)[0] == []
+    if ends:
+        assert result['report_id'] is None and 'last_spark_id' not in saved and 'report_source' not in saved
+        assert 'spark_history' in saved
+        # The window keeps working: the next edit belongs to no report.
+        view = load_inventory_editor(access, db)
+        assert view['report_id'] is None
+    else:
+        assert result['report_id'] == 'report-1' and saved['last_spark_id'] == 'report-1'

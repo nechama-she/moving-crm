@@ -184,7 +184,7 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
   readOnly?: boolean;
   // Changes when the list was changed on another page: the open list loads it again.
   reload?: number;
-  submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string}>;
+  submitActions: (requestId: string, edits: InventoryEdits, revision: string, reportId: string | null) => Promise<{revision:string; report_id?:string|null}>;
   loadInventory: () => Promise<{revision:string; report_id:string|null; rooms:Room[]; room_types:RoomType[]}>;
   draftKey: string;
   packing?: { full: boolean };
@@ -314,6 +314,8 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
             requestIds.current.set(snapshot, requestId);
             const result = await submitActionsRef.current(requestId, actions, revision.current, reportId.current);
             revision.current = result.revision;
+            // Deleting a list report's whole list ends the report: later edits belong to no report.
+            if (result.report_id !== undefined) reportId.current = result.report_id;
             savedChanges.current = true;
           }
           savedRooms.current = snapshot;

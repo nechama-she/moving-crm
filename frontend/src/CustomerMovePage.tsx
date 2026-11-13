@@ -626,6 +626,8 @@ export default function CustomerMovePage() {
     }
     // A booked or closed move keeps its price: the list is saved, and Done only closes.
     if (data?.price_locked) { await loadSection('inventory', true); return; }
+    // An emptied list has nothing to price: the page shows the move as it is now.
+    if (!inventorySummary?.items) { await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]); return; }
     await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
     // Done changes the list, volume and price; the rest of the page is unchanged.
     await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
@@ -1477,10 +1479,10 @@ export default function CustomerMovePage() {
                     {data.estimate.charges?.some(charge => charge.pending) && <p role="status">Partial estimate: pending charges are not included in this total. See the errors beside those charges below.</p>}
                   </> : <>
                     <span className="cm-estimate-eyebrow">Your estimate</span>
-                  <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
-                  <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'&&inventorySummary?.items?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
+                  <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'&&inventorySummary?.items?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
-                  {sections.pricing.ready && !data.estimate && data.spark?.status === 'completed' && <button
+                  {sections.pricing.ready && !data.estimate && data.spark?.status === 'completed' && !!inventorySummary?.items && <button
                     type="button"
                     className="cm-secondary-btn cm-rerate-btn"
                     aria-busy={calculatingPrice}
@@ -1496,7 +1498,7 @@ export default function CustomerMovePage() {
               </div>
               {(() => {
                 const hasInventory = !!inventorySummary?.items;
-                const servicesDone = data.unanswered_questions?.length === 0;
+                const servicesDone = !!inventorySummary?.items && data.unanswered_questions?.length === 0;
                 const signed = data.signature_status === 'signed';
                 // Only the first unfinished step gets the big call-to-action; the others show a small text action.
                 // The Bill of Lading step, when the company has one: signed after the estimate.
@@ -1653,7 +1655,7 @@ export default function CustomerMovePage() {
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer key={estimateOpening} signedElsewhere={estimateSignedElsewhere} signatureRemovedElsewhere={estimateSignatureRemovedElsewhere} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={signature => { viewerSigned.current = true; showSignature(signature); }} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
-              {data.estimate_needs_update && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
+              {data.estimate_needs_update && !!inventorySummary?.items && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}

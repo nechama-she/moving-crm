@@ -179,7 +179,7 @@ def save_inventory_edits(body, access, db):
     receipt = receipts.get(str(body.request_id))
     if receipt:
         if receipt['digest'] != digest: raise HTTPException(409, 'Request ID already used for a different edit.')
-        return dict(ok=True, revision=receipt['revision'])
+        return dict(ok=True, revision=receipt['revision'], report_id=state.report_id)
     conflicts = []
     if str(body.revision) != state.revision:
         conflicts.append(f'editor revision mismatch (sent {body.revision}, current {state.revision})')
@@ -268,6 +268,13 @@ def save_inventory_edits(body, access, db):
         raise HTTPException(422, 'Inventory is too large.')
     if active_report(details):
         list_edited(job, details, db)
+        if details.get('report_source') == 'manual' and not db.query(InventoryEditItem.id).filter_by(job_id=job.id).first():
+            # The whole list was deleted. A list report is only its list, so it ends with it: the move has no report,
+            # as before the list was added. Past reports in history stay.
+            from spark_history import REPORT_KEYS
+            for key in REPORT_KEYS:
+                details.pop(key, None)
+            state.report_id = None
     if saved is None:
         saved = LeadLiveSwitch(lead_id=access.lead_id)
         db.add(saved)
@@ -276,7 +283,7 @@ def save_inventory_edits(body, access, db):
     receipts[str(body.request_id)] = dict(digest=digest, revision=state.revision)
     state.receipts = json.dumps(dict(list(receipts.items())[-100:]))
     db.commit()
-    return dict(ok=True, revision=state.revision)
+    return dict(ok=True, revision=state.revision, report_id=state.report_id)
 
 
 def list_rows(job_id, db, joined=None):
