@@ -1,11 +1,17 @@
+import hashlib
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 import pytest
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'backend'))
-from inventory_questions import QuestionRule, matches, questions, adjusted_inventory
+from models import Base, Company, Lead, LeadJob, LeadLiveSwitch, InventoryEditItem
+from inventory_questions import QuestionRule, matches, questions, apply_answers, carried_answers, revision, rule_revision
+from inventory_edits import fill_inventory, list_rows, shipping_rows, apply_inventory
+
 
 def rule():
     return dict(id='plants', title='Plants', question='Is this live?', enabled=True, item_ids=[], words=['plant'], photo=True,
@@ -13,137 +19,214 @@ def rule():
                  dict(id='no', label='No', action='none', notice='', acknowledge=False)])
 
 
+@pytest.fixture
+def move():
+    """A move whose inventory table holds the given rows. Saving rows runs the estimate-approval hook, which is not what
+    these tests check (and which imports modules other tests replace), so it is off while each test runs."""
+    import estimate_approval
+    hook = estimate_approval._clear_changed_approvals
+    hooked = event.contains(Session, 'before_flush', hook)
+    if hooked:
+        event.remove(Session, 'before_flush', hook)
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Lead(id='L1', full_name='Customer'))
+        db.flush()
+        job = LeadJob(id='J1', lead_id='L1', job_order=1)
+        db.add(job)
+        db.flush()
+        def fill(rows):
+            fill_inventory(job, [dict(row, inventory_row_id=row.get('inventory_row_id') or f'row-{index}', room=row.get('room', 'Living Room'),
+                                      unit_cuft=row['cuft'] / row['amount'], unit_weight=row.get('weight', 0) / row['amount'])
+                                 for index, row in enumerate(rows)], [], None, None, db)
+            return list_rows(job.id, db)[0]
+        yield db, job, fill
+    if hooked:
+        event.listen(Session, 'before_flush', hook)
+
+
+def shipped(db, job):
+    rows = shipping_rows(job.id, db)
+    return sum(row['cuft'] for row in rows), sum(row['weight'] for row in rows)
+
+
 @pytest.mark.parametrize('raw, expected', [(721.1, 722), (764.5, 765), (721.01, 722), (721, 721), (0, 0)])
-def test_shipment_volume_rounds_up_without_compounding(raw, expected):
-    company = SimpleNamespace(customer_questions='[]')
-    state = {}
-    rows = [{'name': 'Item', 'amount': 1, 'cuft': raw, 'weight': 0}]
-    kept, volume, weight = adjusted_inventory(company, state, rows, raw, 0, MagicMock())
-    assert volume == expected
-    assert adjusted_inventory(company, state, kept, volume, weight, MagicMock())[1] == expected
+def test_shipment_volume_rounds_up_without_compounding(move, raw, expected):
+    db, job, fill = move
+    if raw:
+        fill([{'name': 'Item', 'amount': 1, 'cuft': raw, 'weight': 0}])
+    details = {}
+    assert apply_inventory(job, details, db)[0] == expected
+    assert apply_inventory(job, details, db)[0] == expected
+
+
+def test_report_total_the_items_do_not_show_is_kept_in_the_volume(move):
+    db, job, fill = move
+    fill([{'name': 'Item', 'amount': 1, 'cuft': 10, 'weight': 5}])
+    assert apply_inventory(job, {'report_volume_offset': 0.4, 'report_weight_offset': 1}, db) == (11, Decimal(6))
+
 
 def test_matching_is_explicit_and_whole_word():
-    r=rule()
-    assert matches(r, {'name':'Large potted plant'}, {})
-    assert not matches(r, {'name':'Plantation table'}, {})
-    r['item_ids']=['catalog-1']
-    assert matches(r, {'item_id':'catalog-1', 'name':'Changed name'}, {})
-    assert matches(r, {'name':'Artificial Tree'}, {'catalog-1':'Artificial Tree'})
-    assert not matches(r, {'name':'Tree'}, {'catalog-1':'Artificial Tree'})
+    r = rule()
+    assert matches(r, {'name': 'Large potted plant'}, {})
+    assert not matches(r, {'name': 'Plantation table'}, {})
+    r['item_ids'] = ['catalog-1']
+    assert matches(r, {'item_id': 'catalog-1', 'name': 'Changed name'}, {})
+    assert matches(r, {'name': 'Artificial Tree'}, {'catalog-1': 'Artificial Tree'})
+    assert not matches(r, {'name': 'Tree'}, {'catalog-1': 'Artificial Tree'})
+
 
 def test_actions_require_explanation_and_matching():
     assert QuestionRule(**rule())
-    r=rule(); r['answers'][0]['notice']=' '
+    r = rule(); r['answers'][0]['notice'] = ' '
     with pytest.raises(ValueError): QuestionRule(**r)
-    r=rule(); r['words']=[]
+    r = rule(); r['words'] = []
     with pytest.raises(ValueError): QuestionRule(**r)
 
-def test_exclusion_is_idempotent_and_reversible():
-    company=SimpleNamespace(customer_questions=json.dumps([rule()]))
-    state={}; db=MagicMock()
-    rows=[dict(name='Plant',amount=2,cuft=12,weight=4),dict(name='Chair',amount=1,cuft=20,weight=10)]
-    kept,volume,weight=adjusted_inventory(company,state,rows,32,14,db)
-    question=questions(company,state,db)[0]
-    state['report_question_answers']={question['id']:{'answer_id':'yes','acknowledged':True}}
+
+def test_exclusion_is_recorded_on_the_row_idempotent_and_reversible(move):
+    db, job, fill = move
+    company = SimpleNamespace(customer_questions=json.dumps([rule()]))
+    rows = fill([dict(name='Plant', amount=2, cuft=12, weight=4), dict(name='Chair', amount=1, cuft=20, weight=10)])
+    state = {}
+    question = questions(company, state, db, rows)[0]
+    state['report_question_answers'] = {question['id']: {'answer_id': 'yes', 'acknowledged': True}}
+    assert apply_answers(company, state, job.id, db) is True
     for _ in range(3):
-        kept,volume,weight=adjusted_inventory(company,state,kept,volume,weight,db)
-        assert (volume,weight)==(26,12)
-        assert [r['name'] for r in kept]==['Plant', 'Chair']
-        assert kept[0]['amount'] == 1
-    state['report_question_answers'][question['id']]['answer_id']='no'
-    kept,volume,weight=adjusted_inventory(company,state,kept,volume,weight,db)
-    assert (kept,volume,weight)==(rows,32,14)
-
-def test_rule_changes_invalidate_old_answers():
-    r=rule(); company=SimpleNamespace(customer_questions=json.dumps([r])); state={}; db=MagicMock()
-    rows=[dict(name='Plant',amount=1,cuft=12)]
-    adjusted_inventory(company,state,rows,12,0,db)
-    q=questions(company,state,db)[0]
-    state['report_question_answers']={q['id']:{'answer_id':'yes','acknowledged':True}}
-    r['question']='Is this plant alive?'; company.customer_questions=json.dumps([r])
-    assert questions(company,state,db)[0]['saved'] is None
-    assert adjusted_inventory(company,state,[],0,0,db)[1]==12
-
-def test_company_without_rules_has_no_questions():
-    assert questions(SimpleNamespace(customer_questions=None), {'spark_inventory_snapshot':[{'name':'Plant'}]},MagicMock())==[]
+        assert apply_answers(company, state, job.id, db) is False
+        assert shipped(db, job) == (26, 12)
+        assert db.get(InventoryEditItem, 'row-0').quantity == 2 and db.get(InventoryEditItem, 'row-0').excluded_quantity == 1
+    state['report_question_answers'][question['id']]['answer_id'] = 'no'
+    assert apply_answers(company, state, job.id, db) is True
+    assert shipped(db, job) == (32, 14)
 
 
-def test_all_items_question_is_asked_once_and_targets_selected_units():
+def test_rule_changes_invalidate_old_answers(move):
+    db, job, fill = move
+    r = rule(); company = SimpleNamespace(customer_questions=json.dumps([r]))
+    rows = fill([dict(name='Plant', amount=1, cuft=12)])
+    state = {}
+    q = questions(company, state, db, rows)[0]
+    state['report_question_answers'] = {q['id']: {'answer_id': 'yes', 'acknowledged': True}}
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 0
+    r['question'] = 'Is this plant alive?'; company.customer_questions = json.dumps([r])
+    assert questions(company, state, db, rows)[0]['saved'] is None
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 12
+
+
+def test_company_without_rules_has_no_questions(move):
+    db, job, fill = move
+    assert questions(SimpleNamespace(customer_questions=None), {}, db, fill([dict(name='Plant', amount=1, cuft=5)])) == []
+
+
+def test_all_items_question_is_asked_once_and_targets_selected_units(move):
+    db, job, fill = move
     r = rule()
     r.update(all_items=True, words=[], item_ids=[])
     QuestionRule.model_validate(r)
     company = SimpleNamespace(customer_questions=json.dumps([r]))
-    rows = [dict(name='Mower', room='Garage', amount=2, cuft=20, weight=100),
-            dict(name='Chair', room='Bedroom', amount=1, cuft=5, weight=20)]
-    state = {'spark_inventory_snapshot': rows}
-    db = MagicMock()
-    question, = questions(company, state, db)
-    assert question['all_items'] and len(question['items']) == 3
-    assert [item['id'] for item in question['items']] == ['0:0', '0:1', '1:0']
-    state['report_question_answers'] = {question['id']: {
-        'answer_id': 'yes', 'acknowledged': True, 'selected_items': ['0:1']}}
-    kept, volume, weight = adjusted_inventory(company, state, rows, 25, 120, db)
-    assert volume == 15 and weight == 70
-    assert kept[0]['amount'] == 1 and kept[1]['name'] == 'Chair'
+    rows = fill([dict(name='Mower', room='Garage', amount=2, cuft=20, weight=100),
+                 dict(name='Chair', room='Bedroom', amount=1, cuft=5, weight=20)])
+    state = {}
+    question, = questions(company, state, db, rows)
+    assert question['all_items'] and [item['id'] for item in question['items']] == ['0:0', '0:1', '1:0']
+    state['report_question_answers'] = {question['id']: {'answer_id': 'yes', 'acknowledged': True, 'selected_items': ['0:1']}}
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job) == (15, 70)
     state['report_question_answers'][question['id']]['pending'] = True
-    assert adjusted_inventory(company, state, kept, volume, weight, db)[1:] == (25, 120)
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job) == (25, 120)
 
 
-def test_default_all_items_flag_preserves_existing_question_ids():
+def test_default_all_items_flag_preserves_existing_question_ids(move):
+    db, job, fill = move
     r = rule()
     company = SimpleNamespace(customer_questions=json.dumps([r]))
-    state = {'spark_inventory_snapshot': [dict(name='Plant', amount=1, cuft=5)]}
-    original = questions(company, state, MagicMock())[0]['id']
+    rows = fill([dict(name='Plant', amount=1, cuft=5)])
+    original = questions(company, {}, db, rows)[0]['id']
     r['all_items'] = False
     company.customer_questions = json.dumps([r])
-    assert questions(company, state, MagicMock())[0]['id'] == original
+    assert questions(company, {}, db, rows)[0]['id'] == original
 
 
-def test_pending_acknowledgment_does_not_exclude_and_can_restore_item():
-    company=SimpleNamespace(customer_questions=json.dumps([rule()]))
-    state={}; db=MagicMock(); rows=[dict(name='Plant',amount=1,cuft=12,weight=4)]
-    adjusted_inventory(company,state,rows,12,4,db)
-    key=questions(company,state,db)[0]['id']
-    state['report_question_answers']={key:{'answer_id':'yes','acknowledged':False,'pending':True}}
-    assert adjusted_inventory(company,state,rows,12,4,db)==(rows,12,4)
-    state['report_question_answers'][key].update(acknowledged=True,pending=False)
-    assert adjusted_inventory(company,state,rows,12,4,db)==([],0,0)
-    state['report_question_answers'][key].update(acknowledged=False,pending=True)
-    assert adjusted_inventory(company,state,[],0,0,db)==(rows,12,4)
-
-
-def test_each_unit_has_independent_acknowledgment_and_legacy_answers():
+def test_pending_acknowledgment_does_not_exclude_and_can_restore_item(move):
+    db, job, fill = move
     company = SimpleNamespace(customer_questions=json.dumps([rule()]))
-    db = MagicMock()
-    rows = [dict(name='Plant', amount=2, cuft=12, weight=4)]
-    state = {}
-    adjusted_inventory(company, state, rows, 12, 4, db)
-    first, second = questions(company, state, db)
-    assert first['label'] == 'Plant (1 of 2)'
-    assert second['label'] == 'Plant (2 of 2)'
+    rows = fill([dict(name='Plant', amount=1, cuft=12, weight=4)])
+    key = questions(company, {}, db, rows)[0]['id']
+    state = {'report_question_answers': {key: {'answer_id': 'yes', 'acknowledged': False, 'pending': True}}}
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job) == (12, 4)
+    state['report_question_answers'][key].update(acknowledged=True, pending=False)
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job) == (0, 0)
+    state['report_question_answers'][key].update(acknowledged=False, pending=True)
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job) == (12, 4)
+
+
+def test_each_unit_has_independent_acknowledgment_and_legacy_answers(move):
+    db, job, fill = move
+    company = SimpleNamespace(customer_questions=json.dumps([rule()]))
+    rows = fill([dict(name='Plant', amount=2, cuft=12, weight=4)])
+    first, second = questions(company, {}, db, rows)
+    assert (first['label'], second['label']) == ('Plant (1 of 2)', 'Plant (2 of 2)')
     assert first['id'] != second['id']
-    state['report_question_answers'] = {first['id']: {'answer_id': 'yes', 'acknowledged': False, 'pending': True}}
-    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 12
+    state = {'report_question_answers': {first['id']: {'answer_id': 'yes', 'acknowledged': False, 'pending': True}}}
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 12
     state['report_question_answers'][first['id']].update(acknowledged=True, pending=False)
-    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 6
-    assert questions(company, state, db)[1]['saved'] is None
-    legacy_key = first['id'].rsplit(':', 1)[0]
-    state['report_question_answers'] = {legacy_key: {'answer_id': 'yes', 'acknowledged': True}}
-    assert adjusted_inventory(company, state, rows, 12, 4, db)[1] == 0
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 6
+    assert questions(company, state, db, rows)[1]['saved'] is None
+    state = {'report_question_answers': {first['id'].rsplit(':', 1)[0]: {'answer_id': 'yes', 'acknowledged': True}}}
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 0
 
 
-def test_rerun_preserves_answers_for_reordered_unchanged_items():
+def test_rerun_preserves_answers_for_reordered_unchanged_items(move):
+    db, job, fill = move
     company = SimpleNamespace(customer_questions=json.dumps([rule()]))
-    db = MagicMock()
-    rows = [dict(name='Plant', amount=1, cuft=12), dict(name='Chair', amount=1, cuft=20)]
-    old = {'question_original_rows': rows}
-    question = questions(company, old, db)[0]
-    old['report_question_answers'] = {question['id']: {'answer_id': 'yes', 'acknowledged': True}}
-    fresh = {'carried_question_state': old}
-    kept, volume, _ = adjusted_inventory(company, fresh, list(reversed(rows)), 32, 0, db)
-    assert volume == 20
-    assert questions(company, fresh, db)[0]['saved']['acknowledged'] is True
-    assert 'carried_question_state' not in fresh
-    changed = {'carried_question_state': old}
-    adjusted_inventory(company, changed, [dict(name='Plant', amount=2, cuft=24)], 24, 0, db)
-    assert all(q['saved'] is None for q in questions(company, changed, db))
+    old_rows = fill([dict(name='Plant', amount=1, cuft=12), dict(name='Chair', amount=1, cuft=20)])
+    answers = {questions(company, {}, db, old_rows)[0]['id']: {'answer_id': 'yes', 'acknowledged': True}}
+    # The new report has the same plant (a new row, in another position) and the chair.
+    new_rows = fill([dict(name='Chair', amount=1, cuft=20, inventory_row_id='chair-2'), dict(name='Plant', amount=1, cuft=12, inventory_row_id='plant-2')])
+    state = {'report_question_answers': carried_answers(company, answers, old_rows, new_rows, db)}
+    assert questions(company, state, db, new_rows)[0]['saved']['acknowledged'] is True
+    apply_answers(company, state, job.id, db)
+    assert shipped(db, job)[0] == 20
+    # A changed plant (now two) is a different item: no answer carries over.
+    changed = fill([dict(name='Plant', amount=2, cuft=24, inventory_row_id='plant-3')])
+    carried = carried_answers(company, answers, old_rows, changed, db)
+    assert all(q['saved'] is None for q in questions(company, {'report_question_answers': carried}, db, changed))
+
+
+def test_migration_keeps_question_ids_answers_exclusions_and_volume(move):
+    """A move saved as report JSON moves into the table: its questions keep their ids (so answers and signed estimates
+    stay valid), the units its answers took off stay off, the volume stays, and no JSON copy is left."""
+    from inventory_migration import migrate_move
+    db, job, fill = move
+    db.add(Company(id='C1', name='Movers', customer_questions=json.dumps([rule()])))
+    lead = db.get(Lead, 'L1')
+    lead.company_id, lead.volume, lead.weight = 'C1', Decimal('27'), Decimal('12')
+    original = [dict(name='Plant', room='Living Room', amount=2, cuft=12, weight=4, going=True, manual=False),
+                dict(name='Chair', room='Bedroom', amount=1, cuft=20, weight=10, going=True, manual=False)]
+    old_id = hashlib.sha256((rule_revision(rule()) + ':0:' + revision(original[0])).encode()).hexdigest()
+    details = {'last_spark_id': 'r1', 'last_spark_status': 'completed', 'report_source': 'liveswitch',
+               'question_original_rows': original, 'spark_inventory_snapshot': [dict(original[0], amount=1, cuft=6), original[1]],
+               'report_question_answers': {f'{old_id}:0': {'answer_id': 'yes', 'acknowledged': True}}, 'question_original_cuft': 32.4}
+    saved = LeadLiveSwitch(lead_id='L1', details=json.dumps(details))
+    db.add(saved)
+    db.flush()
+    assert migrate_move(saved, db) is True
+    migrated = json.loads(saved.details)
+    assert not {'spark_inventory_snapshot', 'question_original_rows', 'question_original_cuft'} & set(migrated)
+    company = db.get(Company, 'C1')
+    rows = list_rows(job.id, db)[0]
+    assert [q['id'] for q in questions(company, migrated, db, rows)] == [f'{old_id}:0', f'{old_id}:1']
+    assert questions(company, migrated, db, rows)[0]['saved']['acknowledged'] is True
+    assert shipped(db, job)[0] == 26
+    assert apply_inventory(job, migrated, db)[0] == 27
