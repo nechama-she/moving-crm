@@ -1470,15 +1470,15 @@ def _save_package_discount(lead, job, db, title, kind, value, remove, source=Non
     rate on the transportation line, or the amount split by their prices before discounts, the last line taking the
     rounding. source 'customer' marks one the customer picked; a rep's has none. Commits, and refreshes job."""
     from math import ceil
-    from rep_discounts import package_lines
+    from rep_discounts import cents, package_lines
     from routes.leads import _refresh_lead_estimated_total
     lines = package_lines(job.charges)
     if not lines:
         raise HTTPException(404, 'This estimate has no transportation lines to discount.')
     selection = json.loads(job.customer_packing_package or '{}')
     settings = selection.setdefault('rep_discounts', {})
-    bases = selection.get('rep_discount_bases', {})
-    prices = [Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines]
+    # Each line's price before any discount is its subtotal.
+    prices = [cents(row.subtotal) for row in lines]
     subtotal = sum(prices, Decimal(0))
     title = title.strip() or 'Discount'
     marked = {'source': source} if source else {}
@@ -1581,25 +1581,27 @@ def rep_discount_options(request: Request, access: PublicMoveAccess = Depends(ve
     if not lead or not job or job.lead_id != lead.id:
         raise HTTPException(404, 'Move not found.')
     _, plan = infer_job_move_type(lead, job, db)
-    from rep_discounts import package_lines
+    from rep_discounts import cents, package_lines
     selection = json.loads(job.customer_packing_package or '{}')
     settings = selection.get('rep_discounts', {})
-    bases = selection.get('rep_discount_bases', {})
     lines = package_lines(job.charges)
     rules = [settings.get(row.id) for row in lines]
-    before = sum((Decimal(bases[row.id]['base']) if row.id in bases else Decimal(str(row.total_cost or 0)) for row in lines), Decimal(0))
+    # Each line's price before any discount is its subtotal.
+    before = sum((cents(row.subtotal) for row in lines), Decimal(0))
+    after = sum((cents(row.total_cost) for row in lines), Decimal(0))
     # transportation: the editor offers the price sheet's named discounts and the reduced cu-ft rate here.
     package = {'id': 'package', 'name': 'Subtotal', 'total': float(before), 'transportation': True, 'discount': None}
     transport = next((settings.get(row.id) for row in lines if row.name == 'Transportation charge'), None)
     if transport and transport['type'] == 'rate':
         # A reduced rate is on the transportation line only.
         package['discount'] = transport
-    elif lines and all(rules):
+    elif any(rules) or after < before:
         # The same percent on each line reads back as that percent; otherwise as the amount they take off together.
-        same = all(rule['type'] == 'percent' and rule['value'] == rules[0]['value'] for rule in rules)
-        after = sum((Decimal(str(row.total_cost or 0)) for row in lines), Decimal(0))
-        package['discount'] = {'title': rules[0]['title'], 'type': 'percent' if same else 'amount',
-                               'value': float(rules[0]['value']) if same else float(before - after)}
+        # Any discount on any of the lines reads back, so Remove discount is offered and clears all of them.
+        present = [rule for rule in rules if rule]
+        same = bool(present) and all(rules) and all(rule['type'] == 'percent' and rule['value'] == present[0]['value'] for rule in rules)
+        package['discount'] = {'title': present[0]['title'] if present else 'Discount', 'type': 'percent' if same else 'amount',
+                               'value': float(present[0]['value']) if same else float(before - after)}
     return {'presets': [{'title': r.title, 'type': r.category[9:], 'value': float(r.description)} for r in (plan.rules if plan else []) if r.category in ('discount_amount', 'discount_percent', 'discount_rate')],
             'charges': ([package] if lines else []) + [{'id': c.id, 'name': c.name, 'total': float(c.total_cost or 0), 'transportation': c.name == 'Transportation charge', 'discount': settings.get(c.id)} for c in job.charges]}
 
