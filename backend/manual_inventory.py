@@ -194,7 +194,7 @@ def submit_list_report(access, db):
     materialize_exclusions(job.id, db)
     db.query(InventoryEditItem).filter_by(job_id=job.id).update({InventoryEditItem.manual: True}, synchronize_session=False)
     details.update(last_spark_id=report_id, last_spark_status='completed', last_spark_at=int(time.time()),
-                   report_list_body={'request_id': report_id, 'rooms': []}, report_source='manual', report_files=[],
+                   report_source='manual', report_files=[],
                    report_conversation={}, spark_pricing_ready=False)
     if not saved:
         saved = LeadLiveSwitch(lead_id=access.lead_id)

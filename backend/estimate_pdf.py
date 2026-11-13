@@ -355,7 +355,7 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signatu
         if stop.get('type') not in ('pickup', 'delivery'):
             story.append(p(f"Additional stop (unspecified): {stop.get('address', '')}"))
     story += [p('Price breakdown', 'SectionEstimate')] + _price_table(data, styles, p, table, link)
-    if data.get('list_changed') or data.get('files_changed'):
+    if data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
     note = (data.get('customer_notes') or '').strip()
     if note:

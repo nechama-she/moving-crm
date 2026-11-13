@@ -731,7 +731,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
                     link_sms=customer_link_sms_notice(access), link_email=customer_link_email_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
-        return dict(inventory_draft=None, list_changed=False, report_history=attach_signatures(report_history(state, inventory=report_inventory(job.id, state, db)), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state, job.id, db))
+        return dict(report_history=attach_signatures(report_history(state, inventory=report_inventory(job.id, state, db)), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state, job.id, db))
     if section == 'media':
         meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
@@ -891,7 +891,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         details, rows = estimate_data()
         return dict(details, spark=spark_info, customer_notes=job.customer_notes or '', job_id=job.id,
                     discount_titles={key: value.get('title') for key, value in saved_package.get('rep_discounts', {}).items()},
-                    list_changed=False, estimate_needs_update=estimate_needs_update), rows
+                    estimate_needs_update=estimate_needs_update), rows
     # Built only when a signed copy exists to compare with.
     pricing_data['signature_status'] = estimate_signature_status(
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
@@ -919,8 +919,6 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'spark': spark_info,
             'report_history': attach_signatures(report_history(conv_details, inventory=report_inventory(job.id, conv_details, db)), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
-            'inventory_draft': None,
-            'list_changed': False,
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
             'walkthrough': meeting_dict(meeting) if meeting else None,

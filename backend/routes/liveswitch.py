@@ -788,11 +788,6 @@ def apply_spark_results_to_lead(lead_id: str, share_url: str, db: Session, expec
         inventory_rows = list_rows(job.id, db)[0]
         processing.mark('extract', 'success', f'{len(inventory_rows)} inventory rows; {cuft:g} cu ft')
         processing.mark('inventory', 'running')
-        # The inventory lives in the inventory table only: the record keeps no copy of it.
-        for key in ('spark_inventory_snapshot', 'question_original_rows', 'manual_rooms', 'question_excluded_items',
-                    'question_original_cuft', 'question_original_weight', 'report_list_rows', 'report_list_body',
-                    'report_list_cuft', 'report_list_weight'):
-            details.pop(key, None)
         details["spark_extracted_id"] = details.get("last_spark_id")
         if job:
             processing.mark('inventory', 'success', f'{len(inventory_rows)} rows prepared for job {job.job_order}')

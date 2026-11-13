@@ -15,9 +15,8 @@ _JOB_BOOKKEEPING = {'pricing_match_key', 'pricing_plan_id', 'pricing_move_type',
 _LEAD_SHOWN = {'full_name', 'phone', 'email', 'volume', 'weight', 'move_type', 'estimated_total', 'company_id'}
 _ACCESS_SHOWN = {'published_price', 'published_cuft'}
 _COMPANY_SHOWN = {'name', 'phone', 'office_address', 'logo', 'color', 'dot_number'}
-# The conversation record's parts the estimate shows: the inventory and the answers about it.
-_CONVERSATION_SHOWN = ('spark_inventory_snapshot', 'question_original_rows', 'report_question_answers',
-                       'question_excluded_items', 'manual_rooms', 'last_spark_id', 'spark_pricing_ready')
+# The conversation record's parts the estimate shows: the answers about the inventory (the inventory itself is its table's rows).
+_CONVERSATION_SHOWN = ('report_question_answers', 'last_spark_id', 'spark_pricing_ready')
 
 
 def _changed(session, row, only=None, ignore=()):
