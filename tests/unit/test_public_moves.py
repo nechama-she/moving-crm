@@ -120,7 +120,7 @@ def test_sections_do_not_run_pricing_or_full_details(portal, monkeypatch, sectio
     monkeypatch.setattr(mod, '_move_details', MagicMock(side_effect=AssertionError('Must not load the full page')))
     monkeypatch.setattr('price_validity.refresh_expired_price', MagicMock(side_effect=AssertionError('Must not price')))
     result = mod.move_section(section, access, db)
-    expected = {'move': 'pickup', 'inventory': 'combined_inventory', 'media': 'editable_files', 'volume': 'spark'}
+    expected = {'move': 'pickup', 'inventory': 'report_history', 'media': 'editable_files', 'volume': 'spark'}
     assert expected[section] in result
     assert 'estimate' not in result
     if section != 'media':
@@ -2904,7 +2904,7 @@ def test_customer_pricing_factors_recalculate_full_estimate(portal, monkeypatch,
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
     monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
     monkeypatch.setattr(mod, 'selected_customer_address', lambda value, current, *args: current if value is None else value)
-    monkeypatch.setattr(mod, 'details', lambda access, db: {'price': access.published_price})
+    monkeypatch.setattr(mod, 'move_section', lambda section, access, db, request=None: {'price': access.published_price} if section == 'pricing' else {})
     def calculate(actual_lead, actual_job, actual_db):
         assert (actual_lead, actual_job, actual_db) == (lead, job, db)
         for field, value in changes.items():
@@ -2926,7 +2926,7 @@ def test_contact_edit_does_not_replace_estimate(portal, monkeypatch):
     db.commit()
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
     monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     pricing = SimpleNamespace(calculate_and_save_lead_job_price=MagicMock())
     monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
     mod.update_customer_details(mod.CustomerDetailsPatch(name='Updated Name', pickup=job.pickup_zip,
@@ -2948,7 +2948,7 @@ def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal
     calculate = MagicMock(return_value=None, side_effect=failure)
     monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(calculate_and_save_lead_job_price=calculate))
     monkeypatch.setitem(sys.modules, 'routes.leads', SimpleNamespace(_refresh_lead_estimated_total=MagicMock()))
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed', move_date='2026-11-01'), access, db)
     assert job.move_date == '2026-11-01'
     assert lead.full_name == 'Changed'
@@ -2976,7 +2976,7 @@ def test_partial_browser_lookup_preserves_saved_locations(portal, monkeypatch):
     job.customer_packing_package = json.dumps({'pricing_locations':[office,pickup]})
     db.commit()
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     mod.update_customer_details(mod.CustomerDetailsPatch(pricing_locations=[{**pickup,'latitude':39.2}]), access, db)
     saved = {row['address']:row for row in json.loads(job.customer_packing_package)['pricing_locations']}
     assert saved['Office'] == office
@@ -2987,7 +2987,7 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',['Storage'], 'Old delivery'))
     persist=MagicMock(); monkeypatch.setattr(mod,'_persist_job_route',persist)
-    monkeypatch.setattr(mod,'details',lambda access,db:{'saved':True})
+    monkeypatch.setattr(mod,'move_section',lambda section,access,db,request=None:{'saved':True} if section=='pricing' else {})
     body=mod.CustomerDetailsPatch(pickup='Miami, FL, USA',pickup_place=dict(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US'))
     import jwt
     body.pickup_place.proof=jwt.encode({'sub':access.id,'aud':'customer-address','exp':int(__import__('time').time())+3600,'address':body.pickup_place.model_dump(exclude={'proof'})},os.environ['JWT_SECRET'],algorithm='HS256')

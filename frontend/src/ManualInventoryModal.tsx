@@ -173,8 +173,11 @@ function RoomCard({ room, selected, busy, locked = false, summary, onSelect, onR
     <button type="button" className="mi-remove" disabled={busy || locked} aria-label={`Delete room ${room.name}`} onClick={onDelete}>&times;</button>
   </article>;
 }
-export default function ManualInventoryModal({ searchCatalog, submitActions, downloadPdf, onDone, onClose, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true, reload=0 }: {
+export type InventoryTotals = { items: number; pieces: number; boxes: number; cuft: number };
+export default function ManualInventoryModal({ searchCatalog, submitActions, downloadPdf, onDone, onClose, onTotals, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true, reload=0 }: {
   visible?: boolean;
+  // The totals this window shows in its header, for the page to show them too.
+  onTotals?: (totals: InventoryTotals) => void;
   // Whether the list has a price: without one, Done prices it even when nothing changed.
   priced?: boolean;
   // The list can be seen, rooms filtered and the PDF opened, but nothing changed or saved.
@@ -450,9 +453,17 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
     + goingItems(room).reduce((sum, item) => sum + item.quantity * piecesPerItem(item.name), 0);
   const boxes = (room: Room) => Object.entries(room.items).reduce((sum, [id, qty]) => sum + boxQuantity(room.item_names?.[id] || items.get(id)?.name || '', qty), 0)
     + goingItems(room).reduce((sum, item) => sum + boxQuantity(item.name, item.quantity), 0);
+  const totalItems = rooms.reduce((sum, r) => sum + count(r), 0);
+  const totalPieces = rooms.reduce((sum, r) => sum + pieces(r), 0);
   const totalBoxes = rooms.reduce((sum, r) => sum + boxes(r), 0);
   const cuft = rooms.reduce((sum, room) => sum + total(room, 'cuft'), 0);
   const weight = rooms.reduce((sum, room) => sum + total(room, 'weight'), 0);
+  // The page's item list row shows these same totals, once the list has loaded.
+  const totalsReporter = useRef(onTotals);
+  totalsReporter.current = onTotals;
+  useEffect(() => {
+    if (catalog) totalsReporter.current?.({ items: totalItems, pieces: totalPieces, boxes: totalBoxes, cuft });
+  }, [catalog, totalItems, totalPieces, totalBoxes, cuft]);
   const room = rooms.find(r => r.id === selected);
   const catalogWords = catalogSearch.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const catalogEntries: (CatalogItem & { set?: CatalogSet })[] = [
@@ -548,7 +559,7 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
     }
   }}>
     <header><div><span className="cm-eyebrow">YOUR INVENTORY</span><h2 id="mi-title">Your home, room by room</h2></div><div className="mi-header-actions"><button type="button" className="slds-button" disabled={busy || pdfBusy || !catalog || !rooms.length || rooms.some(r => !r.name.trim())} title={pdfBusy ? "Preparing PDF..." : "View inventory PDF"} aria-label={pdfBusy ? "Preparing inventory PDF" : "View inventory PDF"} aria-busy={pdfBusy} onClick={() => void download()}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></button><button type="button" className="slds-button" disabled={busy || !catalog || !rooms.length || readOnly} title="Clear inventory" aria-label="Clear inventory" onClick={() => { setRooms([]); setSelected(''); setCustomOpen(false); }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button><button type="button" className="slds-button" disabled={busy} onClick={() => void save()} aria-label="Save and close inventory">&times;</button></div></header>
-    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{rooms.reduce((sum, r) => sum + count(r), 0)} items &middot; {rooms.reduce((sum, r) => sum + pieces(r), 0)} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
+    <div className="mi-totals" aria-live="polite"><span>{rooms.length} rooms</span><span>{totalItems} items &middot; {totalPieces} pieces &middot; {totalBoxes} boxes</span><strong>{number(cuft)} cu ft</strong><span>{number(weight)} lb</span></div>
     {draftError && <p className="mi-error" role="alert">{draftError}</p>}
     {error && <p className="mi-error" role="alert">{error}</p>}
     <div className="mi-body">

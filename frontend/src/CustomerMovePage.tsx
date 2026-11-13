@@ -1,6 +1,4 @@
-import { boxQuantity } from './inventoryBoxes';
 import CustomerExtraStopsQuestion, {type ExtraStopsOption} from './CustomerExtraStopsQuestion';
-import { piecesPerItem } from './inventoryPieces';
 import CustomerElevatorQuestion, { type ElevatorOption } from './CustomerElevatorQuestion';
 import CustomerLongCarryQuestion, { type CarryOption } from './CustomerLongCarryQuestion';
 import CustomerStairsQuestion, { type StairsOption } from './CustomerStairsQuestion';
@@ -12,7 +10,7 @@ import CustomerItemQuestions, { type ItemQuestion } from "./CustomerItemQuestion
 import { groupTerms, needsTermAnswer, requiredQuestionTarget } from './customerQuestionNavigation';
 import QuestionReferenceImages from "./QuestionReferenceImages";
 import { savedPhotos, storePhoto, removePhoto } from './photoDrafts';
-import ManualInventoryModal from "./ManualInventoryModal";
+import ManualInventoryModal, { type InventoryTotals } from "./ManualInventoryModal";
 import Signing, { type SignResult } from './Signing';
 import EstimateViewer, { type SignatureRemoved } from './EstimateViewer';
 import InventoryViewer from './InventoryViewer';
@@ -42,7 +40,6 @@ type PricingDelta = {
   options: Partial<Details>;
   unanswered: string[];
   unanswered_scope: string[];
-  combined_inventory?: Details['combined_inventory'];
   // Item answers also return the questions, and the volume when what ships changed.
   item_questions?: Details['item_questions'];
   cuft?: number | null;
@@ -236,12 +233,13 @@ export default function CustomerMovePage() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [answersSaving]);
   const [showInventoryList, setShowInventoryList] = useState(false);
-  const [inventoryOpened, setInventoryOpened] = useState(false);
-  // The list window loads the list once and stays loaded while hidden. When another page changes the list, the open
-  // window loads it again in place; a hidden one is replaced, to load it when opened.
+  // The list window loads the list when the page opens and stays loaded while hidden; the item list row shows the
+  // totals it shows. When another page changes the list, the open window loads it again in place; a hidden one is
+  // replaced, which loads it again.
   const [inventoryVersion, setInventoryVersion] = useState(0);
   const [inventoryReload, setInventoryReload] = useState(0);
-  useEffect(() => { if (showInventoryList) setInventoryOpened(true); }, [showInventoryList]);
+  // None until the list window has loaded the list: the row stays hidden until then.
+  const [inventorySummary, setInventorySummary] = useState<InventoryTotals | null>(null);
   const [packingSelection, setPackingSelection] = useState<Record<string, string>>({});
   const [packingStep, setPackingStep] = useState<'stops' | 'elevator' | 'access' | 'stairs' | 'storage' | 'bulky' | 'package' | 'items'>('bulky');
   const [packingSection,setPackingSection]=useState<'service'|'boxes'|'protection'>('service');
@@ -289,8 +287,6 @@ export default function CustomerMovePage() {
   const failedPricing = useRef(new Map<string, PricingChange>());
   function savePricingChange(change: PricingChange) {
     if (readOnly) return;
-    // Box counts are saved on the inventory rows; reload the inventory window the next time it opens.
-    if (['inventory_boxes', 'mode'].includes(change.kind)) setInventoryOpened(false);
     const id = `pricing:${change.kind}:${change.location || change.item_id || ''}:${change.stop_change?.previous || change.stop_change?.address || ''}`;
     answerPending.current += 1;
     answerRevision.current += 1;
@@ -306,6 +302,8 @@ export default function CustomerMovePage() {
           payload={...change,route_origin:origin,stop_change:{...change.stop_change,meters:saved?.meters??await browserDrivingMeters(data?.google_maps_browser_key||'',origin,address)}};
         }
         applyPricingDelta(await call('/packing?compact=true', { change: payload }));
+        // Box counts are saved on the inventory rows: the list window loads the list again, and the row's totals with it.
+        if (['inventory_boxes', 'mode'].includes(change.kind)) setInventoryVersion(version => version + 1);
         failedPricing.current.delete(id);
         failedAnswers.current.delete(id);
         setPackingError(failedPricing.current.size ? 'Some choices could not be saved. Please retry.' : '');
@@ -327,7 +325,6 @@ export default function CustomerMovePage() {
       if (!previous) return previous;
       const kept = (previous.unanswered_questions || []).filter(id => !result.unanswered_scope.some(prefix => id.startsWith(prefix)));
       return {...previous, ...result.options,
-        ...(result.combined_inventory ? {combined_inventory: result.combined_inventory} : {}),
         unanswered_questions: [...new Set([...kept, ...result.unanswered])],
         ...(result.item_questions && answerPending.current <= 1 ? {item_questions: result.item_questions} : {}),
         ...(result.cuft != null && previous.spark ? {spark: {...previous.spark, cuft: result.cuft}} : {}),
@@ -342,7 +339,8 @@ export default function CustomerMovePage() {
     setAnswersSaving(true);
     const task = answerQueue.current.then(async () => {
       const result = await call('/details', { move_date: date });
-      setData(result);
+      // The reply is the move and its pricing; the rest of the page is unchanged.
+      setData(previous => ({...(previous || emptyDetails()), ...result}));
       setStorageDate(previous => previous && previous < date ? '' : previous);
       setStorageMissing(false);
     });
@@ -969,7 +967,8 @@ export default function CustomerMovePage() {
       if(!Object.keys(changes).length){setEditingMove(false);return;}
       const locations=await Promise.all(locationInputs.map(address=>browserPricingLocation(data?.google_maps_browser_key || '',address).catch(()=>null)));
       const result=await call('/details', { ...changes, ...(locations.some(Boolean)?{pricing_locations:locations.filter(location=>location!==null)}:{}) });
-      setData(result);
+      // The reply is the move and its pricing; the rest of the page (inventory, media, history) is unchanged.
+      setData(previous => ({...(previous || emptyDetails()), ...result}));
       if (latestMoveDraft.current === moveDraft && addressDraft.current === submittedAddresses) setEditingMove(false);
     }catch(err){
       const failure=err as Error & {detail?: {field?:string;message?:string} | {loc?:string[];msg?:string}[]};
@@ -991,14 +990,6 @@ export default function CustomerMovePage() {
   const sectionReady = (...names: PageSection[]) => names.every(name => sections[name].ready && !sections[name].error);
   const sectionRequests = useRef<Record<string, number>>({});
   const pricingLoading = sections.pricing.loading;
-  // The item list summary, from the current inventory; items not going count toward nothing.
-  const summaryRows = (data?.combined_inventory || []).filter(row => row.going !== false);
-  const inventorySummary = data?.combined_inventory?.length ? {
-    items: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0), 0),
-    pieces: summaryRows.reduce((total, row) => total + Number(row.amount ?? row.quantity ?? 0) * piecesPerItem(row.name), 0),
-    boxes: summaryRows.reduce((total, row) => total + boxQuantity(row.name, Number(row.amount ?? row.quantity ?? 0)), 0),
-    cuft: Math.round(summaryRows.reduce((total, row) => total + Number(row.cuft || 0), 0)),
-  } : null;
   const pricingLoadError = sections.pricing.error;
   async function loadSection(section: PageSection, background = false) {
     if (!session || !customerSessionActive(session)) return;
@@ -1323,7 +1314,7 @@ export default function CustomerMovePage() {
                 {sectionReady('inventory') && inventorySummary ? <section className="cm-saved-list-summary cm-saved-list-clickable" role="button" tabIndex={0} aria-label="Open your item list" onClick={() => setShowInventoryList(true)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setShowInventoryList(true); } }}>
                   <div>
                     <strong>Your item list</strong>
-                    <span>{inventorySummary.items} items &middot; {inventorySummary.pieces} pieces &middot; {inventorySummary.boxes} boxes &middot; {inventorySummary.cuft.toLocaleString()} cu ft</span>
+                    <span>{inventorySummary.items} items &middot; {inventorySummary.pieces} pieces &middot; {inventorySummary.boxes} boxes &middot; {inventorySummary.cuft.toLocaleString(undefined, { maximumFractionDigits: 2 })} cu ft</span>
                   </div>
                 </section> : null}
                 {sectionNotice('media', 'media')}
@@ -1634,7 +1625,7 @@ export default function CustomerMovePage() {
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {(showInventoryList || inventoryOpened) && <ManualInventoryModal readOnly={readOnly} visible={showInventoryList} reload={inventoryReload} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
+            {<ManualInventoryModal onTotals={setInventorySummary} readOnly={readOnly} visible={showInventoryList} reload={inventoryReload} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',

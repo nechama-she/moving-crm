@@ -692,16 +692,6 @@ def _report_status(state):
             'shareUrl': state.get('last_spark_share_url'), 'cuft': state.get('spark_extracted_cuft'), 'update_error': state.get('notification_error')}
 
 
-def _combined_inventory(state, db, job_id=None):
-    """The current inventory: the completed report's, else the list in the inventory tables."""
-    if state.get('last_spark_status') == 'completed':
-        return resolve_catalog_names(state.get('spark_inventory_snapshot', []), db)
-    if job_id is None:
-        return []
-    from inventory_edits import list_rows
-    return list_rows(job_id, db)[0]
-
-
 def _load_move(access, db, charges=False, contacts=False):
     """Lead, job, company and conversation (and price lines) in one query; later reads come from the session,
     which keeps them while the caller holds them."""
@@ -730,8 +720,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
                     link_sms=customer_link_sms_notice(access), link_email=customer_link_email_notice(access))
     state = _conversation_state(conversation, db)
     if section == 'inventory':
-        return dict(inventory_draft=None, combined_inventory=_combined_inventory(state, db, job.id),
-                    list_changed=False, report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
+        return dict(inventory_draft=None, list_changed=False, report_history=attach_signatures(report_history(state), signed_estimates(db, access.lead_id, access.job_id)), pricing_required=_has_inventory_list(state))
     if section == 'media':
         meeting = db.query(WalkthroughRequest).filter_by(job_id=job.id).order_by(WalkthroughRequest.created_at.desc()).first()
         files = active_report_files(access, db)
@@ -920,7 +909,6 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
             'report_history': attach_signatures(report_history(conv_details), signed_estimates(db, access.lead_id, access.job_id)),
             'editable_files': file_list(files),
             'inventory_draft': None,
-            'combined_inventory': _combined_inventory(conv_details, db, job.id),
             'list_changed': False,
             'files_changed': {f.id for f in files} != {row['id'] for row in conv_details.get('report_files', [])},
             'new_file_count': sum(f.id not in {row['id'] for row in conv_details.get('report_files', [])} for f in files) if 'report_files' in conv_details else 0,
@@ -976,11 +964,6 @@ def _pricing_delta(access, lead, job, db, kind, individual_charges):
              'charges': estimate_charges(job, individual_charges), 'options': options,
              'unanswered': unanswered_questions(options, package_saved='mode' in json.loads(job.customer_packing_package or '{}')),
              'unanswered_scope': sorted({prefix for part in parts for prefix in UNANSWERED_SCOPE[part]})}
-    if kind in ('inventory_boxes', 'mode'):
-        # Box counts live on the inventory rows, so the page's list changes too.
-        conversation = db.get(LeadLiveSwitch, lead.id)
-        state = json.loads(conversation.details or '{}') if conversation else {}
-        delta['combined_inventory'] = resolve_catalog_names(state.get('spark_inventory_snapshot', []), db) if state.get('last_spark_status') == 'completed' else []
     return delta
 
 
@@ -1001,7 +984,6 @@ def _item_answer_delta(access, lead, company, db, inventory_changed, individual_
         options = _customer_pricing_options(lead, job, db)
         delta.update(price=str(price) if price is not None else None, charges=estimate_charges(job, individual_charges),
                      options={key: value for key, value in options.items() if key != 'minimum_cuft'},
-                     combined_inventory=resolve_catalog_names(state.get('spark_inventory_snapshot', []), db),
                      cuft=state.get('spark_extracted_cuft'))
         package_saved = 'mode' in json.loads(job.customer_packing_package or '{}')
         delta['unanswered'] = unanswered_questions({**options, 'item_questions': item_questions}, package_saved=package_saved)
@@ -2222,7 +2204,7 @@ class CustomerDetailsPatch(BaseModel):
 
 @router.patch('/api/public-moves/{access_id}/details')
 @router.post('/api/public-moves/{access_id}/details')
-def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     lead = db.query(Lead).filter_by(id=access.lead_id).with_for_update().one()
     job = db.query(LeadJob).filter_by(id=access.job_id).with_for_update().one()
 
@@ -2285,7 +2267,9 @@ def update_customer_details(body: CustomerDetailsPatch, access: PublicMoveAccess
         from pricing_save import attempt_pricing
         attempt_pricing(lead,job,db,lambda: calculate_and_save_lead_job_price(lead,job,db),require_price=True)
     db.commit()
-    return details(access, db)
+    # A move change can change the price and the estimate's signature status, never the inventory: the reply is the
+    # page's move and pricing sections, built as the page loads them.
+    return {**move_section('move', access, db, request), **move_section('pricing', access, db, request)}
 
 
 @router.get('/api/public-moves/{access_id}/file-preview/{attachment_id}')
