@@ -601,7 +601,7 @@ export default function CustomerMovePage() {
   const autoFinished = useRef(false);
   useEffect(() => {
     if (autoFinished.current || !data || !sections.inventory.ready || !sections.pricing.ready) return;
-    if (!data.combined_inventory?.length || data.estimate || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
+    if (!inventorySummary?.items || data.estimate || data.spark?.status === 'queued' || data.spark?.status === 'running') return;
     autoFinished.current = true;
     setCalculatingPrice(true);
     finishInventory().catch(error => setCalculationError((error as Error).message)).finally(() => setCalculatingPrice(false));
@@ -1290,7 +1290,7 @@ export default function CustomerMovePage() {
                 <p>Upload photos, videos, or documents, create an item list, or schedule a live virtual walkthrough with our team.</p>
                 <p>Your saved item list and uploaded media stay together. Generate one report to combine both into your inventory and estimate.</p>
                 <div className="cm-inventory-actions">
-                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : readOnly ? 'View inventory' : data.combined_inventory?.length ? 'Update inventory' : 'Add a list'}</button>
+                  <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}>{!sectionReady('inventory') ? 'Loading inventory...' : readOnly ? 'View inventory' : inventorySummary?.items ? 'Update inventory' : 'Add a list'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={busy || !photosRestored || readOnly} onClick={() => filePicker.current?.click()} aria-busy={files.some(f => f.status === 'Uploading')}>{files.some(f => f.status === 'Uploading') ? 'Uploading...' : 'Upload files'}</button>
                   <button type="button" className="slds-button cm-add-list-button" disabled={!sectionReady('media') || readOnly} onClick={() => meetingDialog.current?.showModal()}>Virtual estimate</button>
                   <input ref={filePicker} type="file" multiple hidden disabled={busy || !photosRestored || readOnly} onChange={e=>{void choose(e.target.files);e.target.value='';}}/>
@@ -1330,7 +1330,7 @@ export default function CustomerMovePage() {
                 {/* A report runs on media; a list alone is priced when the inventory's Done is clicked. */}
                 {(data.editable_files || data.files).length > 0 && (
                   <div className="cm-spark-box">
-                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{data.combined_inventory?.length ? ' + current inventory list' : ''}</p>
+                    <p className="cm-report-includes"><strong>Next report:</strong> {(data.editable_files || data.files).length} media file{(data.editable_files || data.files).length === 1 ? '' : 's'}{inventorySummary?.items ? ' + current inventory list' : ''}</p>
                     <button
                       type="button"
                       className="slds-button cm-primary cm-spark-btn"
@@ -1461,7 +1461,7 @@ export default function CustomerMovePage() {
               {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
               {(() => {
-                const hasInventory = !!data.combined_inventory?.length;
+                const hasInventory = !!inventorySummary?.items;
                 const servicesDone = data.unanswered_questions?.length === 0;
                 const signed = data.signature_status === 'signed';
                 // Only the first unfinished step gets the big call-to-action; the others show a small text action.
