@@ -1,7 +1,7 @@
 """Read-only estimate export. All quantities, answers and prices come from saved data."""
 from collections import defaultdict
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_CEILING
+from decimal import Decimal
 from io import BytesIO
 from math import ceil
 import base64
@@ -512,7 +512,7 @@ def build_estimate_pdf(data, rows, work_order=None):
                     capacity, unit = material['box_capacity_cuft'], 'cuft'
                 if capacity is not None:
                     prefix = 'Over ' if material.get('capacity_kind') == 'over' else ''
-                    size = f"{prefix}{Decimal(str(capacity)).to_integral_value(rounding=ROUND_CEILING)} {units.get(unit, unit)}"
+                    size = f"{prefix}{Decimal(str(capacity)):g} {units.get(unit, unit)}"
             body.append([p(material['name']), p(size, 'NoteEstimate'),
                          p(money(material.get('material_price')), 'RightEstimate'),
                          p(money(material.get('packing_price')), 'RightEstimate')])
