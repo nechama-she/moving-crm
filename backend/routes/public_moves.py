@@ -743,7 +743,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
                     new_file_count=sum(f.id not in previous for f in files) if 'report_files' in state else 0)
     if section == 'estimate':
         # The saved price and its lines, read as they are; the pricing section fills in the rest.
-        return {'estimate': saved_estimate(access, lead, job, state, is_rep_request(access, request))}
+        return {'estimate': saved_estimate(access, lead, job, state, db, is_rep_request(access, request))}
     if section == 'volume':
         return {'spark': _report_status(state)}
     if _has_inventory_list(state, job.id, db):
@@ -799,7 +799,7 @@ def _estimate_from(access, lead, job, charges):
     return {'price': str(price), 'cuft': str(ceil(access.published_cuft or lead.volume or 0)), 'charges': charges}
 
 
-def saved_estimate(access, lead, job, state, individual_charges=False):
+def saved_estimate(access, lead, job, state, db, individual_charges=False):
     """The estimate as saved, with no pricing work, so the page can show it at once."""
     spark_id = state.get('last_spark_id')
     if not _has_inventory_list(state, job.id, db) or json.loads(job.customer_packing_package or '{}').get('pricing_pending'):
@@ -824,7 +824,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     is_spark_pending = bool(spark_info and spark_info.get("status") in ("queued", "running"))
     saved_package = json.loads(job.customer_packing_package or '{}')
     report_import_pending = bool(spark_info and conv_details.get('spark_extracted_id') != spark_info['id'])
-    estimate = saved_estimate(access, lead, job, conv_details, individual_charges)
+    estimate = saved_estimate(access, lead, job, conv_details, db, individual_charges)
 
     active_company = _company_for(lead, db)
     company_data = _company_details(active_company)
