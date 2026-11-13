@@ -235,7 +235,9 @@ def load_inventory_editor(access, db):
             going=item.going, mover_pack=item.mover_pack, mover_pack_count=pack_count(item),
             selections=json.loads(item.selections or '{}'),
             selectors=selectors.get(item.catalog_item_id, [])))
-    return dict(revision=state.revision, report_id=report_id, rooms=list(result.values()))
+    # The room types a room can be added as, in the same response: the window needs nothing else to open.
+    room_types = [dict(id=row.id, name=row.name) for row in db.query(InventoryRoomType).order_by(InventoryRoomType.sort_order)]
+    return dict(revision=state.revision, report_id=report_id, rooms=list(result.values()), room_types=room_types)
 
 
 def save_inventory_edits(body, access, db):

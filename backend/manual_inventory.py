@@ -67,6 +67,11 @@ def catalog(db, access=None):
             'items': search_catalog(db, access, ids=component_ids) if component_ids else []}
 
 
+def _contains(word):
+    # Typed % and _ match literally.
+    return '%' + word.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+
+
 def search_catalog(db, access, text='', ids=(), limit=50):
     """Up to `limit` items matching every word of `text` in their name or description, or the given ids."""
     from sqlalchemy import or_
@@ -77,11 +82,29 @@ def search_catalog(db, access, text='', ids=(), limit=50):
     if not words:
         return []
     for word in words[:10]:
-        # Typed % and _ match literally.
-        pattern = '%' + word.replace('!', '!!').replace('%', '!%').replace('_', '!_') + '%'
+        pattern = _contains(word)
         query = query.filter(or_(InventoryCatalogItem.name.ilike(pattern, escape='!'),
                                  InventoryCatalogItem.description.ilike(pattern, escape='!')))
     return catalog_items(db, access, query.order_by(InventoryCatalogItem.name, InventoryCatalogItem.cuft).limit(limit))
+
+
+def search_inventory_catalog(db, access, text='', ids=(), limit=50):
+    """The inventory window's search: items and sets matching every word of `text` (sets by name), with the items the
+    found sets are made of; or, for the given ids, those items."""
+    if ids:
+        return {'items': search_catalog(db, access, ids=ids), 'sets': [], 'set_items': []}
+    from models import InventoryCatalogSet
+    words = text.split()
+    if not words:
+        return {'items': [], 'sets': [], 'set_items': []}
+    query = db.query(InventoryCatalogSet)
+    for word in words[:10]:
+        query = query.filter(InventoryCatalogSet.name.ilike(_contains(word), escape='!'))
+    sets = [{'id': row.id, 'name': row.name, 'components': json.loads(row.components)}
+            for row in query.order_by(InventoryCatalogSet.name).limit(limit)]
+    component_ids = {part['item_id'] for row in sets for part in row['components']}
+    return {'items': search_catalog(db, access, text, limit=limit), 'sets': sets,
+            'set_items': search_catalog(db, access, ids=component_ids) if component_ids else []}
 
 
 def build_inventory(body, db, allow_empty=False):

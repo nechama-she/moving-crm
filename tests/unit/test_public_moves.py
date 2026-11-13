@@ -2305,7 +2305,7 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         if authenticated:
             headers['x-public-session'] = token
         base = f'/api/public-moves/{access.id}'
-        response = client.get(base + '/inventory-catalog', headers=headers)
+        response = client.get(base + '/inventory-catalog/search?q=chair', headers=headers)
         assert response.status_code == (200 if authenticated else 401), response.text
         if authenticated:
             assert response.json()['items'][0]['cuft'] == 10

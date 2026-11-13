@@ -1,7 +1,7 @@
 from catalog_names import resolve_catalog_names
 from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
-from manual_inventory import ManualInventoryInput, catalog
+from manual_inventory import ManualInventoryInput
 from spark_history import archive_report_for_new_media, report_history
 from estimate_signature_history import attach_signatures, signed_estimates
 from pricing_addresses import with_job_locations
@@ -1364,16 +1364,11 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
             'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed')}
 
 
-@router.get('/api/public-moves/{access_id}/inventory-catalog')
-def get_customer_inventory_catalog(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    return catalog(db, access)
-
-
 @router.get('/api/public-moves/{access_id}/inventory-catalog/search')
 def search_customer_inventory_catalog(q: str = Query(default='', max_length=200), ids: list[str] = Query(default=[], max_length=200),
                                       access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    from manual_inventory import search_catalog
-    return search_catalog(db, access, q, ids)
+    from manual_inventory import search_inventory_catalog
+    return search_inventory_catalog(db, access, q, ids)
 
 
 class InventoryPdfInput(ManualInventoryInput):
