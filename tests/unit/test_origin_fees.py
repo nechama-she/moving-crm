@@ -1,11 +1,9 @@
 import importlib.util
 import json
 import sys
-from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -29,18 +27,22 @@ def rule(**patches):
     return {'state':'VT','zip_codes':[],'origin_zip':'20815','rate_per_mile':'5',**patches}
 
 
-def test_origin_matching_and_cached_route(monkeypatch):
-    route = MagicMock(return_value=160934)
-    monkeypatch.setattr(fees, 'driving_meters', route)
+def browser(origin_zip, address, meters=160934):
+    # The distance the customer page measured in the browser and saved.
+    return {'revision': fees.route_revision(origin_zip, address), 'meters': meters}
+
+
+def test_origin_matching_and_saved_browser_distance():
     rows = services([rule(), rule(zip_codes=['05401'], rate_per_mile='7')], fees.ORIGIN_FEE_PREFIX)
-    quote = fees.origin_fee(rows, '05401')
+    quote = fees.origin_fee(rows, '05401', browser('20815', '05401'))
     assert quote['amount'] == 700 and 'to pickup' in quote['description']
     assert fees.origin_fee(rows, '05401', quote)['amount'] == 700
-    assert route.call_count == 1
     assert fees.delivery_fee(rows, '05401') is None
     assert fees.origin_fee(rows, '20815') is None
-    fees.origin_fee(rows, '05402', quote)
-    assert route.call_count == 2
+    # Another address: the saved distance is not its distance, so the fee waits for the customer page.
+    with pytest.raises(HTTPException) as error:
+        fees.origin_fee(rows, '05402', quote)
+    assert error.value.status_code == 409
 
 
 def test_origin_and_destination_saved_and_preview(monkeypatch):
@@ -54,8 +56,6 @@ def test_origin_and_destination_saved_and_preview(monkeypatch):
     spec=importlib.util.spec_from_file_location('origin_pricing_test',BACKEND/'routes/pricing.py')
     api=importlib.util.module_from_spec(spec)
     mocks['origin_pricing_test']=api
-    route=MagicMock(return_value=160934)
-    monkeypatch.setattr(fees,'driving_meters',route)
     with patch.dict(sys.modules,mocks):
         spec.loader.exec_module(api)
         engine=create_engine('sqlite://')
@@ -63,7 +63,9 @@ def test_origin_and_destination_saved_and_preview(monkeypatch):
         with Session(engine) as db:
             db.add(models.Company(id='co',name='Test'))
             lead=models.Lead(id='lead',full_name='Test',company_id='co',volume='24')
-            job=models.LeadJob(id='job',lead_id='lead',company_id='co',pickup_zip='20850',delivery_zip='05401')
+            # The distances the customer page measured in the browser.
+            job=models.LeadJob(id='job',lead_id='lead',company_id='co',pickup_zip='20850',delivery_zip='05401',
+                customer_packing_package=json.dumps({'origin_route':browser('20815','20850'),'delivery_route':browser('20815','05401')}))
             plan=models.PricingPlan(id='plan',source_key='plan',company_id='co',company_name='Test',name='East',pickup_rows=[models.PricingPickupArea(state='MD')],active=True)
             fees.save_fee_card(plan, fees.DELIVERY_FEE_PREFIX, fees.DeliveryFeeCard(enabled=True, rules=[rule()]))
             plan.rates=[models.PricingRate(destination='VT',band_label='286+',cubic_feet_min=286,rate=5,minimum_price=1500)]
@@ -77,15 +79,12 @@ def test_origin_and_destination_saved_and_preview(monkeypatch):
             db.commit()
             assert api.calculate_and_save_lead_job_price(lead,job,db)==2200
             db.commit()
-            assert route.call_count == 2
-            route.assert_any_call('20815','20850')
-            route.assert_any_call('20815','05401')
             assert db.query(models.LeadJobCharge).filter_by(name='Origin fees').one().total_cost==200
             assert db.query(models.LeadJobCharge).filter_by(name='Destination fees').one().total_cost==500
             assert set(json.loads(job.customer_packing_package)) >= {'origin_route','delivery_route'}
+            # The price calculator has no browser distance: its mileage fees wait instead of calling Google.
             preview=api.compute_plan_calculation(plan,api.CalculationInput(destination='VT',pickup_address='20850',delivery_address='05401',cubic_feet=24))
-            assert preview['total']==2200
-            assert len([c for c in preview['charges'] if c['id']=='origin-mileage'])==1
+            assert not [c for c in preview['charges'] if c['id'] in ('origin-mileage','delivery-mileage')]
             monkeypatch.setattr(api,'_plan_or_404',lambda *args:plan)
             missing=api.calculate_pricing(plan.id,api.CalculationInput(destination='VT',delivery_address='05401',cubic_feet=24),None,db)
             assert any(c['name']=='Origin fees' and c.get('pending') for c in missing['charges'])

@@ -5,7 +5,7 @@ import re
 from starlette.concurrency import run_in_threadpool
 
 # Customer page requests that send something but save nothing another open copy of the page shows.
-CUSTOMER_PAGE_READS = {'realtime-token', 'send-code', 'verify', 'address-search', 'address-resolve', 'inventory.pdf',
+CUSTOMER_PAGE_READS = {'realtime-token', 'send-code', 'verify', 'inventory.pdf',
                        'mileage', 'availability', 'question-images', 'prepare-upload'}
 
 # What a save did, for the other open pages: they show signatures as notices, and reload the inventory list after its

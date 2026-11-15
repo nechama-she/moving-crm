@@ -3000,8 +3000,6 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     ('estimate.pdf', None, 200),
     ('inventory.pdf', {'request_id': '00000000-0000-0000-0000-000000000001', 'rooms': []}, 200),
     ('realtime-token', {}, 200),
-    ('address-search', {'text':'Miami','session_token':'1234567890abcdef'}, 200),
-    ('address-resolve', {'place_id':'place1','session_token':'1234567890abcdef'}, 200),
 ])
 def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monkeypatch, suffix, payload, expected):
     import ast
@@ -3027,9 +3025,6 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
     db.commit()
     # The endpoint imports this helper after auth. No real report processing is needed here.
     monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(apply_spark_results_to_lead=MagicMock()))
-    import customer_addresses
-    monkeypatch.setattr(customer_addresses,'suggestions',lambda *a:[])
-    monkeypatch.setattr(customer_addresses,'resolve_address',lambda *a:{'city':'Miami'})
     app=FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
     app.include_router(mod.router)
     app.dependency_overrides[mod.get_db]=lambda:db

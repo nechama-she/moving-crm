@@ -758,6 +758,8 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
     # A booked or closed move keeps its price: list changes save, and Done does not price them.
     result['price_locked'] = locked
     result['mileage_routes'] = [] if locked else browser_fee_routes(lead, job, db)
+    # The browser measures a missing distance with this key as soon as this section loads.
+    result['google_maps_browser_key'] = setting('GOOGLE_MAPS_BROWSER_KEY')
     # Keep a newly worked-out plan match, so the next load reads it instead of working it out again.
     # Compared by value: an automatic flush before a later query clears SQLAlchemy's change history.
     if saved() != before:
@@ -2231,32 +2233,6 @@ def selected_customer_address(value, current, selection, label, access_id):
     from customer_addresses import validate_selection
     validate_selection(selection, access_id)
     return selection.formatted_address
-
-
-class AddressSearch(BaseModel):
-    text: str = Field(min_length=3, max_length=200)
-    session_token: str = Field(min_length=16, max_length=36, pattern=r'^[A-Za-z0-9_-]+$')
-
-
-class AddressResolve(BaseModel):
-    place_id: str = Field(min_length=1, max_length=300, pattern=r'^[A-Za-z0-9_-]+$')
-    session_token: str = Field(min_length=16, max_length=36, pattern=r'^[A-Za-z0-9_-]+$')
-
-
-@router.post('/api/public-moves/{access_id}/address-search')
-def search_customer_address(body: AddressSearch, response: Response, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    rate(db, 'address-search:' + access.id, limit=60)
-    response.headers['Cache-Control'] = 'no-store'
-    from customer_addresses import suggestions
-    return {'suggestions': suggestions(body.text.strip(), body.session_token)}
-
-
-@router.post('/api/public-moves/{access_id}/address-resolve')
-def resolve_customer_address(body: AddressResolve, response: Response, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    rate(db, 'address-resolve:' + access.id, limit=20)
-    response.headers['Cache-Control'] = 'no-store'
-    from customer_addresses import resolve_address
-    return resolve_address(body.place_id, body.session_token, access.id)
 
 
 class CustomerPricingLocation(BaseModel):

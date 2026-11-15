@@ -5,7 +5,6 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -65,39 +64,27 @@ def test_invalid_rule_rejected(patches):
     with pytest.raises(ValueError): fees.DeliveryFeeRule(**rule(**patches))
 
 
-def test_route_basis_reused_and_rate_changes_without_rerouting(monkeypatch):
-    route = MagicMock(return_value=160934)
-    monkeypatch.setattr(fees,'driving_meters',route)
+def browser(origin_zip, address, meters=160934):
+    # The distance the customer page measured in the browser and saved.
+    return {'revision': fees.route_revision(origin_zip, address), 'meters': meters}
+
+
+def test_browser_distance_is_used_and_rate_changes_reuse_it():
     rows = services([rule()])
-    quote = fees.delivery_fee(rows,'05401')
+    quote = fees.delivery_fee(rows,'05401',browser('20815','05401'))
     assert quote['miles'] == '100.00' and quote['amount'] == Decimal('500.00')
     saved = {key: quote[key] for key in ('revision','meters')}
     assert fees.delivery_fee(services([rule(rate_per_mile='7')]),'05401',saved)['amount'] == 700
-    assert route.call_count == 1
-    fees.delivery_fee(rows,'05402',saved)
-    fees.delivery_fee(services([rule(origin_zip='20850')]),'05401',saved)
-    assert route.call_count == 3
     assert fees.delivery_fee(rows,'20815') is None
-    assert route.call_count == 3
 
 
-def test_google_driving_request_and_failure_handling(monkeypatch):
-    with patch.dict(sys.modules,{'config':SimpleNamespace(get_config=lambda:{'GOOGLE_MAPS_SERVER_KEY':'test-only'})}):
-        response = MagicMock()
-        response.json.return_value={'routes':[{'distanceMeters':123456}]}
-        post=MagicMock(return_value=response)
-        monkeypatch.setattr(fees.httpx,'post',post)
-        assert fees.driving_meters('20815','123 Main St, Burlington, VT 05401') == 123456
-        kwargs=post.call_args.kwargs
-        assert kwargs['json']['travelMode']=='DRIVE'
-        assert kwargs['json']['origin']=={'address':'20815, USA'}
-        assert kwargs['headers']['X-Goog-FieldMask']=='routes.distanceMeters'
-        response.json.return_value={'routes':[]}
-        with pytest.raises(HTTPException) as error: fees.driving_meters('20815','05401')
-        assert error.value.status_code==422
-        post.side_effect=httpx.TimeoutException('secret provider details')
-        with pytest.raises(HTTPException) as error: fees.driving_meters('20815','05401')
-        assert error.value.status_code==502 and 'secret' not in error.value.detail
+@pytest.mark.parametrize('address,saved', [('05401', None), ('05402', 'other address'), ('05401', 'other origin')])
+def test_no_browser_distance_waits_for_the_customer_page(address, saved):
+    # No server routing: without the browser's distance for these exact addresses, the fee is pending.
+    saved = {None: None, 'other address': browser('20815','05401'), 'other origin': browser('20850','05401')}[saved]
+    with pytest.raises(HTTPException) as error:
+        fees.delivery_fee(services([rule()]), address, saved)
+    assert error.value.status_code == 409 and 'customer page' in error.value.detail
 
 
 def test_saved_estimate_and_address_changes(monkeypatch):
