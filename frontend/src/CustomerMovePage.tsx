@@ -17,7 +17,7 @@ import InventoryViewer from './InventoryViewer';
 import BillOfLadingViewer from './BillOfLadingViewer';
 import type { EditableReportFile } from "./ReportFileList";
 import ReportFileGallery from "./ReportFileGallery";
-import ReportHistory, { type ReportRun } from "./ReportHistory";
+import ReportHistory, { type ReportRun, type SignedBillOfLading } from "./ReportHistory";
 import CustomerPackingOptions, { type PackingPackage, type PackingSelection } from "./CustomerPackingOptions";
 import MeetingTimePicker from "./MeetingTimePicker";
 import { useCustomerUpdates } from './useCustomerUpdates';
@@ -792,6 +792,17 @@ export default function CustomerMovePage() {
     if (!response.ok) throw new Error('Could not open the signed estimate. Please try again.');
     return response.blob();
   }
+  async function fetchBillOfLadingPdf(signatureId: string) {
+    const response = await fetch(`${base}/bill-of-lading-signatures/${encodeURIComponent(signatureId)}/pdf`, { headers, cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not open the signed Bill of Lading. Please try again.');
+    return response.blob();
+  }
+  // A signed Bill of Lading spot joins its estimate in the history.
+  function showBillOfLadingSignature(signature: SignedBillOfLading & { estimate_id: string }) {
+    const row = { id: signature.id, name: signature.name, signed_at: signature.signed_at, spot: signature.spot };
+    setData(previous => previous ? {...previous, report_history: previous.report_history?.map(report => ({...report,
+      signatures: report.signatures?.map(item => item.id === signature.estimate_id ? {...item, bills_of_lading: [row, ...(item.bills_of_lading || [])]} : item)}))} : previous);
+  }
   // Show a signature on its report row as soon as the estimate viewer closes.
   // A new signature: the estimate is signed, the signature joins its report in the history, and the work order may show.
   function showSignature(signature: SignResult) {
@@ -1517,7 +1528,7 @@ export default function CustomerMovePage() {
               })()}
               {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
               {billOfLadingOpen && <BillOfLadingViewer changedElsewhere={billOfLadingChanged} base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
-                onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onClose={() => setBillOfLadingOpen(false)} />}
+                onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onSpotSigned={showBillOfLadingSignature} onClose={() => setBillOfLadingOpen(false)} />}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
               {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}
@@ -1623,7 +1634,7 @@ export default function CustomerMovePage() {
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer key={estimateOpening} signedElsewhere={estimateSignedElsewhere} signatureRemovedElsewhere={estimateSignatureRemovedElsewhere} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={signature => { viewerSigned.current = true; showSignature(signature); }} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
               {data.estimate_needs_update && !!inventorySummary?.items && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
-              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} />
+              <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} fetchBillOfLadingPdf={fetchBillOfLadingPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>

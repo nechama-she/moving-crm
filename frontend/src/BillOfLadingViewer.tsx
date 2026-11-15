@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import Signing from './Signing';
+import type { SignedBillOfLading } from './ReportHistory';
 import PdfPages from './PdfPages';
 import './PdfViewer.css';
 
 /** The Bill of Lading filled from the signed estimate: read it, sign each of its spots, download it. */
-export default function BillOfLadingViewer({ base, headers, customerName, filename, onSigned, onClose, changedElsewhere = 0 }: {
+export default function BillOfLadingViewer({ base, headers, customerName, filename, onSigned, onSpotSigned, onClose, changedElsewhere = 0 }: {
   base: string; headers: Record<string, string>; customerName: string; filename: string;
   onSigned: () => void; onClose: () => void;
+  // Each spot as it is signed, for the report history.
+  onSpotSigned?: (signature: SignedBillOfLading & { estimate_id: string }) => void;
   // Counts changes on another open page of the move (a spot signed, the estimate signed or its signature removed):
   // the Bill of Lading then loads again in place.
   changedElsewhere?: number;
@@ -54,7 +57,7 @@ export default function BillOfLadingViewer({ base, headers, customerName, filena
     <div className="pdf-viewer-content">
       {url ? <PdfPages url={url} title="Bill of Lading PDF" toNextSpot={toNextSpot} onSign={signed ? undefined : setSigning} /> : !error && <p role="status">Preparing your Bill of Lading...</p>}
       {signing !== null && <aside ref={signForm}><Signing key={signing} path={`/bill-of-lading/${signing}`} paper="Bill of Lading" base={base} headers={headers} customerName={customerName} disabled={false} version={revision} hideHistory
-        onClose={() => setSigning(null)} onSigned={() => { setSigning(null); setToNextSpot(true); void load(); }} /></aside>}
+        onClose={() => setSigning(null)} onSigned={result => { onSpotSigned?.(result as unknown as SignedBillOfLading & { estimate_id: string }); setSigning(null); setToNextSpot(true); void load(); }} /></aside>}
     </div>
   </dialog>;
 }

@@ -1,7 +1,7 @@
 """Signed estimates matched to the inventory report each one was signed for."""
 import json
 
-from models import EstimateSignature
+from models import BillOfLadingSignature, EstimateSignature
 
 
 # Document inputs only: transport metadata (report IDs, load status, preparation
@@ -76,8 +76,20 @@ def signed_estimates(db, lead_id, job_id=None):
     legacy = [row.id for row in rows if not row.report_id]
     snapshots = dict(db.query(EstimateSignature.id, EstimateSignature.snapshot)
                      .filter(EstimateSignature.id.in_(legacy)).all()) if legacy else {}
+    # Each estimate's Bill of Lading spots signed since its signing, newest first: they show and go with it.
+    bills = {}
+    if rows:
+        signed = {row.id: row.signed_at for row in rows}
+        for bill in (db.query(BillOfLadingSignature.id, BillOfLadingSignature.signer_name, BillOfLadingSignature.signed_at,
+                              BillOfLadingSignature.spot, BillOfLadingSignature.estimate_signature_id)
+                     .filter(BillOfLadingSignature.estimate_signature_id.in_(list(signed)))
+                     .order_by(BillOfLadingSignature.signed_at.desc())):
+            if bill.signed_at >= signed[bill.estimate_signature_id]:
+                bills.setdefault(bill.estimate_signature_id, []).append(
+                    {'id': bill.id, 'name': bill.signer_name, 'signed_at': bill.signed_at.isoformat() + 'Z', 'spot': bill.spot + 1})
     return [{'id': row.id, 'name': row.signer_name, 'signed_at': row.signed_at.isoformat() + 'Z',
-             'report_id': row.report_id or _snapshot_report_id(snapshots.get(row.id))} for row in rows]
+             'report_id': row.report_id or _snapshot_report_id(snapshots.get(row.id)),
+             'bills_of_lading': bills.get(row.id, [])} for row in rows]
 
 
 def attach_signatures(reports, signatures):
@@ -85,7 +97,7 @@ def attach_signatures(reports, signatures):
     by_report = {}
     for signature in signatures:
         by_report.setdefault(signature['report_id'], []).append(
-            {key: signature[key] for key in ('id', 'name', 'signed_at')})
+            {key: signature[key] for key in ('id', 'name', 'signed_at', 'bills_of_lading')})
     for report in reports:
         report['signatures'] = by_report.get(report['id'], [])
     return reports

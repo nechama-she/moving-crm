@@ -1336,7 +1336,20 @@ def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: Pu
         pdf=build_bill_of_lading_pdf(company, values, documents, signatures))
     db.add(record)
     db.commit()
-    return {'id': record.id, 'name': name, 'signed_at': signature['signed_at']}
+    # estimate_id and spot: the page adds this signature under its estimate in the report history.
+    return {'id': record.id, 'name': name, 'signed_at': signature['signed_at'], 'spot': spot + 1, 'estimate_id': estimate.id}
+
+
+@router.get('/api/public-moves/{access_id}/bill-of-lading-signatures/{signature_id}/pdf')
+def bill_of_lading_signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """The Bill of Lading as it was when this spot was signed, from the report history."""
+    from models import BillOfLadingSignature
+    record = db.query(BillOfLadingSignature).filter_by(id=signature_id, lead_id=access.lead_id, job_id=access.job_id).first()
+    if record is None:
+        raise HTTPException(404, 'Signed Bill of Lading not found')
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="bill-of-lading-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')

@@ -12,10 +12,13 @@ export type ReportRun = {
   processing?: { started_at: string; steps: { id: string; label: string; status: string; message?: string; error?: string }[] };
   signatures?: SignedReportEstimate[];
 };
-export type SignedReportEstimate = { id: string; name: string; signed_at: string };
-export default function ReportHistory({ reports, onSelect, disabled = false, staff = false, fetchSignedPdf, requiresResign = false, signatureStatus }: {
+// bills_of_lading: the Bill of Lading spots signed for this signed estimate, newest first.
+export type SignedReportEstimate = { id: string; name: string; signed_at: string; bills_of_lading?: SignedBillOfLading[] };
+export type SignedBillOfLading = { id: string; name: string; signed_at: string; spot: number };
+export default function ReportHistory({ reports, onSelect, disabled = false, staff = false, fetchSignedPdf, fetchBillOfLadingPdf, requiresResign = false, signatureStatus }: {
   reports: ReportRun[]; onSelect: (id: string) => Promise<void>; disabled?: boolean; staff?: boolean;
   fetchSignedPdf?: (signatureId: string) => Promise<Blob>;
+  fetchBillOfLadingPdf?: (signatureId: string) => Promise<Blob>;
   requiresResign?: boolean;
   signatureStatus?: 'unsigned' | 'signed' | 'changed';
 }) {
@@ -27,22 +30,29 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
   const pdfUrls = useRef<string[]>([]);
   useEffect(() => () => { pdfUrls.current.forEach(url => URL.revokeObjectURL(url)); }, []);
   if (!reports.length) return null;
-  async function openSignedPdf(signatureId: string) {
-    if (!fetchSignedPdf) return;
+  async function openSignedPdf(signatureId: string, fetchPdf = fetchSignedPdf, paper = 'estimate') {
+    if (!fetchPdf) return;
     // Open the tab during the click so pop-up blockers allow it, then load the PDF into it.
     const viewer = window.open('about:blank', '_blank');
-    if (!viewer) { setError('Allow pop-ups to view the signed estimate.'); return; }
+    if (!viewer) { setError(`Allow pop-ups to view the signed ${paper}.`); return; }
     viewer.opener = null;
-    viewer.document.body.textContent = 'Loading signed estimate...';
+    viewer.document.body.textContent = `Loading signed ${paper}...`;
     setOpening(signatureId); setError('');
     try {
-      const url = URL.createObjectURL(await fetchSignedPdf(signatureId));
+      const url = URL.createObjectURL(await fetchPdf(signatureId));
       pdfUrls.current.push(url);
       if (!viewer.closed) viewer.location.replace(url);
     } catch (err) {
       viewer.close();
-      setError(err instanceof Error ? err.message : 'Could not open the signed estimate.');
+      setError(err instanceof Error ? err.message : `Could not open the signed ${paper}.`);
     } finally { setOpening(''); }
+  }
+  // The estimate's Bill of Lading: its latest signing, whose PDF has every spot signed so far.
+  function billOfLading(signature: SignedReportEstimate) {
+    const bill = signature.bills_of_lading?.[0];
+    if (!bill) return null;
+    const label = `Bill of Lading signed ${new Date(bill.signed_at).toLocaleString()}`;
+    return <span>{label}{fetchBillOfLadingPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(bill.id, fetchBillOfLadingPdf, 'Bill of Lading')} aria-label={`Open Bill of Lading PDF, ${label}`}>{opening === bill.id ? 'Opening...' : 'Bill of Lading PDF'}</button>}</span>;
   }
   const signedLabel = (signature: SignedReportEstimate) => `Signed ${new Date(signature.signed_at).toLocaleString()}`;
   function signatureCell(report: ReportRun) {
@@ -53,6 +63,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
       {report.current && requiresResign && <strong>Estimate changed - sign again</strong>}
       <span>{signedLabel(latest)}{(report.signatures?.length || 0) > 1 && <small> and {report.signatures!.length - 1} earlier</small>}</span>
       {fetchSignedPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(latest.id)} aria-label={`Open signed PDF, ${signedLabel(latest)}`}>{opening === latest.id ? 'Opening...' : report.current && requiresResign ? 'Previously signed PDF' : 'Signed PDF'}</button>}
+      {billOfLading(latest)}
     </div>;
     if (report.current && report.status === 'completed') return <div className="report-history-signature report-history-unsigned">Not signed</div>;
     return <div className="report-history-signature report-history-signature-none" aria-label="No signature">{'—'}</div>;
@@ -87,7 +98,7 @@ export default function ReportHistory({ reports, onSelect, disabled = false, sta
           <label><input type="radio" name={name} checked={report.current} disabled={disabled || !!pending || waiting || report.status !== 'completed' || (!report.shareUrl && report.source !== 'manual')} onChange={() => void select(report.id)} />{report.current ? 'Current report for pricing' : 'Use this report for pricing'}</label>
 
         </div>
-        {(report.signatures?.length || 0) > 1 && <div className="report-history-signatures"><h5>Signed estimates for this report</h5>{report.signatures!.map(signature => <p key={signature.id}><span>{signature.name} {'·'} {signedLabel(signature)}</span>{fetchSignedPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(signature.id)} aria-label={`Open signed PDF, ${signedLabel(signature)}`}>{opening === signature.id ? 'Opening...' : 'Signed PDF'}</button>}</p>)}</div>}
+        {(report.signatures?.length || 0) > 1 && <div className="report-history-signatures"><h5>Signed estimates for this report</h5>{report.signatures!.map(signature => <p key={signature.id}><span>{signature.name} {'·'} {signedLabel(signature)}</span>{fetchSignedPdf && <button type="button" disabled={!!opening} onClick={() => void openSignedPdf(signature.id)} aria-label={`Open signed PDF, ${signedLabel(signature)}`}>{opening === signature.id ? 'Opening...' : 'Signed PDF'}</button>}{billOfLading(signature)}</p>)}</div>}
         {report.source !== 'manual' && report.files && <details className="report-history-files"><summary>{report.files.length} files used in this run</summary>{report.files.map(file => <p key={file.id}>{file.name}</p>)}</details>}
         {report.inventory.length > 0 ? <div className="report-history-table"><table><thead><tr><th>Item</th><th>Qty</th><th>Cu ft</th></tr></thead><tbody>{report.inventory.map((item, index) => <tr key={index}><td>{item.name}{item.not_shipping && <small style={{ display: 'block' }}>Not shipping</small>}{item.room && <small style={{ display: 'block' }}>{item.room}</small>}</td><td>{item.amount}</td><td>{item.cuft}</td></tr>)}</tbody></table></div> : <p>Open the report to view its inventory. Saved details appear after it is imported.</p>}
         {staff && report.processing && <div className="report-history-processing"><h5>Processing steps</h5>{report.processing.steps.map(step => <div key={step.id}>{step.error ? <details><summary>{step.label} <span>Failed - view error</span></summary><pre>{step.error}</pre></details> : <p><span>{step.label}</span><span>{step.status.replace(/_/g, ' ')}</span></p>}{step.message && <small>{step.message}</small>}</div>)}</div>}

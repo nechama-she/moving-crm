@@ -928,6 +928,19 @@ def get_signed_estimate_pdf(lead_id: str, signature_id: str, user: User = Depend
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
+@router.get('/leads/{lead_id}/bill-of-lading-signatures/{signature_id}/pdf')
+def get_signed_bill_of_lading_pdf(lead_id: str, signature_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from models import BillOfLadingSignature
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    record = db.query(BillOfLadingSignature).filter(BillOfLadingSignature.id == signature_id,
+                                                    BillOfLadingSignature.lead_id == lead.id).first()
+    if record is None:
+        raise HTTPException(404, 'Signed Bill of Lading not found')
+    return Response(record.pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="bill-of-lading-' + record.id + '.pdf"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @router.post('/leads/{lead_id}/reports/{report_id}/select')
 def select_report_endpoint(lead_id: str, report_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     _ensure_not_dispatch_write(user)
