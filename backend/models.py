@@ -630,6 +630,10 @@ class LeadJob(Base):
     price_refresh_attempted_at = Column(DateTime)
     price_refresh_error = Column(Text)
     price = Column(Numeric(12, 2))
+    # The browser's driving distance from the company's office address to the pickup, for the out-of-area fee, and the
+    # route it was measured for (delivery_fees.route_revision): a changed address or office measures again.
+    out_of_area_meters = Column(Integer)
+    out_of_area_revision = Column(String(64))
     # SmartMoving's total for this job, as its sync last sent it. Shown on the lead page only; our price is `price`.
     smartmoving_price = Column(Numeric(12, 2))
     stop_types = Column(Text)
@@ -1049,6 +1053,10 @@ class PricingPlan(Base):
     fuel_percent = Column(Numeric(7, 3))
     # Origin destination & administration Fee, added to every job priced with this plan.
     admin_fee = Column(Numeric(12, 2))
+    # Out-of-area fee: a pickup more than out_of_area_miles driving miles from the company's office address pays
+    # out_of_area_fee. Either one blank: the book has no such fee.
+    out_of_area_miles = Column(Integer)
+    out_of_area_fee = Column(Numeric(12, 2))
     price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
     item_materials = Column(Text, nullable=True)
     item_selectors = Column(Text, nullable=True)
@@ -1095,6 +1103,8 @@ class PricingPlan(Base):
             "pickup_areas": pickup_areas(self),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
             "admin_fee": float(self.admin_fee) if self.admin_fee is not None else None,
+            "out_of_area_miles": self.out_of_area_miles,
+            "out_of_area_fee": float(self.out_of_area_fee) if self.out_of_area_fee is not None else None,
             "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
             "rate_count": len(self.rates),

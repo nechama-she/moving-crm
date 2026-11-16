@@ -22,7 +22,7 @@ def _discounts(table):
 # Each card on the Pricing page and where it is kept: values on the book, or tables under it (with the rows of a
 # shared table that are the card's).
 PARTS = {
-    'details': {'values': ('fuel_percent', 'admin_fee', 'price_valid_days')},
+    'details': {'values': ('fuel_percent', 'admin_fee', 'out_of_area_miles', 'out_of_area_fee', 'price_valid_days')},
     'pickup': {'tables': ('pricing_plan_pickup_areas',)},
     'rates': {'tables': ('pricing_rates',)},
     'extraStops': {'tables': ('pricing_extra_stops',)},

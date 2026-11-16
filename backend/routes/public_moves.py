@@ -1431,13 +1431,14 @@ def stored_selection(selection):
 
 
 class BrowserFeeDistance(BaseModel):
-    kind: Literal['origin', 'delivery']
+    # area: the company office to the pickup, for the out-of-area fee.
+    kind: Literal['origin', 'delivery', 'area']
     revision: str = Field(min_length=64, max_length=64)
     meters: int = Field(ge=0, le=20000000, strict=True)
 
 
 class BrowserFeeDistances(BaseModel):
-    routes: list[BrowserFeeDistance] = Field(max_length=2)
+    routes: list[BrowserFeeDistance] = Field(max_length=3)
 
 
 @router.get('/api/public-moves/{access_id}/mileage')
@@ -1452,7 +1453,7 @@ def mileage_routes(access: PublicMoveAccess = Depends(verified), db: Session = D
 def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from delivery_fees import browser_fee_routes
     from price_validity import price_is_locked
-    from routes.pricing import sync_origin_fee, sync_delivery_fee
+    from routes.pricing import sync_origin_fee, sync_delivery_fee, sync_out_of_area_fee
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
     if price_is_locked(lead, job):
@@ -1462,10 +1463,16 @@ def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(v
     for row in body.routes:
         if row.kind not in current or current[row.kind]['revision'] != row.revision:
             raise HTTPException(409, 'The mileage route changed. Retry with the current addresses.')
-        selection[row.kind + '_route'] = {'revision': row.revision, 'meters': row.meters}
-    job.customer_packing_package = json.dumps(selection)
+        if row.kind == 'area':
+            # Kept on the job's own columns.
+            job.out_of_area_meters, job.out_of_area_revision = row.meters, row.revision
+        else:
+            selection[row.kind + '_route'] = {'revision': row.revision, 'meters': row.meters}
+    if any(row.kind != 'area' for row in body.routes):
+        job.customer_packing_package = json.dumps(selection)
+    syncs = {'origin': sync_origin_fee, 'delivery': sync_delivery_fee, 'area': sync_out_of_area_fee}
     for kind in {row.kind for row in body.routes}:
-        (sync_origin_fee if kind == 'origin' else sync_delivery_fee)(lead, job, db)
+        syncs[kind](lead, job, db)
     db.commit()
     return {'saved': True}
 

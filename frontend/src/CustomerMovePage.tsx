@@ -569,7 +569,7 @@ export default function CustomerMovePage() {
     setTermsValidationAttempt(0);
   }
   const priceCalculationRunning = useRef(false);
-  type FeeRoute = {kind: 'origin' | 'delivery'; origin: string; destination: string; revision: string; meters: number | null};
+  type FeeRoute = {kind: 'origin' | 'delivery' | 'area'; origin: string; destination: string; revision: string; meters: number | null};
   const mileageAttempts = useRef(new Set<string>());
   const mileageRequests = useRef(new Map<string, Promise<number>>());
   async function saveBrowserMileage(routes: FeeRoute[], apiKey: string, retry = false) {

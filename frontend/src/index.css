@@ -793,6 +793,8 @@ input, select, textarea, button {
 .pricing-kpis span, .pricing-quote span { color: #706e6b; font-size: 11px; text-transform: uppercase; font-weight: 700; }
 .pricing-kpis strong { color: #032d60; font-size: 17px; }
 .pricing-kpis input { width: 70px; }
+.pricing-kpis .pricing-out-of-area { display: grid; gap: 4px; }
+.pricing-out-of-area label { display: grid; gap: 2px; font-size: 11px; color: #706e6b; }
 .pricing-calculator { padding: 16px 18px; }
 .pricing-calculator > div:first-child { margin-bottom: 12px; }
 .pricing-calc-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px) auto; align-items: end; gap: 10px; }

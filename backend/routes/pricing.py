@@ -23,7 +23,7 @@ from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card, plan_packing_card, save_packing_card
 from material_calculation import MaterialItem, calculate_materials, customer_material_quotes
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option, plan_shuttle_card, save_shuttle_card
-from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card, save_fee_card
+from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card, save_fee_card, out_of_area_fee
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote, plan_storage_card, save_storage_card
 from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, stops_card, save_stops_card
 from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, elevator_card, elevator_quote, plan_elevator_card, save_elevator_card
@@ -1634,6 +1634,41 @@ def sync_origin_fee(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+def job_out_of_area_fee(job, plan):
+    return out_of_area_fee(plan, job.pickup_zip or '', job.out_of_area_revision, job.out_of_area_meters) if plan else None
+
+
+@isolated_charge('Out-of-area fee')
+def add_out_of_area_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'out-of-area'), job_id=job.id,
+                        name='Out-of-area fee', description=fee['description'], sort_order=2580,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_out_of_area_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = lambda: job_out_of_area_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'out-of-area'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_out_of_area_charge(job, updates, fee) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
 @isolated_charge('Item packing')
 def add_customer_packing_charges(lead, job, db, plan, move_type):
     total = Decimal(0)
@@ -1851,6 +1886,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             ))
         job.price = sum(l["total_cost"] for l in lines)
         job.price += add_origin_fee_charge(job, db, lambda: job_origin_fee(job, matched_plan))
+        job.price += add_out_of_area_charge(job, db, lambda: job_out_of_area_fee(job, matched_plan))
         job.price += add_delivery_fee_charge(job, db, lambda: job_delivery_fee(job, matched_plan))
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
@@ -2179,6 +2215,9 @@ class SectionUpdate(BaseModel):
     company_id: str | None = None
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
     admin_fee: float | None = Field(default=None, ge=0)
+    # Out-of-area fee: both set, or both None for no such fee.
+    out_of_area_miles: int | None = Field(default=None, ge=1, le=10000)
+    out_of_area_fee: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     price_valid_days: int | None = Field(default=None, ge=1, le=3650)
 
 
@@ -2195,7 +2234,7 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
     field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
     fields = {'services', 'rules'} if section == 'services' else {'name', 'fuel_percent', 'admin_fee', 'price_valid_days'} if section == 'details' else {field}
     if section == 'details':
-        fields = fields | ({'company_id'} & body.model_fields_set)
+        fields = fields | ({'company_id', 'out_of_area_miles', 'out_of_area_fee'} & body.model_fields_set)
     if section not in {'rates', 'pickup', 'services', 'details', *prefixes} or body.model_fields_set != fields:
         raise HTTPException(422, 'Send only the fields for this pricing section.')
     if section == 'details':
@@ -2212,6 +2251,10 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
         plan.fuel_percent = body.fuel_percent
         plan.admin_fee = body.admin_fee
         plan.price_valid_days = body.price_valid_days
+        if {'out_of_area_miles', 'out_of_area_fee'} & body.model_fields_set:
+            if (body.out_of_area_miles is None) != (body.out_of_area_fee is None):
+                raise HTTPException(422, 'Enter both the out-of-area miles and fee, or leave both blank.')
+            plan.out_of_area_miles, plan.out_of_area_fee = body.out_of_area_miles, body.out_of_area_fee
     elif section == 'services':
         belongs = lambda row: not row.comments.startswith(tuple(prefixes.values()))
         is_discount = lambda row: row.category in {'discount_amount', 'discount_percent', 'discount_rate'}

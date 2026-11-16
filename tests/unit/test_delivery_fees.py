@@ -15,7 +15,7 @@ import delivery_fees as fees
 
 def services(rules, prefix=fees.DELIVERY_FEE_PREFIX):
     # A plan whose fee card is saved in the mileage fee tables.
-    plan = SimpleNamespace(mileage_fees=[])
+    plan = SimpleNamespace(mileage_fees=[], out_of_area_miles=None, out_of_area_fee=None)
     fees.save_fee_card(plan, prefix, fees.DeliveryFeeCard(enabled=True, rules=rules))
     return plan
 
@@ -43,7 +43,7 @@ def test_specific_rules_and_combined_ranges():
     ('Local', True, '05401', 0),
 ])
 def test_browser_routes_only_for_matching_mileage_fees(move_type, configured, address, expected):
-    plan = services([rule()]) if configured else SimpleNamespace(mileage_fees=[])
+    plan = services([rule()]) if configured else SimpleNamespace(mileage_fees=[], out_of_area_miles=None, out_of_area_fee=None)
     job = SimpleNamespace(pickup_zip='20815', delivery_zip=address, customer_packing_package='{}')
     pricing = SimpleNamespace(infer_job_move_type=lambda *args: (move_type, plan))
     with patch.dict(sys.modules, {'routes.pricing': pricing}):

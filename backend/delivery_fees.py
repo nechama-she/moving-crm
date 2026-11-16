@@ -1,4 +1,4 @@
-"""Pricing-book delivery fees based on Google driving-route mileage."""
+"""Pricing-book delivery, origin and out-of-area fees based on Google driving-route mileage."""
 import hashlib
 import json
 import re
@@ -145,7 +145,40 @@ def browser_fee_routes(lead, job, db):
         meters = saved.get('meters') if saved.get('revision') == revision else None
         routes.append({'kind': kind, 'origin': rule.origin_zip, 'destination': address,
                        'revision': revision, 'meters': meters if type(meters) is int and meters >= 0 else None})
+    office = out_of_area_office(plan)
+    if office and (job.pickup_zip or '').strip():
+        revision = route_revision(office, job.pickup_zip)
+        meters = job.out_of_area_meters if job.out_of_area_revision == revision else None
+        routes.append({'kind': 'area', 'origin': office, 'destination': job.pickup_zip, 'revision': revision,
+                       'meters': meters if type(meters) is int and meters >= 0 else None})
     return routes
+
+
+def out_of_area_office(plan):
+    """The company office address the out-of-area fee measures from; '' when the book has no such fee or the company
+    has no office address."""
+    if plan is None or plan.out_of_area_miles is None or plan.out_of_area_fee is None:
+        return ''
+    return ((plan.company.office_address if plan.company else '') or '').strip()
+
+
+def out_of_area_fee(plan, address, revision=None, meters=None):
+    """The out-of-area fee for a pickup, from the browser's distance measured for revision: None when the book has no
+    such fee or the pickup is within its miles."""
+    if plan is None or plan.out_of_area_miles is None or plan.out_of_area_fee is None or not address.strip():
+        return None
+    office = out_of_area_office(plan)
+    if not office:
+        raise HTTPException(409, "Add the company's office address to calculate the out-of-area fee.")
+    if revision != route_revision(office, address):
+        meters = None
+    if type(meters) is not int or meters < 0:
+        raise HTTPException(409, 'The driving distance has not been measured yet. It is measured when the customer page opens.')
+    miles = (Decimal(meters) / Decimal('1609.344')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    if miles <= plan.out_of_area_miles:
+        return None
+    return {'amount': plan.out_of_area_fee,
+            'description': f'{miles:,.2f} driving miles from our office to pickup, over {plan.out_of_area_miles:,} miles (Google Maps)'}
 
 
 def delivery_fee(plan, address, saved=None, *, prefix=DELIVERY_FEE_PREFIX, endpoint="delivery"):

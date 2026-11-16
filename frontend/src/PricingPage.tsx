@@ -21,7 +21,7 @@ import { calculateDiscounts, type Discount as CustomDiscount } from './pricingDi
 
 type PlanSummary = {
   id: string; company_id: string; company_name: string; name: string; pickup_regions: string; pickup_areas?: PickupArea[];
-  fuel_percent: number | null; admin_fee: number | null; price_valid_days: number; rate_count: number; rule_count: number;
+  fuel_percent: number | null; admin_fee: number | null; out_of_area_miles: number | null; out_of_area_fee: number | null; price_valid_days: number; rate_count: number; rule_count: number;
   service_count: number; updated_at: string;
   // The default book: new books start with its values, and others can copy them.
   master?: boolean;
@@ -769,11 +769,11 @@ export default function PricingPage() {
     try {
       const response = await fetch(`${API_BASE}/api/pricing/${draft.id}/sections/details`, {
         method: 'PUT', headers: {...authHeaders(token), 'Content-Type': 'application/json'},
-        body: JSON.stringify({name: draft.name, company_id: draft.company_id || null, fuel_percent: draft.fuel_percent, admin_fee: draft.admin_fee, price_valid_days: draft.price_valid_days ?? 7}),
+        body: JSON.stringify({name: draft.name, company_id: draft.company_id || null, fuel_percent: draft.fuel_percent, admin_fee: draft.admin_fee, out_of_area_miles: draft.out_of_area_miles ?? null, out_of_area_fee: draft.out_of_area_fee ?? null, price_valid_days: draft.price_valid_days ?? 7}),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(formatApiError(result, 'Could not save price sheet details'));
-      const merge = (current: Plan | null) => current ? {...current, name: result.name, company_id: result.company_id, company_name: result.company_name, fuel_percent: result.fuel_percent, admin_fee: result.admin_fee, price_valid_days: result.price_valid_days} : current;
+      const merge = (current: Plan | null) => current ? {...current, name: result.name, company_id: result.company_id, company_name: result.company_name, fuel_percent: result.fuel_percent, admin_fee: result.admin_fee, out_of_area_miles: result.out_of_area_miles, out_of_area_fee: result.out_of_area_fee, price_valid_days: result.price_valid_days} : current;
       setPlan(merge); setDraft(merge); setEditing(false);
       setPlans(current => current.map(row => row.id === result.id ? {...row, name: result.name, company_id: result.company_id, company_name: result.company_name} : row));
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save details'); }
@@ -961,7 +961,7 @@ export default function PricingPage() {
           <div className="pricing-actions">
             {editing ? (
               <>
-                <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, company_id: plan.company_id, company_name: plan.company_name, fuel_percent: plan.fuel_percent, admin_fee: plan.admin_fee, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
+                <button className="slds-button secondary" onClick={() => { setDraft(current => current && plan ? {...current, name: plan.name, company_id: plan.company_id, company_name: plan.company_name, fuel_percent: plan.fuel_percent, admin_fee: plan.admin_fee, out_of_area_miles: plan.out_of_area_miles, out_of_area_fee: plan.out_of_area_fee, price_valid_days: plan.price_valid_days} : current); setEditing(false); }}>Cancel changes</button>
                 <button className="slds-button primary" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save changes"}</button>
               </>
             ) : <>
@@ -969,11 +969,12 @@ export default function PricingPage() {
             </>}
           </div>
         ) : null}
-                <CopyPick label="Price validity, fuel and admin fee" pick={pickFor("details")} />
+                <CopyPick label="Price validity, fuel, admin and out-of-area fees" pick={pickFor("details")} />
                 <div className="pricing-kpis">
 <div><span>Price valid for (days)</span>{editing ? <input aria-label="Price valid for (days)" type="number" min="1" max="3650" step="1" value={active.price_valid_days ?? 7} onChange={event => patchDraft({ price_valid_days: Number(event.target.value) })} /> : <strong>{active.price_valid_days ?? 7}</strong>}</div>
                   <div><span>Fuel</span>{editing ? <input type="number" step="0.1" value={active.fuel_percent ?? ""} onChange={(e) => patchDraft({ fuel_percent: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.fuel_percent == null ? "See rules" : `${active.fuel_percent}%`}</strong>}</div>
                   <div><span>Origin destination &amp; administration Fee</span>{editing ? <input type="number" min="0" step="0.01" value={active.admin_fee ?? ""} onChange={(e) => patchDraft({ admin_fee: e.target.value === "" ? null : Number(e.target.value) })} /> : <strong>{active.admin_fee == null ? "—" : money(active.admin_fee)}</strong>}</div>
+                  <div><span>Out-of-area fee</span>{editing ? <span className="pricing-out-of-area"><label>Over miles from office<input aria-label="Out-of-area miles" type="number" min="1" step="1" value={active.out_of_area_miles ?? ""} onChange={(e) => patchDraft({ out_of_area_miles: e.target.value === "" ? null : Number(e.target.value) })} /></label><label>Fee ($)<input aria-label="Out-of-area fee" type="number" min="0" step="0.01" value={active.out_of_area_fee ?? ""} onChange={(e) => patchDraft({ out_of_area_fee: e.target.value === "" ? null : Number(e.target.value) })} /></label></span> : <strong>{active.out_of_area_miles == null || active.out_of_area_fee == null ? "—" : `${money(active.out_of_area_fee)} over ${active.out_of_area_miles.toLocaleString()} mi`}</strong>}</div>
                   <div><span>Destinations</span><strong>{destinations.length}</strong></div>
                   <div><span>Services</span><strong>{active.services.length}</strong></div>
                 </div>

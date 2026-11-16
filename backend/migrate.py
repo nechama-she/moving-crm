@@ -40,6 +40,13 @@ def migrate() -> None:
     logger.info('Moved %s inventories into the inventory tables', migrate_inventories(SessionLocal))
     with engine.begin() as connection:
         connection.execute(text('DROP TABLE IF EXISTS lead_spark_inventory_items'))
+    # The out-of-area fee: its miles and amount on each pricing book, and each move's measured distance from the
+    # company office to the pickup. All empty: no book has the fee until it is set. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'pricing_plans', 'out_of_area_miles', 'INTEGER')
+        add_column(connection, 'pricing_plans', 'out_of_area_fee', 'NUMERIC(12, 2)')
+        add_column(connection, 'lead_jobs', 'out_of_area_meters', 'INTEGER')
+        add_column(connection, 'lead_jobs', 'out_of_area_revision', 'VARCHAR(64)')
 
 
 if __name__ == "__main__":
