@@ -43,7 +43,7 @@ NOW = datetime.utcnow
 # The one switch: customers can see everything and sign, but change nothing, until changes made at the same time by a
 # rep and a customer reach each other. The customer page reads it (verify-options), and the link message says so.
 # Set to True to let customers edit their move again.
-CUSTOMER_CAN_EDIT = False
+CUSTOMER_CAN_EDIT = True
 
 
 def setting(name):
