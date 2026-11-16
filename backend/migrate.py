@@ -21,6 +21,14 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
+    # The out-of-area fee: its miles and amount on each pricing book, and each move's measured distance from the
+    # company office to the pickup. All empty: no book has the fee until it is set. First, because the steps below
+    # load moves with the model, which reads these columns. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'pricing_plans', 'out_of_area_miles', 'INTEGER')
+        add_column(connection, 'pricing_plans', 'out_of_area_fee', 'NUMERIC(12, 2)')
+        add_column(connection, 'lead_jobs', 'out_of_area_meters', 'INTEGER')
+        add_column(connection, 'lead_jobs', 'out_of_area_revision', 'VARCHAR(64)')
     # Payments' confirmation numbers: new CRM payments get one; existing payments keep none. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'lead_payments', 'confirmation_number', 'VARCHAR(12) UNIQUE')
@@ -40,13 +48,6 @@ def migrate() -> None:
     logger.info('Moved %s inventories into the inventory tables', migrate_inventories(SessionLocal))
     with engine.begin() as connection:
         connection.execute(text('DROP TABLE IF EXISTS lead_spark_inventory_items'))
-    # The out-of-area fee: its miles and amount on each pricing book, and each move's measured distance from the
-    # company office to the pickup. All empty: no book has the fee until it is set. Remove after a deploy ran it.
-    with engine.begin() as connection:
-        add_column(connection, 'pricing_plans', 'out_of_area_miles', 'INTEGER')
-        add_column(connection, 'pricing_plans', 'out_of_area_fee', 'NUMERIC(12, 2)')
-        add_column(connection, 'lead_jobs', 'out_of_area_meters', 'INTEGER')
-        add_column(connection, 'lead_jobs', 'out_of_area_revision', 'VARCHAR(64)')
 
 
 if __name__ == "__main__":
