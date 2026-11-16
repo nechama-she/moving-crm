@@ -407,10 +407,11 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
             return '***' + value[-4:]
         local, domain = value.split('@', 1)
         return local[:1] + '***@' + domain
+    # The phone first: the page checks the first option by default.
     options = []
+    if lead.phone: options.append({'channel': 'sms', 'destination': masked('phone', lead.phone)})
     if lead.email:
         options.append({'channel': 'email', 'destination': masked('email', lead.email)})
-    if lead.phone: options.append({'channel': 'sms', 'destination': masked('phone', lead.phone)})
     # Extras after the main ones; the code request names the extra by its id.
     options += [{'channel': 'sms' if row.kind == 'phone' else 'email', 'destination': masked(row.kind, row.value), 'contact_id': row.id}
                 for row in lead.contacts if row.kind == 'phone' or '@' in row.value]
