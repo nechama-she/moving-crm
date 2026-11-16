@@ -245,6 +245,9 @@ export default function CustomerMovePage() {
   const [packageSelection, setPackageSelection] = useState<PackingSelection>({ mode: 'none', unpacking: false, item_ids: [] });
   const [calculatingPrice, setCalculatingPrice] = useState(false);
   const [calculationError, setCalculationError] = useState('');
+  // Why the calculator gave no price (HTTP 422): the list and answers are saved. The rep sees it, the customer a notice.
+  const [priceError, setPriceError] = useState('');
+  const isPriceFailure = (error: unknown) => (error as {status?: number}).status === 422;
   const [stopsIncomplete,setStopsIncomplete]=useState<Record<string,boolean>>({});
   const [stopsMissing,setStopsMissing]=useState(false);
   const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | 'unknown' | null>>({});
@@ -595,9 +598,17 @@ export default function CustomerMovePage() {
     if (data?.price_locked) { await loadSection('inventory', true); return; }
     // An emptied list has nothing to price: the page shows the move as it is now.
     if (!inventorySummary?.items) { await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]); return; }
-    await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
+    let failure = '';
+    try {
+      await call(data?.spark?.status === 'completed' ? '/recalculate-price' : '/generate-inventory-report', {});
+    } catch (error) {
+      if (!isPriceFailure(error)) throw error;
+      // The list is saved and only the price failed: the window closes, and the pricing area says why.
+      failure = (error as Error).message;
+    }
     // Done changes the list, volume and price; the rest of the page is unchanged.
     await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]);
+    setPriceError(failure);
     setCalculationError('');
   }
   // A list without a price (Done never finished, or pricing failed): on opening, Done runs once for the customer.
@@ -624,7 +635,8 @@ export default function CustomerMovePage() {
       await call('/recalculate-price', {});
       await refreshDetails();
     } catch (error) {
-      setCalculationError((error as Error).message);
+      if (isPriceFailure(error)) setPriceError((error as Error).message);
+      else setCalculationError((error as Error).message);
     } finally {
       priceCalculationRunning.current = false;
       setCalculatingPrice(false);
@@ -837,7 +849,7 @@ export default function CustomerMovePage() {
         setData(undefined);
         setSent(false);
       }
-      throw Object.assign(new Error(typeof result?.detail==='string'?result.detail:result?.detail?.message || (response.status>=500 ? 'The server could not finish saving. Your entries are still here. Please try again.' : 'Please check your details and try again.')), {detail:result?.detail});
+      throw Object.assign(new Error(typeof result?.detail==='string'?result.detail:result?.detail?.message || (response.status>=500 ? 'The server could not finish saving. Your entries are still here. Please try again.' : 'Please check your details and try again.')), {detail:result?.detail, status:response.status});
     }
     if(result===null) throw new Error('The server returned an incomplete response. Please try again.');
     return result;
@@ -1023,6 +1035,8 @@ export default function CustomerMovePage() {
       }
       if (!current()) return;
       setData(previous => ({...(previous || emptyDetails()), ...next}));
+      // Pricing loaded again: a failed price shows from what it says now.
+      if (section === 'pricing') setPriceError('');
       if (next.company_details?.color) setThemeColor(next.company_details.color);
       setSections(previous => ({...previous, [section]: {loading:false, error:'', ready:true}}));
     } catch (error) {
@@ -1472,7 +1486,7 @@ export default function CustomerMovePage() {
               <div ref={estimateFeedback}>
               {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
-              {data.pricing_error && <p role="alert">{data.pricing_error} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
+              {(data.pricing_error || priceError) && <p role="alert">{repPage ? data.pricing_error || priceError : 'Your report is ready. We are working on your price and will get back to you shortly.'} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
               {(() => {
                 const hasInventory = !!inventorySummary?.items;
