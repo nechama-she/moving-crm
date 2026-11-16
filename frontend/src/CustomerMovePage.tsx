@@ -248,6 +248,7 @@ export default function CustomerMovePage() {
   // Why the calculator gave no price (HTTP 422): the list and answers are saved. The rep sees it, the customer a notice.
   const [priceError, setPriceError] = useState('');
   const isPriceFailure = (error: unknown) => (error as {status?: number}).status === 422;
+  const priceProblem = data?.pricing_error || priceError;
   const [stopsIncomplete,setStopsIncomplete]=useState<Record<string,boolean>>({});
   const [stopsMissing,setStopsMissing]=useState(false);
   const [elevatorAnswers, setElevatorAnswers] = useState<Record<string, boolean | 'unknown' | null>>({});
@@ -1472,7 +1473,7 @@ export default function CustomerMovePage() {
                   </> : <>
                     <span className="cm-estimate-eyebrow">Your estimate</span>
                   <strong>{data.spark?.status==='running'||data.spark?.status==='queued'?'Calculating your estimate...':data.spark?.status==='completed'&&inventorySummary?.items?'Your report is ready. Pricing is pending.':'Start by adding your inventory.'}</strong>
-                  <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'&&inventorySummary?.items?'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.':data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
+                  <p className="cm-estimate-desc">{data.spark?.status==='running'||data.spark?.status==='queued'?'Analyzing your uploaded photos and videos to calculate volume and pricing...':data.spark?.status==='completed'&&inventorySummary?.items?(priceProblem?(repPage?priceProblem:'We are working on your price and will get back to you shortly.'):'Your report is ready. We still need to finish preparing your inventory and estimate. Any available service questions are shown below.'):data.files.length?'Your files have been received. Your inventory and estimate are being prepared.':'Add photos or request a video walkthrough to help us prepare your estimate.'}</p>
                   </>}
                   {sections.pricing.ready && !data.estimate && data.spark?.status === 'completed' && !!inventorySummary?.items && <button
                     type="button"
@@ -1486,7 +1487,6 @@ export default function CustomerMovePage() {
               <div ref={estimateFeedback}>
               {pricingLoadError && <p role="alert">We couldn't load your estimate. <button type="button" className="cm-secondary-btn" disabled={pricingLoading} onClick={() => void loadSection('pricing')}>Try again</button></p>}
               {calculationError && <p role="alert">{calculationError}</p>}
-              {(data.pricing_error || priceError) && <p role="alert">{repPage ? data.pricing_error || priceError : 'Your report is ready. We are working on your price and will get back to you shortly.'} <button type="button" className="cm-secondary-btn" disabled={busy || answersSaving} onClick={() => void refreshDetails(false, true)}>Try again</button></p>}
               </div>
               {(() => {
                 const hasInventory = !!inventorySummary?.items;
@@ -1647,7 +1647,7 @@ export default function CustomerMovePage() {
               {!estimateViewerOpen && pageSections.every(section => sections[section].ready) && <Signing key={accessId} base={base} headers={headers} customerName={data.name || ''} version="" onClose={() => {}} reportIds={(data.report_history || []).map(report => report.id)}
                 disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} />}
               {estimateViewerOpen && <EstimateViewer key={estimateOpening} signedElsewhere={estimateSignedElsewhere} signatureRemovedElsewhere={estimateSignatureRemovedElsewhere} filename={pdfName('Estimate')} onSignatureRemoved={openCurrentEstimate} onSigned={signature => { viewerSigned.current = true; showSignature(signature); }} alreadySigned={preparedSigned} approved={preparedApproved} rep={repPage} onApproved={() => setPreparedApproved(true)} base={base} headers={headers} customerName={data.name || ''} version={preparedEstimate} url={estimatePdfUrl} error={pdfError} onClose={() => setEstimateViewerOpen(false)} />}
-              {data.estimate_needs_update && !!inventorySummary?.items && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
+              {data.estimate_needs_update && !!inventorySummary?.items && !priceProblem && <p role="status">Your inventory has changed. The displayed price needs to be recalculated. Open the estimate to update it before signing.</p>}
               <ReportHistory signatureStatus={data.signature_status} requiresResign={data.signature_status === 'changed'} reports={data.report_history || []} onSelect={selectReport} disabled={busy || calculatingPrice || answersSaving || reportState === 'running' || readOnly} fetchSignedPdf={fetchSignedPdf} fetchBillOfLadingPdf={fetchBillOfLadingPdf} />
               {!showQuestions && answersSaving && <p role="status">Saving your answers in the background...</p>}
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
