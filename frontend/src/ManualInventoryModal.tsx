@@ -254,6 +254,8 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
   useLayoutEffect(() => {
     if (!catalogOpen && viewInventoryRequested.current) {
       viewInventoryRequested.current = false;
+      // View my inventory shows the whole list, not one room.
+      setSelected('');
       inventorySummary.current?.scrollIntoView({ block: 'nearest' });
       inventorySummary.current?.focus({ preventScroll: true });
     }
