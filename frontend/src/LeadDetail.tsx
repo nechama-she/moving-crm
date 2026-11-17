@@ -1248,18 +1248,13 @@ export default function LeadDetail() {
   };
 
   const estimatedTotalData = (() => {
-    const raw = lead.estimatedTotal ?? lead.estimated_total;
-    if (raw && typeof raw === "object") {
-      const row = raw as Record<string, unknown>;
-      const subtotal = Number(row.subtotal ?? 0);
-      const taxableAmount = Number(row.taxableAmount ?? row.taxable_amount ?? 0);
-      const tax = Number(row.tax ?? 0);
-      const finalTotal = Number(row.finalTotal ?? row.final_total ?? 0);
-      const values = [subtotal, taxableAmount, tax, finalTotal];
-      if (values.every(Number.isFinite)) return { subtotal, taxableAmount, tax, finalTotal };
-    }
-    // Older calculator saves have job pricing but no lead-level estimate yet.
+    // The total of all the lead's jobs, added up from their prices and charges as they are now. Tax, which only
+    // SmartMoving sends, is kept from the lead's saved total.
     if (jobsLoading || jobsError) return null;
+    const raw = lead.estimatedTotal ?? lead.estimated_total;
+    const saved = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const tax = Number(saved.tax ?? 0) || 0;
+    const taxableAmount = Number(saved.taxableAmount ?? saved.taxable_amount ?? 0) || 0;
     const pricedJobs = leadJobs.filter(job => job.price != null || job.charges.length > 0);
     if (!pricedJobs.length) return null;
     const cents = (value: number) => Math.round(value * 100);
@@ -1268,7 +1263,7 @@ export default function LeadDetail() {
       : cents(job.price)), 0);
     const discountCents = pricedJobs.reduce((sum, job) => sum + job.charges.reduce((total, charge) => total + cents(charge.discount_amount), 0), 0);
     if (finalCents <= 0) return null;
-    return { subtotal: (finalCents + discountCents) / 100, taxableAmount: 0, tax: 0, finalTotal: finalCents / 100 };
+    return { subtotal: (finalCents + discountCents) / 100, taxableAmount, tax, finalTotal: (finalCents + cents(tax)) / 100 };
   })();
 
   const estimatedDiscountAmount = estimatedTotalData
@@ -3315,13 +3310,6 @@ export default function LeadDetail() {
                           <span style={{ fontSize: 14 }}>$</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
                         </div>
-                        <button className="slds-button"
-                          type="button"
-                          onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
-                          style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                        >
-                          Calculate Price
-                        </button>
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>
