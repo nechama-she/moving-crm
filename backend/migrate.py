@@ -39,6 +39,11 @@ def migrate() -> None:
     # as signed then. Empty for every other. Before that step, which sets it. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'estimate_signatures', 'migrated_state', 'VARCHAR(64)')
+    # Customer Activity's own table, created once with every signature so far: removed signatures and changed estimates
+    # are logged in it from now on. Remove after a deploy ran it.
+    from customer_activity_log import create_activity_table
+    with engine.begin() as connection:
+        logger.info('Customer Activity table created with %s past signatures', create_activity_table(connection))
     # Payments' confirmation numbers: new CRM payments get one; existing payments keep none. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'lead_payments', 'confirmation_number', 'VARCHAR(12) UNIQUE')

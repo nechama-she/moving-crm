@@ -93,6 +93,28 @@ class EstimateSignature(Base):
     migrated_state = Column(String(64))
 
 
+class CustomerActivityKind(Base):
+    """What a Customer Activity event can be, and how the work queue words it (customer_activity_log.KINDS)."""
+    __tablename__ = 'customer_activity_kinds'
+    id = Column(Integer, primary_key=True, autoincrement=False)
+    label = Column(String(100), nullable=False)
+
+
+class CustomerActivity(Base):
+    """What happened on customer pages, for the work queue's Customer Activity: one row per event, added and never
+    changed. spot: which Bill of Lading signature, from 1."""
+    __tablename__ = 'customer_activity'
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    kind_id = Column(Integer, ForeignKey('customer_activity_kinds.id'), nullable=False)
+    spot = Column(Integer)
+    # Who did it: the signer's name, or the customer or rep who made the change; by_rep when it was the rep.
+    actor = Column(String(200), nullable=False, default='', server_default='')
+    by_rep = Column(Boolean, nullable=False, default=False, server_default='false')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 
