@@ -1173,6 +1173,8 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     record.pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
     record.signer_name, record.signed_at = name, signed_at
     record.signature = json.dumps(signature)
+    from smartmoving_prices import drop_smartmoving_prices
+    drop_smartmoving_prices(db, db.get(LeadJob, access.job_id))
     from customer_activity_log import ESTIMATE_SIGNED, publish as publish_activity, record as log_activity
     activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNED, name, is_rep_request(access, request))
     db.commit()
