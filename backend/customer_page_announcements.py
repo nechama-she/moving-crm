@@ -1,5 +1,5 @@
 """The one place customer page saves are announced: the move's other open pages (the customer's other browsers, the
-rep's page) update and show what changed, and saves listed in Customer Activity tell the CRM's work queue."""
+rep's page) update and show what changed. Customer Activity's events tell the CRM themselves (customer_activity_log)."""
 import re
 
 from starlette.concurrency import run_in_threadpool
@@ -29,11 +29,6 @@ CHANGES = [
     (re.compile(r'reschedule'), 'reschedule_requested'),
 ]
 
-# Saves shown in the work queue's Customer Activity: signing the estimate or a Bill of Lading spot, and cancelling an
-# estimate signature.
-CUSTOMER_ACTIVITY = {'estimate_signed', 'estimate_signature_cancelled', 'bill_of_lading_signed'}
-
-
 def _move_of(access_id, link):
     """The move's lead, whether the save came from the rep's page (its link is the rep's), and who made it by name: the
     customer, or the rep the lead is assigned to (blank when the lead has none)."""
@@ -56,14 +51,12 @@ def _move_of(access_id, link):
 
 
 def _announce(access_id, path, link, origin):
-    from realtime import publish_move_change, publish_realtime_event
+    from realtime import publish_move_change
     lead_id, by_rep, name = _move_of(access_id, link)
     if not lead_id:
         return
     change = next((kind for pattern, kind in CHANGES if pattern.fullmatch(path)), '')
     publish_move_change(lead_id, origin, change, 'team' if by_rep else 'customer', name)
-    if change in CUSTOMER_ACTIVITY:
-        publish_realtime_event({'type': 'customer_activity', 'lead_id': lead_id})
 
 
 async def announce_customer_page_changes(request, call_next):

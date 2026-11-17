@@ -1487,3 +1487,14 @@ input, select, textarea, button {
   .pricing-section-heading .pricing-section-actions { flex-wrap: wrap; }
   .pricing-section-actions .slds-button { min-height: 40px; min-width: 40px; }
 }
+
+/* Customer Activity notices: bottom right, over every page; in the new look they take its colors. */
+.activity-notices { position: fixed; right: 16px; bottom: 16px; z-index: 1000; display: grid; gap: 8px; width: min(360px, calc(100vw - 32px)); }
+.activity-notice { display: flex; align-items: flex-start; background: var(--aur-surface, #fff); color: var(--aur-ink, #032d60); border: 1px solid var(--aur-line, #d8dde6); border-left: 4px solid var(--aur-accent, #0176d3); border-radius: 10px; box-shadow: 0 8px 24px rgba(3, 45, 96, .18); }
+.activity-notice-open { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 10px 12px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.activity-notice-open strong { font-size: 14px; }
+.activity-notice-open span { font-size: 13px; }
+.activity-notice-open small { font-size: 12px; color: var(--aur-muted, #64748b); }
+.activity-notice-close { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin: 6px 6px 0 0; border: 0; border-radius: 8px; background: transparent; color: var(--aur-muted, #64748b); cursor: pointer; }
+.activity-notice-close:hover, .activity-notice-open:hover strong { color: var(--aur-accent, #0176d3); }
+.queue-activity-marked td { background: #fff7d6; }

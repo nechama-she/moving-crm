@@ -189,3 +189,36 @@ def test_only_list_fields_may_differ(move, monkeypatch, sheet_changed):
     assert signed_record(db) == before
     from estimate_signature_history import estimate_signature_status
     assert estimate_signature_status(db, 'L1', 'J1', current, []) == ('changed' if sheet_changed else 'signed')
+
+
+def test_a_change_after_signing_is_logged_once(move, monkeypatch):
+    """Customer Activity: when the page's own comparison first finds its signed estimate changed, that is logged once per
+    signing, by whoever's page it is, and the CRM is told. While it still matches, nothing is logged."""
+    import realtime
+    from inventory_migration import migrate_move
+    from models import CustomerActivity, CustomerActivityKind, Lead, LeadJob, LeadLiveSwitch, PublicMoveAccess, User
+    from customer_activity_log import KINDS
+    from routes.public_moves import _move_details
+    db = move
+    db.add_all([CustomerActivityKind(id=kind_id, label=label) for kind_id, label in KINDS.items()])
+    db.add(User(id='rep', name='Eli Jones', email='eli@example.com', password_hash='x', role='sales_rep'))
+    db.get(Lead, 'L1').assigned_to = 'rep'
+    migrate_move(db.get(LeadLiveSwitch, 'L1'), db)
+    db.commit()
+    data, rows = estimate_now(db)
+    sign(db, data, rows)
+    sent = []
+    monkeypatch.setattr(realtime, 'publish_realtime_event', sent.append)
+    def page_load(rep):
+        db.info.pop('request_cache', None)
+        return _move_details(db.get(PublicMoveAccess, 'A1'), db, pricing_only=True, individual_charges=rep)['signature_status']
+    assert page_load(False) == 'signed'
+    assert db.query(CustomerActivity).count() == 0
+    db.get(LeadJob, 'J1').pickup_zip = '9 Other Rd, Rockville, MD 20850'
+    db.commit()
+    assert page_load(True) == 'changed'
+    assert page_load(False) == 'changed'
+    db.expire_all()
+    [row] = db.query(CustomerActivity).all()
+    assert (row.kind_id, row.actor, row.by_rep) == (4, 'Eli Jones', True)
+    assert [event['activity']['label'] for event in sent] == ['Changed the estimate: needs signing again']

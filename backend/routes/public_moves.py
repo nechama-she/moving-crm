@@ -901,6 +901,11 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     # Built only when a signed copy exists to compare with.
     pricing_data['signature_status'] = estimate_signature_status(
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
+    if pricing_data['signature_status'] == 'changed':
+        # Customer Activity: the first time a signed estimate shows as changed, by whoever's page it is (the rep's page
+        # shows every price line).
+        from customer_activity_log import log_estimate_changed
+        log_estimate_changed(db, lead, job, individual_charges)
     pricing_data['estimate_needs_update'] = estimate_needs_update
     pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
     # Rep pages show every price line (individual_charges), and only they get the work order, once the estimate is signed.
@@ -1168,7 +1173,10 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     record.pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
     record.signer_name, record.signed_at = name, signed_at
     record.signature = json.dumps(signature)
+    from customer_activity_log import ESTIMATE_SIGNED, publish as publish_activity, record as log_activity
+    activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNED, name, is_rep_request(access, request))
     db.commit()
+    publish_activity(db, access.lead_id, activity_id)
     # The page shows the estimate signed from this answer, without loading its pricing again.
     work_order = is_rep_request(access, request)
     return {'id': record.id, 'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'report_id': record.report_id,
@@ -1307,7 +1315,7 @@ def bill_of_lading_pdf(access: PublicMoveAccess = Depends(verified), db: Session
 
 
 @router.post('/api/public-moves/{access_id}/bill-of-lading/{spot}/{revision}/sign')
-def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     """Signs one of the Bill of Lading's signature spots."""
     from bill_of_lading_pdf import SIGN_SPOTS, build_bill_of_lading_pdf
     from models import BillOfLadingSignature
@@ -1336,7 +1344,10 @@ def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: Pu
         content_hash=fingerprint, spot=spot, signer_name=name, signature=json.dumps(signature), signed_at=signed_at,
         pdf=build_bill_of_lading_pdf(company, values, documents, signatures))
     db.add(record)
+    from customer_activity_log import BILL_OF_LADING_SIGNED, publish as publish_activity, record as log_activity
+    activity_id = log_activity(db, access.lead_id, access.job_id, BILL_OF_LADING_SIGNED, name, is_rep_request(access, request), spot=spot + 1)
     db.commit()
+    publish_activity(db, access.lead_id, activity_id)
     # estimate_id and spot: the page adds this signature under its estimate in the report history.
     return {'id': record.id, 'name': name, 'signed_at': signature['signed_at'], 'spot': spot + 1, 'estimate_id': estimate.id}
 
@@ -1364,7 +1375,15 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     record.snapshot = json.dumps(snapshot)
     record.pdf = pdf
     record.signer_name = record.signed_at = record.signature = None
+    # Who removed it: the customer, or the rep the lead is assigned to.
+    from customer_activity_log import ESTIMATE_SIGNATURE_REMOVED, publish as publish_activity, record as log_activity
+    by_rep = is_rep_request(access, request)
+    lead = db.get(Lead, access.lead_id)
+    rep = db.get(User, lead.assigned_to) if by_rep and lead.assigned_to else None
+    activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNATURE_REMOVED,
+                               (rep.name if rep else '') if by_rep else lead.full_name, by_rep)
     db.commit()
+    publish_activity(db, access.lead_id, activity_id)
     # The page updates from this answer: the signature it removed and the estimate's status now. The current
     # estimate is built only when another signed copy is left to compare with.
     status = estimate_signature_status(db, access.lead_id, access.job_id,

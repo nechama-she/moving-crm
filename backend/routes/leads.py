@@ -1518,7 +1518,7 @@ def get_leads(
     if not company_ids and user.role != "admin":
         return {"items": [], "total": 0, "has_more": False}
 
-    visibility = Lead.company_id.in_(company_ids)
+    visibility = _company_or_calendar_leads(user, company_ids)
     if user.role == "admin":
         visibility = or_(visibility, Lead.company_id.is_(None))
     query = db.query(Lead).filter(visibility)
@@ -2156,9 +2156,20 @@ JOB_DELIVERIES_SETTING_PREFIX = "lead_job_deliveries:"
 JOB_STOPS_SETTING_PREFIX = "lead_job_stops:"
 
 
+def _company_or_calendar_leads(user: User, company_ids: list[str]):
+    """Its companies' leads; and for dispatch and foremen, also every lead their dispatch calendar shows, as it shows
+    them (get_dispatch_calendar): a job of a calendar status whose subcontractor, or else its company, is theirs."""
+    if user.role not in ("dispatch", "foreman"):
+        return Lead.company_id.in_(company_ids)
+    from sqlalchemy import exists
+    on_calendar = Lead.status.in_(DISPATCH_STATUSES) & exists().where(
+        LeadJob.lead_id == Lead.id, func.coalesce(LeadJob.dispatch_company_id, LeadJob.company_id).in_(company_ids))
+    return or_(Lead.company_id.in_(company_ids), on_calendar)
+
+
 def _get_visible_lead_or_404(lead_id: str, user: User, db: Session, with_contacts: bool = False) -> Lead:
     company_ids = _get_user_company_ids(user, db)
-    visible = or_(Lead.company_id.in_(company_ids), Lead.company_id.is_(None)) if user.role == "admin" else Lead.company_id.in_(company_ids)
+    visible = or_(Lead.company_id.in_(company_ids), Lead.company_id.is_(None)) if user.role == "admin" else _company_or_calendar_leads(user, company_ids)
     query = db.query(Lead).options(joinedload(Lead.contacts)) if with_contacts else db.query(Lead)
     lead = query.filter(Lead.id == lead_id, visible).first()
     if not lead:
@@ -2179,7 +2190,7 @@ def _get_visible_lead_by_smartmoving_or_404(smartmoving_id: str, user: User, db:
     company_ids = _get_user_company_ids(user, db)
     lead = (
         db.query(Lead)
-        .filter(Lead.smartmoving_id == smartmoving_id, Lead.company_id.in_(company_ids))
+        .filter(Lead.smartmoving_id == smartmoving_id, _company_or_calendar_leads(user, company_ids))
         .first()
     )
     if not lead:
@@ -4280,7 +4291,7 @@ def _apply_lead_update(
     if not (allow_dispatch_smartmoving_refresh and user.role == "dispatch"):
         _ensure_not_dispatch_write(user)
     company_ids = _get_user_company_ids(user, db)
-    visibility = Lead.company_id.in_(company_ids)
+    visibility = _company_or_calendar_leads(user, company_ids)
     if user.role == "admin":
         visibility = or_(visibility, Lead.company_id.is_(None))
     lead = db.query(Lead).filter(Lead.id == lead_id, visibility).first()

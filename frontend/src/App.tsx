@@ -4,6 +4,7 @@ import MainNavigation from "./MainNavigation";
 import { AuthProvider, useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
 import GlobalLeadSearch from "./GlobalLeadSearch";
+import CustomerActivityNotice from "./CustomerActivityNotice";
 import { getUiMode, onUiModeChange, setUiMode } from "./aurora/uiMode";
 
 const CustomerMovePage = lazy(() => import("./CustomerMovePage"));
@@ -131,11 +132,14 @@ function ProtectedRoutes() {
           <Route path="*" element={<Navigate to={isDispatchUser || isForemanUser ? "/dispatch" : "/"} replace />} />
         </Routes>
   );
+  // Admins see each new Customer Activity event as a notice, on every page.
+  const activityNotice = user?.role === "admin" && token ? <CustomerActivityNotice token={token} /> : null;
   const impersonationBanner = isImpersonating ? <div className="impersonation-banner"><span>Viewing CRM as <strong>{user?.name}</strong> ({user?.role}).</span><button className="slds-button" type="button" onClick={() => { stopImpersonating(); window.location.assign("/settings/impersonate"); }}>Return to {previousUser?.name || "Previous User"}</button></div> : null;
-  if (aurora) return <AuroraShell banner={impersonationBanner}>{routes}</AuroraShell>;
+  if (aurora) return <AuroraShell banner={impersonationBanner}>{routes}{activityNotice}</AuroraShell>;
   return (
     <div className="crm-shell" style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       {impersonationBanner}
+      {activityNotice}
       <nav className="crm-nav" style={{
         background: "#032d60",
         display: "flex",

@@ -45,4 +45,5 @@ def test_saves_announce_the_move_with_the_page_that_saved():
                     ('lead', '', '', 'customer', 'Jane Doe'), ('lead', '', 'inventory_updated', 'customer', 'Jane Doe'),
                     ('lead', '', 'bill_of_lading_signed', 'customer', 'Jane Doe'),
                     ('lead', '', 'estimate_signature_cancelled', 'customer', 'Jane Doe')]
-    assert activity == [{'type': 'customer_activity', 'lead_id': 'lead'}] * 3
+    # Customer Activity's events are sent by the requests that save them, not here.
+    assert activity == []

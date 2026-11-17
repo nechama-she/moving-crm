@@ -1,6 +1,7 @@
 import FollowupFilters, { localDate } from './FollowupFilters';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import { activityActor, activityLabel, type ActivityRow } from "./customerActivity";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
@@ -24,7 +25,6 @@ const smartMovingHeader = <th style={{ padding: "13px 16px", color: "#475569", f
 type MessageTab = "unanswered" | "ended";
 type QueueTab = "messages" | "calls" | "leads" | "followups" | "signatures" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
 // An estimate or a Bill of Lading spot signed on a customer page.
-type SignatureRow = { id: string; kind: "estimate" | "bill_of_lading"; spot: number | null; spots: number; lead_id: string; client: string; job_id: string; job_number: string; company: string; signer: string; signed_at: string };
 type LeadTab = "new" | "overdue";
 type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
 type MissedCallRow = SmartMovingFields & { call_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; rep: string; company: string; ring_number: string; ring_target: string; missed_count: number; first_missed_at: string; latest_missed_at: string };
@@ -140,7 +140,11 @@ function FollowupStatus({ attempt, leadId }: { attempt: FollowupAttempt; leadId:
 
 export default function UnansweredMessagesPage() {
   const { token } = useAuth();
+  // A Customer Activity notice opens this page with its event (?activity=): that tab, with the event's row marked.
+  const [searchParams] = useSearchParams();
+  const markedActivity = searchParams.get("activity") || "";
   const [queueTab, setQueueTab] = useState<QueueTab>(() => {
+    if (searchParams.get("activity")) return "signatures";
     try {
       const saved = sessionStorage.getItem("sales-work-queue.tab");
       return (["messages", "calls", "leads", "followups", "signatures", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
@@ -737,20 +741,24 @@ export default function UnansweredMessagesPage() {
   }, []);
 
   // Signatures from the last 30 days; loaded when the page opens and again live when one is added or removed.
-  const [signatures, setSignatures] = useState<SignatureRow[]>([]);
+  const [signatures, setSignatures] = useState<ActivityRow[]>([]);
   const [loadingSignatures, setLoadingSignatures] = useState(true);
   const [signaturesError, setSignaturesError] = useState("");
   const loadSignatures = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/customer-activity`, { headers: authHeaders(token) });
       if (!response.ok) throw new Error("Could not load customer activity");
-      setSignatures(((await response.json()).items || []) as SignatureRow[]);
+      setSignatures(((await response.json()).items || []) as ActivityRow[]);
       setSignaturesError("");
     } catch (reason) { setSignaturesError(reason instanceof Error ? reason.message : "Could not load customer activity"); }
     finally { setLoadingSignatures(false); }
   }, [token]);
   useEffect(() => { void loadSignatures(); }, [loadSignatures]);
-  const signedToday = signatures.filter((row) => new Date(row.signed_at).toDateString() === new Date().toDateString()).length;
+  const signedToday = signatures.filter((row) => new Date(row.at).toDateString() === new Date().toDateString()).length;
+  // The marked event comes into view once the list has it; a notice opened while here switches to it.
+  const markedRow = useRef<HTMLTableRowElement>(null);
+  useEffect(() => { if (markedActivity) setQueueTab("signatures"); }, [markedActivity]);
+  useEffect(() => { markedRow.current?.scrollIntoView({ block: "center" }); }, [markedActivity, signatures]);
 
   useRealtimeUpdates(token, (event) => {
     if (event.type === "customer_activity") {
@@ -1095,13 +1103,13 @@ export default function UnansweredMessagesPage() {
               {loadingSignatures && signatures.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, textAlign: "center" }}>Loading customer activity…</td></tr> : null}
               {signaturesError ? <tr><td colSpan={6} style={{ padding: 32, color: "#ba0517", textAlign: "center" }}>{signaturesError}</td></tr> : null}
               {!loadingSignatures && !signaturesError && signatures.length === 0 ? <tr><td colSpan={6} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>No customer activity in the last 30 days.</td></tr> : null}
-              {signatures.map((row) => <tr key={`${row.kind}:${row.id}`}>
-                <td style={{ ...cell, whiteSpace: "nowrap" }}>{new Date(row.signed_at).toLocaleString()}</td>
+              {signatures.map((row) => <tr key={row.id} ref={row.id === markedActivity ? markedRow : undefined} className={row.id === markedActivity ? "queue-activity-marked" : undefined} aria-current={row.id === markedActivity ? "true" : undefined}>
+                <td style={{ ...cell, whiteSpace: "nowrap" }}>{new Date(row.at).toLocaleString()}</td>
                 <td style={cell}><a href={`/leads/${encodeURIComponent(row.lead_id)}?job_id=${encodeURIComponent(row.job_id)}`} style={{ color: "#0b5cab", fontWeight: 700 }}>{row.client || "Unnamed lead"}</a></td>
                 <td style={{ ...cell, whiteSpace: "nowrap" }}>{row.job_number}</td>
                 <td style={cell}>{row.company || "—"}</td>
-                <td style={cell}>{row.kind === "estimate" ? "Signed the estimate" : `Signed the Bill of Lading (${row.spot} of ${row.spots})`}</td>
-                <td style={cell}>{row.signer || "—"}</td>
+                <td style={cell}>{activityLabel(row)}</td>
+                <td style={cell}>{activityActor(row) || "—"}</td>
               </tr>)}
             </tbody>
           </table>
