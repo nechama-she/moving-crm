@@ -1173,6 +1173,8 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     record.pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
     record.signer_name, record.signed_at = name, signed_at
     record.signature = json.dumps(signature)
+    from smartmoving_prices import drop_smartmoving_prices
+    drop_smartmoving_prices(db, db.get(LeadJob, access.job_id))
     from customer_activity_log import ESTIMATE_SIGNED, publish as publish_activity, record as log_activity
     activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNED, name, is_rep_request(access, request))
     db.commit()
@@ -1185,10 +1187,18 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
 
 @router.get('/api/public-moves/{access_id}/work-order.pdf')
 def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
-    """For reps: the signed estimate as signed, with the job's notes and the CRM payments, as they are now, after the signature."""
-    from estimate_pdf import build_estimate_pdf
     if not is_rep_request(access, request):
         raise HTTPException(403, 'The work order is available to your moving team only.')
+    pdf, file_name = work_order_document(access, db)
+    return Response(pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="' + file_name + '"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+def work_order_document(access, db):
+    """For reps: the signed estimate as signed, with the job's notes and the CRM payments, as they are now, after the
+    signature. (pdf, file name)."""
+    from estimate_pdf import build_estimate_pdf
     record = db.query(EstimateSignature).filter(
         EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
         EstimateSignature.signed_at.isnot(None)).order_by(EstimateSignature.signed_at.desc()).first()
@@ -1203,14 +1213,20 @@ def work_order_pdf(access: PublicMoveAccess = Depends(verified), db: Session = D
         'payments': [payment.to_dict() for payment in payments],
         'internal_notes': job.notes, 'foreman_notes': job.foreman_notes,
         'documents': documents_for(db.get(Lead, access.lead_id), job, db, 'work_order')})
-    return Response(pdf, media_type='application/pdf', headers={
-        'Content-Disposition': 'inline; filename="work-order-' + record.id + '.pdf"',
-        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+    return pdf, 'work-order-' + record.id + '.pdf'
 
 
 @router.get('/api/public-moves/{access_id}/invoice.pdf')
 def invoice_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
-    """One invoice for the job: the estimate's live prices, each CRM payment with its confirmation number, and the balance due."""
+    pdf, file_name = invoice_document(access, db)
+    return Response(pdf, media_type='application/pdf', headers={
+        'Content-Disposition': 'inline; filename="' + file_name + '"',
+        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+def invoice_document(access, db):
+    """One invoice for the job: the estimate's live prices, each CRM payment with its confirmation number, and the
+    balance due. (pdf, file name)."""
     from invoice_pdf import build_invoice_pdf
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
     data = _estimate_document(access, db)[0]
@@ -1219,10 +1235,7 @@ def invoice_pdf(access: PublicMoveAccess = Depends(verified), db: Session = Depe
     payments = db.query(LeadPayment).filter(LeadPayment.lead_id == access.lead_id, LeadPayment.source == 'crm').order_by(LeadPayment.sort_order).all()
     zone = _company_for(lead, db)
     today = datetime.now(ZoneInfo(zone.timezone if zone else 'America/New_York')).date()
-    pdf = build_invoice_pdf(data, payments, job_number(lead, job), today)
-    return Response(pdf, media_type='application/pdf', headers={
-        'Content-Disposition': 'inline; filename="invoice-' + job_number(lead, job) + '.pdf"',
-        'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+    return build_invoice_pdf(data, payments, job_number(lead, job), today), 'invoice-' + job_number(lead, job) + '.pdf'
 
 
 def _bill_of_lading(access, db):

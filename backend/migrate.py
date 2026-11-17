@@ -21,10 +21,10 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # Customer Activity's tables and its four kinds; events are logged from this deploy on. Remove after a deploy ran it.
-    from customer_activity_log import create_activity_table
+    # SmartMoving's prices deleted from every job already signed on the customer page. Remove after a deploy ran it.
+    from smartmoving_prices import drop_signed_smartmoving_prices
     with engine.begin() as connection:
-        logger.info('Customer Activity tables created: %s', create_activity_table(connection))
+        logger.info('Signed jobs without SmartMoving prices: %s', drop_signed_smartmoving_prices(connection))
 
 
 if __name__ == "__main__":

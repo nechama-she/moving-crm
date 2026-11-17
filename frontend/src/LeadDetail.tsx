@@ -56,6 +56,8 @@ type LeadAttachment = {
   is_external_link?: boolean;
   external_source?: string;
   uploaded_by_name?: string;
+  // A customer page document (signed estimate, Bill of Lading, work order, invoice): opened and downloaded, never renamed, moved or deleted.
+  document?: boolean;
 };
 
 type LeadJobItem = {
@@ -644,6 +646,7 @@ export default function LeadDetail() {
         is_external_link: Boolean(row.is_external_link),
         external_source: String(row.external_source || ""),
         uploaded_by_name: String(row.uploaded_by_name || ""),
+        document: Boolean(row.document),
       })));
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to load attachments");
@@ -1245,27 +1248,23 @@ export default function LeadDetail() {
   };
 
   const estimatedTotalData = (() => {
-    const raw = lead.estimatedTotal ?? lead.estimated_total;
-    if (raw && typeof raw === "object") {
-      const row = raw as Record<string, unknown>;
-      const subtotal = Number(row.subtotal ?? 0);
-      const taxableAmount = Number(row.taxableAmount ?? row.taxable_amount ?? 0);
-      const tax = Number(row.tax ?? 0);
-      const finalTotal = Number(row.finalTotal ?? row.final_total ?? 0);
-      const values = [subtotal, taxableAmount, tax, finalTotal];
-      if (values.every(Number.isFinite)) return { subtotal, taxableAmount, tax, finalTotal };
-    }
-    // Older calculator saves have job pricing but no lead-level estimate yet.
+    // The total of all the lead's jobs, added up from their prices and charges as they are now. Tax, which only
+    // SmartMoving sends, is kept from the lead's saved total.
     if (jobsLoading || jobsError) return null;
+    const raw = lead.estimatedTotal ?? lead.estimated_total;
+    const saved = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const tax = Number(saved.tax ?? 0) || 0;
+    const taxableAmount = Number(saved.taxableAmount ?? saved.taxable_amount ?? 0) || 0;
     const pricedJobs = leadJobs.filter(job => job.price != null || job.charges.length > 0);
     if (!pricedJobs.length) return null;
     const cents = (value: number) => Math.round(value * 100);
-    const finalCents = pricedJobs.reduce((sum, job) => sum + (job.price == null
+    // The same lines as each job's Charges box; the saved price only for a job without lines.
+    const finalCents = pricedJobs.reduce((sum, job) => sum + (job.charges.length || job.price == null
       ? job.charges.reduce((total, charge) => total + cents(charge.total_cost), 0)
       : cents(job.price)), 0);
     const discountCents = pricedJobs.reduce((sum, job) => sum + job.charges.reduce((total, charge) => total + cents(charge.discount_amount), 0), 0);
     if (finalCents <= 0) return null;
-    return { subtotal: (finalCents + discountCents) / 100, taxableAmount: 0, tax: 0, finalTotal: finalCents / 100 };
+    return { subtotal: (finalCents + discountCents) / 100, taxableAmount, tax, finalTotal: (finalCents + cents(tax)) / 100 };
   })();
 
   const estimatedDiscountAmount = estimatedTotalData
@@ -1659,6 +1658,7 @@ export default function LeadDetail() {
           is_external_link: Boolean(row.is_external_link),
           external_source: String(row.external_source || ""),
           uploaded_by_name: String(row.uploaded_by_name || ""),
+          document: Boolean(row.document),
         }))] as const;
       }));
       const generalResponse = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, { headers: authHeaders(token) });
@@ -2131,7 +2131,7 @@ export default function LeadDetail() {
                       {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.{user?.role === "admin" ? " Drag a file here to move it." : ""}</div> : (
                         <div className="lead-files-list">
                           {jobAttachments.map((attachment) => (
-                            <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
+                            <article key={attachment.id} draggable={user?.role === "admin" && !attachment.document} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
                               <input
                                 type="checkbox"
                                 aria-label={`Select ${attachment.file_name}`}
@@ -2148,12 +2148,12 @@ export default function LeadDetail() {
                                     <button className="slds-button" type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
                                   </div>
                                 ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
-                                <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
+                                <small>{[attachment.document && !attachment.file_size ? "" : `${Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB`, attachment.created_at ? new Date(attachment.created_at).toLocaleString() : "", attachment.uploaded_by_name || ""].filter(Boolean).join(" · ")}</small>
                               </div>
                               <div className="lead-file-actions">
                                 <button className="slds-button" type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, job.id)}>{attachment.is_external_link ? "Open" : "Preview"}</button>
                                 <button className="slds-button" type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, job.id)}>{attachment.is_external_link ? "Open link" : "Download"}</button>
-                                {canEditJobs ? (
+                                {canEditJobs && !attachment.document ? (
                                   <>
                                     <button className="slds-button" type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
                                     <button type="button" className="slds-button danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
@@ -3311,13 +3311,6 @@ export default function LeadDetail() {
                           <span style={{ fontSize: 14 }}>$</span>
                           <strong style={{ fontSize: 12, color: "#0f172a", letterSpacing: "0.02em" }}>Charges</strong>
                         </div>
-                        <button className="slds-button"
-                          type="button"
-                          onClick={() => navigate(`/pricing?lead_id=${encodeURIComponent(leadId || "")}&job_id=${encodeURIComponent(job.id)}`)}
-                          style={{ border: "1px solid #0176d3", background: "#fff", color: "#0176d3", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                        >
-                          Calculate Price
-                        </button>
                       </div>
 
                       <div style={{ padding: 10, display: "grid", gap: 6 }}>
@@ -3557,7 +3550,7 @@ export default function LeadDetail() {
                                   <span style={{ fontSize: 10, fontWeight: 800, color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 999, padding: "1px 6px", background: "#f8fafc", flexShrink: 0 }}>
                                     {fileIcon(attachment.file_name)}
                                   </span>
-                                  <span style={{ fontSize: 10, color: "#64748b" }}>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB</span>
+                                  <span style={{ fontSize: 10, color: "#64748b" }}>{attachment.document && !attachment.file_size ? "" : `${Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB`}</span>
                                 </div>
                                 <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {attachment.file_name}

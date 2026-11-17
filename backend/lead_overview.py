@@ -1,16 +1,19 @@
 """Lead-list overview, using the same Priority 1 quote definition as Stats."""
-import json
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
-from models import Lead, LeadJob
+from models import Lead, LeadJob, lead_estimated_total
+
+# What a lead's total is added up from.
+TOTAL = (Lead.lines_total, Lead.lines_discount, Lead.lineless_prices, Lead.estimated_total)
 
 
-def amount(raw):
+def amount(row):
+    """The lead's final total, added up from its jobs (models.lead_estimated_total)."""
     try:
-        value = json.loads(raw or '{}').get('finalTotal') or 0
-        result = Decimal(str(value))
+        total = lead_estimated_total(row.lines_total, row.lines_discount, row.lineless_prices, row.estimated_total) or {}
+        result = Decimal(str(total.get('finalTotal') or 0))
         return result if result.is_finite() else Decimal(0)
     except (ValueError, TypeError, AttributeError, InvalidOperation):
         return Decimal(0)
@@ -52,7 +55,7 @@ def overview(query, db, now=None, month=None):
     previous = dict(new_today=0, new_month=0, quotes=0, quote_value=Decimal(0), booked_value=Decimal(0))
     trend = {key: [Decimal(0)] * days for key in ('new_leads', 'quotes', 'quote_value', 'booked_value')}
 
-    for row in query.with_entities(Lead.created_time, Lead.created_at, Lead.priority, Lead.estimated_total).yield_per(1000):
+    for row in query.with_entities(Lead.created_time, Lead.created_at, Lead.priority, *TOTAL).yield_per(1000):
         created = created_date(row, zone)
         if created == today:
             result['new_today'] += 1
@@ -63,7 +66,7 @@ def overview(query, db, now=None, month=None):
             result['new_month'] += 1
             trend['new_leads'][day] += 1
             if row.priority == 1:
-                value = amount(row.estimated_total)
+                value = amount(row)
                 result['quotes'] += 1
                 result['quote_value'] += value
                 trend['quotes'][day] += 1
@@ -72,15 +75,15 @@ def overview(query, db, now=None, month=None):
             previous['new_month'] += 1
             if row.priority == 1:
                 previous['quotes'] += 1
-                previous['quote_value'] += amount(row.estimated_total)
+                previous['quote_value'] += amount(row)
 
     booked = query.join(LeadJob, LeadJob.lead_id == Lead.id).filter(
         LeadJob.job_order == 1, LeadJob.booked_move_date >= prev_start,
         LeadJob.booked_move_date <= end,
         Lead.status.in_(['booked', 'scheduled', 'completed']))
-    for row in booked.with_entities(Lead.estimated_total, LeadJob.booked_move_date).yield_per(1000):
+    for row in booked.with_entities(*TOTAL, LeadJob.booked_move_date).yield_per(1000):
         moved = row.booked_move_date.date() if isinstance(row.booked_move_date, datetime) else row.booked_move_date
-        value = amount(row.estimated_total)
+        value = amount(row)
         if start <= moved <= end:
             result['booked_value'] += value
             trend['booked_value'][(moved - start).days] += value
