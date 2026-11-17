@@ -4263,10 +4263,18 @@ def delete_lead_payment(lead_id: str, payment_id: str, user: User = Depends(get_
     return {"ok": True}
 
 
+def _has_signed_estimate(lead_id: str, db: Session) -> bool:
+    """A signed estimate ends the SmartMoving sync: nothing from SmartMoving changes the lead after it."""
+    from models import EstimateSignature
+    return db.query(EstimateSignature.id).filter(EstimateSignature.lead_id == lead_id, EstimateSignature.signed_at.isnot(None)).first() is not None
+
+
 def _sync_smartmoving_job_details(lead: Lead, db: Session) -> None:
     """Best-effort sync of per-job notes and estimated materials."""
     opportunity_id = _clean_optional_text(lead.smartmoving_id)
     if not opportunity_id or (lead.status or "").strip().lower() not in SMARTMOVING_JOB_DETAIL_STATUSES:
+        return
+    if _has_signed_estimate(lead.id, db):
         return
 
     jobs = db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all()
@@ -4316,6 +4324,9 @@ def _apply_lead_update(
     lead = db.query(Lead).filter(Lead.id == lead_id, visibility).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    # Outside systems (SmartMoving's sync runs as a system user) never change a lead with a signed estimate.
+    if user.role == "system_user" and _has_signed_estimate(lead.id, db):
+        raise HTTPException(status_code=409, detail="This lead has a signed estimate, so it no longer syncs from SmartMoving.")
 
     # Only admin can assign leads
     if (body.assigned_to is not None or body.assigned_to_name is not None) and user.role != "admin":
@@ -4788,9 +4799,7 @@ def _refresh_lead_from_smartmoving(
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
     if not smartmoving_id:
         raise HTTPException(status_code=400, detail="Lead does not have a smartmoving_id")
-    # A signed estimate ends the SmartMoving sync: nothing from SmartMoving changes the lead after it.
-    from models import EstimateSignature
-    if db.query(EstimateSignature.id).filter(EstimateSignature.lead_id == lead.id, EstimateSignature.signed_at.isnot(None)).first():
+    if _has_signed_estimate(lead.id, db):
         raise HTTPException(status_code=409, detail="This lead has a signed estimate, so it no longer syncs from SmartMoving.")
 
     opportunity_result = get_opportunity(smartmoving_id)
@@ -5163,6 +5172,11 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
         raise HTTPException(status_code=500, detail="API secret not configured")
     if x_api_secret != secret:
         raise HTTPException(status_code=401, detail="Invalid API secret")
+    # A SmartMoving opportunity whose lead was signed on the customer page never becomes a new lead.
+    from models import DetachedSmartMovingLead
+    incoming_smartmoving_id = _clean_optional_text(body.smartmoving_id)
+    if incoming_smartmoving_id and db.get(DetachedSmartMovingLead, incoming_smartmoving_id):
+        raise HTTPException(status_code=409, detail="This SmartMoving lead was signed in the CRM and no longer syncs from SmartMoving.")
 
     # Copy creates the provider lead immediately above this call. Its initial
     # CRM data is already known; only incoming pushes need hydration.

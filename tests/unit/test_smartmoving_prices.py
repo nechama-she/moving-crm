@@ -65,3 +65,56 @@ def test_signing_keeps_the_reps_approval():
         assert db.get(LeadJob, 'signed').estimate_approved_id == 'approved-copy'
         assert json.loads(db.get(Lead, 'signed-lead').estimated_total)['finalTotal'] == 1801.0
     engine.dispose()
+
+
+def test_signed_leads_are_detached_from_smartmoving_once():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from models import Base, DetachedSmartMovingLead, EstimateSignature, Lead, LeadJob
+    from smartmoving_prices import detach_signed_leads
+    engine = create_engine('sqlite://')
+    # The deploy step creates the table itself.
+    Base.metadata.create_all(engine, tables=[t for t in Base.metadata.sorted_tables if t.name != DetachedSmartMovingLead.__tablename__])
+    with Session(engine) as db:
+        db.add_all([Lead(id='signed', full_name='A', smartmoving_id='sm-signed'), Lead(id='open', full_name='B', smartmoving_id='sm-open')])
+        db.flush()
+        db.add(LeadJob(id='job', lead_id='signed', job_order=1))
+        db.flush()
+        db.add(EstimateSignature(lead_id='signed', job_id='job', snapshot='{}', pdf=b'%PDF', signed_at=datetime(2026, 11, 16)))
+        db.commit()
+    with engine.begin() as connection:
+        assert detach_signed_leads(connection) == 1
+    with engine.begin() as connection:
+        assert detach_signed_leads(connection) == 0  # Nothing left to detach.
+    with Session(engine) as db:
+        assert db.get(Lead, 'signed').smartmoving_id is None
+        assert db.get(Lead, 'open').smartmoving_id == 'sm-open'
+        assert db.get(DetachedSmartMovingLead, 'sm-signed').lead_id == 'signed'
+    engine.dispose()
+
+
+def test_a_detached_smartmoving_lead_is_not_created_again(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from models import Base, DetachedSmartMovingLead, Lead
+    for name in list(sys.modules):
+        if name in ('database', 'routes.leads', 'libs') or name.startswith('libs.'):
+            monkeypatch.delitem(sys.modules, name)
+    import importlib
+    leads = importlib.import_module('routes.leads')
+    monkeypatch.setattr(leads, 'get_config', lambda: {'API_SECRET': 'secret'})
+    monkeypatch.setattr(leads, '_hydrate_new_lead_from_smartmoving', lambda body: pytest.fail('SmartMoving was asked'))
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(Lead(id='signed', full_name='A'))
+        db.flush()
+        db.add(DetachedSmartMovingLead(smartmoving_id='sm-signed', lead_id='signed'))
+        db.commit()
+        body = leads.NewLead.model_validate({'full_name': 'A', 'company_name': 'X', 'source': 'SmartMoving', 'smartmoving_id': 'sm-signed'})
+        with pytest.raises(HTTPException) as refused:
+            leads._create_lead(body, 'secret', db)
+        assert refused.value.status_code == 409
+    engine.dispose()

@@ -26,6 +26,31 @@ def drop_smartmoving_prices(db, job):
         db.expire(lead, ['estimated_total'])
 
 
+def detach_from_smartmoving(db, lead):
+    """The lead leaves SmartMoving: its SmartMoving id is moved to detached_smartmoving_leads. Does not commit."""
+    from models import DetachedSmartMovingLead
+    smartmoving_id = (lead.smartmoving_id or '').strip()
+    if smartmoving_id:
+        db.merge(DetachedSmartMovingLead(smartmoving_id=smartmoving_id, lead_id=lead.id))
+    lead.smartmoving_id = None
+
+
+def detach_signed_leads(connection):
+    """Once: the table, and every lead already signed on the customer page detached from SmartMoving. Returns how many."""
+    from sqlalchemy import inspect
+    from sqlalchemy.orm import Session
+    from models import DetachedSmartMovingLead, EstimateSignature, Lead
+    if not inspect(connection).has_table(DetachedSmartMovingLead.__tablename__):
+        DetachedSmartMovingLead.__table__.create(connection)
+    with Session(bind=connection) as db:
+        signed = db.query(EstimateSignature.lead_id).filter(EstimateSignature.signed_at.isnot(None))
+        leads = db.query(Lead).filter(Lead.id.in_(signed), Lead.smartmoving_id.isnot(None), Lead.smartmoving_id != '').all()
+        for lead in leads:
+            detach_from_smartmoving(db, lead)
+        db.flush()
+    return len(leads)
+
+
 def drop_signed_smartmoving_prices(connection):
     """Once: every job already signed on the customer page. Returns how many."""
     from sqlalchemy.orm import Session
