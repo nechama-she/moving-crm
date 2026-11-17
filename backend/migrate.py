@@ -4,8 +4,14 @@ Every deploy runs this. Each change here runs once: after a deploy has applied i
 pending a deploy does not touch the database.
 """
 import logging
+import sys
+from pathlib import Path
 
 from sqlalchemy import text
+
+# The shared libs folder beside backend, as the deployed package has it: the inventory step reads the customer page's
+# estimate (routes.public_moves), which uses it.
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from database import engine
 
@@ -29,6 +35,10 @@ def migrate() -> None:
         add_column(connection, 'pricing_plans', 'out_of_area_fee', 'NUMERIC(12, 2)')
         add_column(connection, 'lead_jobs', 'out_of_area_meters', 'INTEGER')
         add_column(connection, 'lead_jobs', 'out_of_area_revision', 'VARCHAR(64)')
+    # Beside each signed estimate: the fingerprint of its move right after the inventory step below, for one that showed
+    # as signed then. Empty for every other. Before that step, which sets it. Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'estimate_signatures', 'migrated_state', 'VARCHAR(64)')
     # Payments' confirmation numbers: new CRM payments get one; existing payments keep none. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'lead_payments', 'confirmation_number', 'VARCHAR(12) UNIQUE')

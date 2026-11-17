@@ -88,6 +88,9 @@ class EstimateSignature(Base):
     report_id = Column(Text)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     signed_at = Column(DateTime)
+    # Set once, by the move of inventories into their tables, for an estimate that showed as signed then: the
+    # fingerprint of the move as it stood after that move. It shows as signed while the move still matches it.
+    migrated_state = Column(String(64))
 
 
 def _uuid() -> str:

@@ -32,9 +32,17 @@ def estimate_state(data, rows):
     return {'data': normalize(jsonable_encoder({key: data.get(key) for key in ESTIMATE_FIELDS})), 'rows': inventory}
 
 
+def state_fingerprint(state):
+    """A fingerprint of an estimate_state, to note a move as it stood."""
+    import hashlib
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+
+
 def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inventory_pending=False):
-    """current and inventory_rows, or current alone as a function returning both, built only when needed."""
-    record = db.query(EstimateSignature.snapshot).filter(
+    """current and inventory_rows, or current alone as a function returning both, built only when needed. Signed when
+    the move matches the signed estimate, or, for one signed before the inventory moved into its tables, matches the
+    move as it stood right after that (migrated_state): the tables write the same list in another form."""
+    record = db.query(EstimateSignature.snapshot, EstimateSignature.migrated_state).filter(
         EstimateSignature.lead_id == lead_id, EstimateSignature.job_id == job_id,
         EstimateSignature.signed_at.isnot(None),
     ).order_by(EstimateSignature.signed_at.desc()).first()
@@ -46,10 +54,15 @@ def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inve
         snapshot = json.loads(record.snapshot)
         previous = estimate_state(snapshot['data'], snapshot.get('rows', []))
     except (ValueError, KeyError, TypeError, AttributeError):
+        previous = None
+    if previous is None and not record.migrated_state:
         return 'changed'
     if callable(current):
         current, inventory_rows = current()
-    return 'signed' if previous == estimate_state(current, inventory_rows) else 'changed'
+    now = estimate_state(current, inventory_rows)
+    if now == previous or (record.migrated_state and state_fingerprint(now) == record.migrated_state):
+        return 'signed'
+    return 'changed'
 
 
 def estimate_requires_signature(db, lead_id, job_id, report_id, current, inventory_rows=None, inventory_pending=False):
