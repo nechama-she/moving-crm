@@ -783,7 +783,9 @@ input, select, textarea, button {
 .pricing-job-context p { margin: 0; color: #3e3e3c; font-size: 13px; }
 .pricing-job-context > div:last-child { display: grid; justify-items: end; gap: 5px; color: #706e6b; font-size: 12px; }
 .pricing-job-context a { color: #0176d3; font-weight: 700; text-decoration: none; }
-.pricing-overview { padding: 18px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-top: 3px solid #0176d3; }
+.pricing-overview { padding: 18px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 24px; border-top: 3px solid #0176d3; }
+/* The book's name and buttons on top; its value cards in one full-width row under them. */
+.pricing-overview > .pricing-kpis { flex: 1 0 100%; }
 .pricing-overview h2, .pricing-calculator h2 { color: #032d60; margin: 3px 0 5px; font-size: 21px; }
 .pricing-overview p { margin: 0; color: #706e6b; font-size: 13px; max-width: 740px; }
 .eyebrow { color: #0176d3; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
@@ -793,6 +795,9 @@ input, select, textarea, button {
 .pricing-kpis span, .pricing-quote span { color: #706e6b; font-size: 11px; text-transform: uppercase; font-weight: 700; }
 .pricing-kpis strong { color: #032d60; font-size: 17px; }
 .pricing-kpis input { width: 70px; }
+/* Miles and fee side by side when the card has room, one under the other when it does not. */
+.pricing-kpis .pricing-out-of-area { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.pricing-out-of-area label { display: grid; gap: 2px; font-size: 11px; color: #706e6b; }
 .pricing-calculator { padding: 16px 18px; }
 .pricing-calculator > div:first-child { margin-bottom: 12px; }
 .pricing-calc-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 180px) auto; align-items: end; gap: 10px; }

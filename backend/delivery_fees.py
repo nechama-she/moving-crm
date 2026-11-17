@@ -1,10 +1,8 @@
-"""Pricing-book delivery fees based on Google driving-route mileage."""
+"""Pricing-book delivery, origin and out-of-area fees based on Google driving-route mileage."""
 import hashlib
 import json
-import os
 import re
 from decimal import Decimal, ROUND_HALF_UP
-import httpx
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 from shuttle import ShuttleArea, area_matches, zip_bounds
@@ -126,30 +124,6 @@ def matching_rule(card, address):
     return min(matches, key=width) if matches else None
 
 
-def driving_meters(origin_zip, destination):
-    from config import get_config
-    key = str(get_config().get('GOOGLE_MAPS_SERVER_KEY') or os.getenv('GOOGLE_MAPS_SERVER_KEY', '')).strip()
-    if not key:
-        raise HTTPException(503, 'Google Maps routing is not configured. The mileage fee could not be calculated.')
-    try:
-        response = httpx.post('https://routes.googleapis.com/directions/v2:computeRoutes',
-            headers={'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.distanceMeters'},
-            json={'origin': {'address': f'{origin_zip}, USA'},
-                  'destination': {'address': destination + ', USA'},
-                  'travelMode': 'DRIVE', 'routingPreference': 'TRAFFIC_UNAWARE',
-                  'computeAlternativeRoutes': False}, timeout=10)
-        response.raise_for_status()
-        routes = response.json().get('routes') or []
-        if not routes:
-            raise HTTPException(422, 'Google Maps could not find a driving route. Check the customer address.')
-        meters = routes[0].get('distanceMeters')
-        if type(meters) is not int or meters < 0:
-            raise ValueError('Invalid route distance')
-        return meters
-    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-        raise HTTPException(502, 'Google Maps could not calculate the mileage fee. Please retry; no approximate mileage was used.') from None
-
-
 def route_revision(origin_zip, address):
     return hashlib.sha256(json.dumps([origin_zip, address.strip().lower(), 'DRIVE']).encode()).hexdigest()
 
@@ -171,7 +145,40 @@ def browser_fee_routes(lead, job, db):
         meters = saved.get('meters') if saved.get('revision') == revision else None
         routes.append({'kind': kind, 'origin': rule.origin_zip, 'destination': address,
                        'revision': revision, 'meters': meters if type(meters) is int and meters >= 0 else None})
+    office = out_of_area_office(plan)
+    if office and (job.pickup_zip or '').strip():
+        revision = route_revision(office, job.pickup_zip)
+        meters = job.out_of_area_meters if job.out_of_area_revision == revision else None
+        routes.append({'kind': 'area', 'origin': office, 'destination': job.pickup_zip, 'revision': revision,
+                       'meters': meters if type(meters) is int and meters >= 0 else None})
     return routes
+
+
+def out_of_area_office(plan):
+    """The company office address the out-of-area fee measures from; '' when the book has no such fee or the company
+    has no office address."""
+    if plan is None or plan.out_of_area_miles is None or plan.out_of_area_fee is None:
+        return ''
+    return ((plan.company.office_address if plan.company else '') or '').strip()
+
+
+def out_of_area_fee(plan, address, revision=None, meters=None):
+    """The out-of-area fee for a pickup, from the browser's distance measured for revision: None when the book has no
+    such fee or the pickup is within its miles."""
+    if plan is None or plan.out_of_area_miles is None or plan.out_of_area_fee is None or not address.strip():
+        return None
+    office = out_of_area_office(plan)
+    if not office:
+        raise HTTPException(409, "Add the company's office address to calculate the out-of-area fee.")
+    if revision != route_revision(office, address):
+        meters = None
+    if type(meters) is not int or meters < 0:
+        raise HTTPException(409, 'The driving distance has not been measured yet. It is measured when the customer page opens.')
+    miles = (Decimal(meters) / Decimal('1609.344')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    if miles <= plan.out_of_area_miles:
+        return None
+    return {'amount': plan.out_of_area_fee,
+            'description': f'{miles:,.2f} driving miles from our office to pickup, over {plan.out_of_area_miles:,} miles (Google Maps)'}
 
 
 def delivery_fee(plan, address, saved=None, *, prefix=DELIVERY_FEE_PREFIX, endpoint="delivery"):
@@ -183,7 +190,8 @@ def delivery_fee(plan, address, saved=None, *, prefix=DELIVERY_FEE_PREFIX, endpo
     saved = saved or {}
     meters = saved.get('meters') if saved.get('revision') == revision else None
     if type(meters) is not int or meters < 0:
-        meters = driving_meters(rule.origin_zip, address)
+        # The driving distance comes from the browser only: the customer page measures it when it opens.
+        raise HTTPException(409, 'The driving distance has not been measured yet. It is measured when the customer page opens.')
     miles = (Decimal(meters) / Decimal('1609.344')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     amount = (miles * rule.rate_per_mile).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     return {'revision': revision, 'meters': meters, 'miles': str(miles), 'origin_zip': rule.origin_zip,

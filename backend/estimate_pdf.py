@@ -1,7 +1,7 @@
 """Read-only estimate export. All quantities, answers and prices come from saved data."""
 from collections import defaultdict
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from io import BytesIO
 from math import ceil
 import base64
@@ -355,7 +355,7 @@ def _summary(data, styles, p, table, link=True, title='MOVING ESTIMATE', signatu
         if stop.get('type') not in ('pickup', 'delivery'):
             story.append(p(f"Additional stop (unspecified): {stop.get('address', '')}"))
     story += [p('Price breakdown', 'SectionEstimate')] + _price_table(data, styles, p, table, link)
-    if data.get('list_changed') or data.get('files_changed'):
+    if data.get('files_changed'):
         story.append(p('This estimate reflects the current generated report. New inventory edits or files are not included until a new report is generated.', 'NoteEstimate'))
     note = (data.get('customer_notes') or '').strip()
     if note:
@@ -512,7 +512,7 @@ def build_estimate_pdf(data, rows, work_order=None):
                     capacity, unit = material['box_capacity_cuft'], 'cuft'
                 if capacity is not None:
                     prefix = 'Over ' if material.get('capacity_kind') == 'over' else ''
-                    size = f"{prefix}{Decimal(str(capacity)):g} {units.get(unit, unit)}"
+                    size = f"{prefix}{Decimal(str(capacity)).to_integral_value(rounding=ROUND_CEILING)} {units.get(unit, unit)}"
             body.append([p(material['name']), p(size, 'NoteEstimate'),
                          p(money(material.get('material_price')), 'RightEstimate'),
                          p(money(material.get('packing_price')), 'RightEstimate')])

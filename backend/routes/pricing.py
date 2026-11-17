@@ -23,7 +23,7 @@ from database import get_db
 from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, MaterialRate, packing_card, plan_packing_card, save_packing_card
 from material_calculation import MaterialItem, calculate_materials, customer_material_quotes
 from shuttle import SHUTTLE_PREFIX, ShuttleCard, shuttle_card, shuttle_option, plan_shuttle_card, save_shuttle_card
-from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card, save_fee_card
+from delivery_fees import ORIGIN_FEE_PREFIX, origin_fee, origin_fee_card, DELIVERY_FEE_PREFIX, DeliveryFeeCard, delivery_fee, delivery_fee_card, save_fee_card, out_of_area_fee
 from storage_pricing import STORAGE_PREFIX, StorageCard, storage_card, storage_quote, plan_storage_card, save_storage_card
 from extra_stops import EXTRA_STOPS_PREFIX, ExtraStopsCard, stops_card, save_stops_card
 from elevator_pricing import ELEVATOR_PREFIX, ElevatorCard, elevator_card, elevator_quote, plan_elevator_card, save_elevator_card
@@ -38,7 +38,6 @@ from models import (
     Lead,
     LeadJob,
     LeadJobCharge,
-    LeadSparkInventoryItem,
     PublicMoveAccess,
     User,
     UserCompany,
@@ -616,47 +615,20 @@ def _material_item_names(materials: list[dict], db=None) -> list[str]:
 
 
 def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
+    """What ships, from the inventory table, while a report is current (a list not yet priced has none)."""
     from models import LeadJob, LeadLiveSwitch
+    from inventory_edits import active_report, shipping_rows
+    from box_packing import movers_pack_count
     if not job_id:
         return []
     job = db.get(LeadJob, job_id)
     report = db.get(LeadLiveSwitch, job.lead_id) if job else None
-    snapshot = json.loads(report.details or '{}').get('spark_inventory_snapshot', []) if report else []
-    if snapshot:
-        from catalog_names import resolve_catalog_names
-        snapshot = resolve_catalog_names(snapshot, db)
-        result = []
-        for row in snapshot:
-            if not isinstance(row, dict) or not row.get('name') or row.get('going') is False:
-                continue
-            try:
-                quantity = max(1, int(float(row.get('amount') or row.get('quantity') or 1)))
-            except (TypeError, ValueError):
-                quantity = 1
-            try:
-                cuft = float(row['cuft']) if row.get('cuft') is not None else None
-            except (TypeError, ValueError):
-                cuft = None
-            from box_packing import movers_pack_count
-            result.append({'item_id': row.get('item_id'), 'catalog_item_id': row.get('catalog_item_id'),
-                           'name_override': row.get('name_override', False), 'unit_cuft': row.get('unit_cuft'), 'name': str(row['name']),
-                           'quantity': quantity, 'room': str(row.get('room') or ''), 'cuft': cuft,
-                           'mover_pack_count': movers_pack_count(row)})
-        return result
-    items = db.query(LeadSparkInventoryItem).filter(LeadSparkInventoryItem.job_id == job_id).all()
-    res = []
-    for item in items:
-        try:
-            qty = max(1, int(float(item.amount or 1)))
-        except (TypeError, ValueError):
-            qty = 1
-        index = item.sort_order or 0
-        source = snapshot[index] if 0 <= index < len(snapshot) else {}
-        room = source.get('room') or '' if source.get('name') == item.name else ''
-        res.append({"id": item.id, "name": item.name or "", "quantity": qty, "room": room,
-                    "cuft": float(item.cuft) if item.cuft is not None else None})
-    from catalog_names import resolve_catalog_names
-    return resolve_catalog_names(res, db)
+    if not report or not active_report(json.loads(report.details or '{}')):
+        return []
+    return [{'item_id': row['item_id'], 'catalog_item_id': row['catalog_item_id'], 'name_override': row['name_override'],
+             'unit_cuft': row['unit_cuft'], 'name': row['name'], 'quantity': row['amount'], 'room': row['room'] or '',
+             'cuft': row['cuft'], 'mover_pack_count': movers_pack_count(row)}
+            for row in shipping_rows(job_id, db)]
 
 
 def _rule_charges(rule: PricingRule) -> list[dict]:
@@ -1240,47 +1212,47 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
 
 
 def apply_box_packing_to_inventory(job, db, package, selection):
-    """Record on each box row how many of its boxes the movers pack."""
-    from models import LeadLiveSwitch, LeadSparkInventoryItem
+    """Record on the inventory table how many of each room's boxes of a type the movers pack: that room's rows of the
+    type become one row, which records it. As before, units item answers took off leave the list. Does not commit."""
+    from uuid import uuid4
+    from models import LeadLiveSwitch, InventoryEditRoom, InventoryEditState
+    from inventory_edits import active_report, joined_rows, display_name, materialize_exclusions
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=job.lead_id).with_for_update().first()
-    if not saved:
+    if not saved or not active_report(json.loads(saved.details or '{}')):
         return
-    details = json.loads(saved.details or '{}')
-    from catalog_names import resolve_catalog_names
-    rows = resolve_catalog_names(details.get('spark_inventory_snapshot') or [], db)
+    rooms = {room.id: room.name for room in db.query(InventoryEditRoom).filter_by(job_id=job.id)}
+    def groups():
+        rows = [(item, display_name(item, name)) for item, name in joined_rows(job.id, db) if item.going]
+        for box in package.get('box_items', []):
+            room_key = _normalize_item_name(box.get('room') or 'Other items')
+            name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
+            group = [(item, name) for item, name in rows
+                     if _normalize_item_name(rooms.get(item.room_id) or 'Other items') == room_key
+                     and _normalize_item_name(_box_base_name(name)) == name_key]
+            if group:
+                yield box, group
+    if not any(True for _ in groups()):
+        return
+    materialize_exclusions(job.id, db)
     quantities = selection.get('box_quantities', {})
-    changed = False
-    for box in package.get('box_items', []):
-        room_key = _normalize_item_name(box.get('room') or 'Other items')
-        name_key = _normalize_item_name(_box_base_name(box.get('label') or ''))
-        indexes = [index for index, row in enumerate(rows) if isinstance(row, dict)
-                   and row.get('going') is not False
-                   and _normalize_item_name(row.get('room') or 'Other items') == room_key
-                   and _normalize_item_name(_box_base_name(row.get('name') or '')) == name_key]
-        if not indexes:
-            continue
-        source = [rows[index] for index in indexes]
-        total_qty = sum(max(1, int(float(row.get('amount') or row.get('quantity') or 1))) for row in source)
-        cp_qty = max(0, min(total_qty, int(quantities.get(box['id'], 0) or 0)))
-        totals = {field: sum(float(row.get(field) or 0) for row in source) for field in ('cuft', 'weight')}
-        # One row per box type and room; it records how many of its boxes the movers pack.
-        row = dict(source[0])
-        row.update(name=_box_base_name(row.get('name') or box['label']), amount=total_qty, quantity=total_qty,
-                   cuft=round(totals['cuft'], 4), weight=round(totals['weight'], 4),
-                   mover_pack=None, mover_pack_count=cp_qty)
-        replacements = [row]
-        first = indexes[0]
-        rows = [row for index, row in enumerate(rows) if index not in set(indexes)]
-        rows[first:first] = replacements
-        changed = True
-    if not changed:
-        return
-    details['spark_inventory_snapshot'] = rows
-    if details.get('question_original_rows'):
-        details['question_original_rows'] = [dict(row) for row in rows]
-    saved.details = json.dumps(details)
-    from inventory_record_sync import sync_inventory_records
-    sync_inventory_records(job.id, rows, db)
+    for box, group in list(groups()):
+        first, first_name = group[0]
+        total = sum(item.quantity for item, _ in group)
+        cuft = sum(item.unit_cuft * item.quantity for item, _ in group)
+        weight = sum(item.unit_weight * item.quantity for item, _ in group)
+        first.quantity, first.unit_cuft, first.unit_weight = total, cuft / total, weight / total
+        first.mover_pack, first.mover_pack_count = None, max(0, min(total, int(quantities.get(box['id'], 0) or 0)))
+        if len(group) > 1:
+            first.question_key = str(uuid4())  # The merged row is a new item to its questions.
+        if first.name is not None:
+            first.name = _box_base_name(first_name)
+        for item, _ in group[1:]:
+            db.delete(item)
+        db.flush()
+    state = db.get(InventoryEditState, job.id)
+    if state:
+        state.revision = str(uuid4())  # An open inventory window loads the list again.
+    db.flush()
 
 
 def customer_package_lines(package, selection):
@@ -1662,6 +1634,41 @@ def sync_origin_fee(lead, job, db):
     _refresh_lead_estimated_total(lead.id, db)
 
 
+def job_out_of_area_fee(job, plan):
+    return out_of_area_fee(plan, job.pickup_zip or '', job.out_of_area_revision, job.out_of_area_meters) if plan else None
+
+
+@isolated_charge('Out-of-area fee')
+def add_out_of_area_charge(job, db, fee):
+    if callable(fee):
+        fee = fee()
+    if not fee:
+        return Decimal(0)
+    db.add(LeadJobCharge(id=customer_packing_charge_id(job.id, 'out-of-area'), job_id=job.id,
+                        name='Out-of-area fee', description=fee['description'], sort_order=2580,
+                        subtotal=fee['amount'], discount_amount=0, total_cost=fee['amount']))
+    return fee['amount']
+
+
+def sync_out_of_area_fee(lead, job, db):
+    if job.price is None:
+        return
+    move_type, plan = infer_job_move_type(lead, job, db)
+    fee = lambda: job_out_of_area_fee(job, plan if (move_type or '').lower() != 'local' else None)
+    old = db.get(LeadJobCharge, customer_packing_charge_id(job.id, 'out-of-area'))
+    old_total = old.total_cost if old else Decimal(0)
+    from charge_updates import ChargeUpdates
+    updates = ChargeUpdates(db, [old] if old else [])
+    delta = add_out_of_area_charge(job, updates, fee) - old_total
+    updates.finish()
+    job.price += delta
+    for link in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        if link.published_price is not None:
+            link.published_price += delta
+    from routes.leads import _refresh_lead_estimated_total
+    _refresh_lead_estimated_total(lead.id, db)
+
+
 @isolated_charge('Item packing')
 def add_customer_packing_charges(lead, job, db, plan, move_type):
     total = Decimal(0)
@@ -1879,6 +1886,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
             ))
         job.price = sum(l["total_cost"] for l in lines)
         job.price += add_origin_fee_charge(job, db, lambda: job_origin_fee(job, matched_plan))
+        job.price += add_out_of_area_charge(job, db, lambda: job_out_of_area_fee(job, matched_plan))
         job.price += add_delivery_fee_charge(job, db, lambda: job_delivery_fee(job, matched_plan))
         job.price += add_customer_packing_charges(lead, job, db, matched_plan, move_type)
         job.price += add_customer_package_charges(lead, job, db, matched_plan, move_type)
@@ -2207,6 +2215,9 @@ class SectionUpdate(BaseModel):
     company_id: str | None = None
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
     admin_fee: float | None = Field(default=None, ge=0)
+    # Out-of-area fee: both set, or both None for no such fee.
+    out_of_area_miles: int | None = Field(default=None, ge=1, le=10000)
+    out_of_area_fee: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     price_valid_days: int | None = Field(default=None, ge=1, le=3650)
 
 
@@ -2223,7 +2234,7 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
     field = 'rates' if section == 'rates' else 'pickup_areas' if section == 'pickup' else 'services'
     fields = {'services', 'rules'} if section == 'services' else {'name', 'fuel_percent', 'admin_fee', 'price_valid_days'} if section == 'details' else {field}
     if section == 'details':
-        fields = fields | ({'company_id'} & body.model_fields_set)
+        fields = fields | ({'company_id', 'out_of_area_miles', 'out_of_area_fee'} & body.model_fields_set)
     if section not in {'rates', 'pickup', 'services', 'details', *prefixes} or body.model_fields_set != fields:
         raise HTTPException(422, 'Send only the fields for this pricing section.')
     if section == 'details':
@@ -2240,6 +2251,10 @@ def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user
         plan.fuel_percent = body.fuel_percent
         plan.admin_fee = body.admin_fee
         plan.price_valid_days = body.price_valid_days
+        if {'out_of_area_miles', 'out_of_area_fee'} & body.model_fields_set:
+            if (body.out_of_area_miles is None) != (body.out_of_area_fee is None):
+                raise HTTPException(422, 'Enter both the out-of-area miles and fee, or leave both blank.')
+            plan.out_of_area_miles, plan.out_of_area_fee = body.out_of_area_miles, body.out_of_area_fee
     elif section == 'services':
         belongs = lambda row: not row.comments.startswith(tuple(prefixes.values()))
         is_discount = lambda row: row.category in {'discount_amount', 'discount_percent', 'discount_rate'}

@@ -120,7 +120,7 @@ def test_sections_do_not_run_pricing_or_full_details(portal, monkeypatch, sectio
     monkeypatch.setattr(mod, '_move_details', MagicMock(side_effect=AssertionError('Must not load the full page')))
     monkeypatch.setattr('price_validity.refresh_expired_price', MagicMock(side_effect=AssertionError('Must not price')))
     result = mod.move_section(section, access, db)
-    expected = {'move': 'pickup', 'inventory': 'combined_inventory', 'media': 'editable_files', 'volume': 'spark'}
+    expected = {'move': 'pickup', 'inventory': 'report_history', 'media': 'editable_files', 'volume': 'spark'}
     assert expected[section] in result
     assert 'estimate' not in result
     if section != 'media':
@@ -2305,7 +2305,7 @@ def test_manual_inventory_endpoints_require_verification(manual_catalog, monkeyp
         if authenticated:
             headers['x-public-session'] = token
         base = f'/api/public-moves/{access.id}'
-        response = client.get(base + '/inventory-catalog', headers=headers)
+        response = client.get(base + '/inventory-catalog/search?q=chair', headers=headers)
         assert response.status_code == (200 if authenticated else 401), response.text
         if authenticated:
             assert response.json()['items'][0]['cuft'] == 10
@@ -2904,7 +2904,7 @@ def test_customer_pricing_factors_recalculate_full_estimate(portal, monkeypatch,
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
     monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
     monkeypatch.setattr(mod, 'selected_customer_address', lambda value, current, *args: current if value is None else value)
-    monkeypatch.setattr(mod, 'details', lambda access, db: {'price': access.published_price})
+    monkeypatch.setattr(mod, 'move_section', lambda section, access, db, request=None: {'price': access.published_price} if section == 'pricing' else {})
     def calculate(actual_lead, actual_job, actual_db):
         assert (actual_lead, actual_job, actual_db) == (lead, job, db)
         for field, value in changes.items():
@@ -2926,7 +2926,7 @@ def test_contact_edit_does_not_replace_estimate(portal, monkeypatch):
     db.commit()
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
     monkeypatch.setattr(mod, '_persist_job_route', MagicMock())
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     pricing = SimpleNamespace(calculate_and_save_lead_job_price=MagicMock())
     monkeypatch.setitem(sys.modules, 'routes.pricing', pricing)
     mod.update_customer_details(mod.CustomerDetailsPatch(name='Updated Name', pickup=job.pickup_zip,
@@ -2948,7 +2948,7 @@ def test_unpriceable_customer_change_saves_details_and_clears_stale_quote(portal
     calculate = MagicMock(return_value=None, side_effect=failure)
     monkeypatch.setitem(sys.modules, 'routes.pricing', SimpleNamespace(calculate_and_save_lead_job_price=calculate))
     monkeypatch.setitem(sys.modules, 'routes.leads', SimpleNamespace(_refresh_lead_estimated_total=MagicMock()))
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     mod.update_customer_details(mod.CustomerDetailsPatch(name='Changed', move_date='2026-11-01'), access, db)
     assert job.move_date == '2026-11-01'
     assert lead.full_name == 'Changed'
@@ -2976,7 +2976,7 @@ def test_partial_browser_lookup_preserves_saved_locations(portal, monkeypatch):
     job.customer_packing_package = json.dumps({'pricing_locations':[office,pickup]})
     db.commit()
     monkeypatch.setattr(mod, '_read_job_route', lambda db, job: (job.pickup_zip, [], job.delivery_zip))
-    monkeypatch.setattr(mod, 'details', lambda *args: {})
+    monkeypatch.setattr(mod, 'move_section', lambda *args: {})
     mod.update_customer_details(mod.CustomerDetailsPatch(pricing_locations=[{**pickup,'latitude':39.2}]), access, db)
     saved = {row['address']:row for row in json.loads(job.customer_packing_package)['pricing_locations']}
     assert saved['Office'] == office
@@ -2987,7 +2987,7 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     mod, db, lead, access = portal
     monkeypatch.setattr(mod,'_read_job_route',lambda db,job:('Old pickup',['Storage'], 'Old delivery'))
     persist=MagicMock(); monkeypatch.setattr(mod,'_persist_job_route',persist)
-    monkeypatch.setattr(mod,'details',lambda access,db:{'saved':True})
+    monkeypatch.setattr(mod,'move_section',lambda section,access,db,request=None:{'saved':True} if section=='pricing' else {})
     body=mod.CustomerDetailsPatch(pickup='Miami, FL, USA',pickup_place=dict(place_id='google-place-id',formatted_address='Miami, FL, USA',city='Miami',state='FL',country='US'))
     import jwt
     body.pickup_place.proof=jwt.encode({'sub':access.id,'aud':'customer-address','exp':int(__import__('time').time())+3600,'address':body.pickup_place.model_dump(exclude={'proof'})},os.environ['JWT_SECRET'],algorithm='HS256')
@@ -3000,8 +3000,6 @@ def test_selected_customer_route_preserves_stops(portal, monkeypatch):
     ('estimate.pdf', None, 200),
     ('inventory.pdf', {'request_id': '00000000-0000-0000-0000-000000000001', 'rooms': []}, 200),
     ('realtime-token', {}, 200),
-    ('address-search', {'text':'Miami','session_token':'1234567890abcdef'}, 200),
-    ('address-resolve', {'place_id':'place1','session_token':'1234567890abcdef'}, 200),
 ])
 def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monkeypatch, suffix, payload, expected):
     import ast
@@ -3027,9 +3025,6 @@ def test_new_customer_routes_pass_global_guard_with_scoped_session(portal, monke
     db.commit()
     # The endpoint imports this helper after auth. No real report processing is needed here.
     monkeypatch.setitem(sys.modules,'routes.liveswitch',SimpleNamespace(apply_spark_results_to_lead=MagicMock()))
-    import customer_addresses
-    monkeypatch.setattr(customer_addresses,'suggestions',lambda *a:[])
-    monkeypatch.setattr(customer_addresses,'resolve_address',lambda *a:{'city':'Miami'})
     app=FastAPI(dependencies=[Depends(scope['enforce_authentication'])])
     app.include_router(mod.router)
     app.dependency_overrides[mod.get_db]=lambda:db
@@ -3379,6 +3374,54 @@ def test_elevator_autosave_keeps_waived_line_and_only_updates_current_address(po
     assert json.loads(job.customer_packing_package)['mode']=='full'
     with pytest.raises(HTTPException) as exc: save('pickup',True,'stale')
     assert exc.value.status_code==409
+
+def test_rep_no_extra_fees_answers_every_question_without_charges(portal, packing_pricing, monkeypatch):
+    from decimal import Decimal
+    mod,db,lead,access=portal
+    job=db.get(models.LeadJob,access.job_id)
+    lead.volume=24
+    job.price=access.published_price=Decimal('1000')
+    job.customer_packing_package=json.dumps({'mode':'none'})
+    db.add(models.LeadJobCharge(id='unchanged',job_id=job.id,name='Transportation',subtotal=1000,total_cost=1000))
+    from stairs_pricing import plan_stairs_card
+    from long_carry_pricing import plan_long_carry_card
+    from elevator_pricing import plan_elevator_card
+    from shuttle import plan_shuttle_card
+    # The plan's stairs, long carry and elevator pricing, as their tables hold them.
+    plan=SimpleNamespace(services=[],rates=[],shuttle=None,
+        stairs=SimpleNamespace(enabled=True,steps_per_flight=13,free_flights=1,rate_per_cuft=Decimal('.20'),minimum_cubic_feet=286,pickup_discount_percent=0,delivery_discount_percent=0),
+        long_carry=SimpleNamespace(enabled=True,included_feet=75,increment_feet=75,rate_per_cuft=Decimal('.20'),minimum_cubic_feet=286,pickup_discount_percent=0,delivery_discount_percent=0),
+        elevator=SimpleNamespace(enabled=True,tiers=[SimpleNamespace(up_to_cuft=500,fee=Decimal(150)),SimpleNamespace(up_to_cuft=None,fee=Decimal(250))],pickup_discount_percent=0,delivery_discount_percent=0))
+    packing_pricing.customer_stairs.__globals__.update(infer_job_move_type=lambda *args:('Long Distance',plan),
+        plan_stairs_card=plan_stairs_card,plan_long_carry_card=plan_long_carry_card,plan_elevator_card=plan_elevator_card,plan_shuttle_card=plan_shuttle_card)
+    monkeypatch.setitem(sys.modules,'routes.leads',MagicMock())
+    monkeypatch.setattr(mod,'_move_details',lambda *args,**kwargs:{'ok':True})
+    monkeypatch.setattr(mod,'_customer_pricing_options',lambda lead,job,db:{
+        'minimum_cuft':None,'packing_package':None,'packing_items':[],'shuttle':None,'storage':None,'extra_stops':None,
+        'elevator':packing_pricing.customer_elevator(lead,job,db),'long_carry':packing_pricing.customer_long_carry(lead,job,db),
+        'stairs':packing_pricing.customer_stairs(lead,job,db)})
+    db.commit()
+    # The customer answered with charges at both addresses.
+    for kind,field,value,question in [('stairs','flights',2,packing_pricing.customer_stairs),('long_carry','carry_feet',300,packing_pricing.customer_long_carry),
+                                      ('elevator','elevator',True,packing_pricing.customer_elevator)]:
+        for row in question(lead,job,db)['locations']:
+            mod.save_customer_packing(mod.CustomerPackingPatch(change=mod.CustomerPackingChange(kind=kind,location=row['location'],revision=row['revision'],**{field:value})),access,db)
+    assert job.price>1000
+    # Only the rep's page can use it.
+    with pytest.raises(HTTPException) as exc: mod.answer_no_extra_fees(access,db,request(link_token(access.id)))
+    assert exc.value.status_code==403
+    assert mod.answer_no_extra_fees(access,db,request(mod.rep_link_token(access)))=={'ok':True}
+    assert job.price==access.published_price==1000
+    assert db.query(models.LeadJobCharge).filter(models.LeadJobCharge.total_cost>0).count()==1
+    saved=json.loads(job.customer_packing_package)
+    for location in ('pickup','delivery'):
+        assert saved['stairs'][location]['flights']==0 and not saved['stairs'][location]['unknown']
+        assert saved['long_carry'][location]['distance_feet']==75 and not saved['long_carry'][location]['unknown']
+        assert saved['elevator'][location]['uses_elevator'] is False and not saved['elevator'][location]['unknown']
+    from estimate_questions import unanswered_questions
+    options=mod._customer_pricing_options(lead,job,db)
+    assert unanswered_questions(dict(stairs=options['stairs'],long_carry=options['long_carry'],elevator=options['elevator']))==[]
+
 
 
 def test_box_quantity_delta_keeps_other_box_choices(portal,packing_pricing,monkeypatch):

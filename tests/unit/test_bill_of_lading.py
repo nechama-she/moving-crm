@@ -94,3 +94,30 @@ def test_address_goes_under_its_titles():
     # Only a ZIP code or a city: no street, all on the city, state and ZIP line.
     assert _split_address('20852') == ('', '20852')
     assert _split_address('Rockville, MD 20852') == ('', 'Rockville, MD 20852')
+
+
+def test_signed_spots_show_and_go_with_their_estimate_in_the_report_history(portal):
+    from datetime import datetime
+    from estimate_signature_history import attach_signatures, signed_estimates
+    from models import BillOfLadingSignature, EstimateSignature
+    mod, db, lead, access = portal
+    db.add(EstimateSignature(id='estimate-1', lead_id=lead.id, job_id=access.job_id, report_id='report-1', snapshot='{}',
+                             pdf=b'%PDF', signer_name='Pat', signed_at=datetime(2026, 11, 6, 15)))
+    for spot, minute in ((0, 1), (1, 2)):
+        db.add(BillOfLadingSignature(id=f'bol-{spot}', lead_id=lead.id, job_id=access.job_id, estimate_signature_id='estimate-1',
+                                     content_hash='v', spot=spot, pdf=b'%PDF-' + bytes([48 + spot]), signer_name='Pat',
+                                     signature='{}', signed_at=datetime(2026, 11, 6, 15, minute)))
+    db.commit()
+    history = lambda: attach_signatures([{'id': 'report-1'}], signed_estimates(db, lead.id, access.job_id))
+    [estimate] = history()[0]['signatures']
+    assert [(row['id'], row['spot']) for row in estimate['bills_of_lading']] == [('bol-1', 2), ('bol-0', 1)]
+    assert mod.bill_of_lading_signature_pdf('bol-1', access, db).body == b'%PDF-1'
+    # The estimate's signature removed: it leaves the history with its Bill of Lading.
+    record = db.get(EstimateSignature, 'estimate-1')
+    record.signer_name = record.signed_at = None
+    db.commit()
+    assert history()[0]['signatures'] == []
+    # Signed again: the Bill of Lading signed before it is not shown with it.
+    record.signer_name, record.signed_at = 'Pat', datetime(2026, 11, 6, 16)
+    db.commit()
+    assert history()[0]['signatures'][0]['bills_of_lading'] == []

@@ -1,7 +1,7 @@
 """Signed estimates matched to the inventory report each one was signed for."""
 import json
 
-from models import EstimateSignature
+from models import BillOfLadingSignature, EstimateSignature
 
 
 # Document inputs only: transport metadata (report IDs, load status, preparation
@@ -32,9 +32,17 @@ def estimate_state(data, rows):
     return {'data': normalize(jsonable_encoder({key: data.get(key) for key in ESTIMATE_FIELDS})), 'rows': inventory}
 
 
+def state_fingerprint(state):
+    """A fingerprint of an estimate_state, to note a move as it stood."""
+    import hashlib
+    return hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+
+
 def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inventory_pending=False):
-    """current and inventory_rows, or current alone as a function returning both, built only when needed."""
-    record = db.query(EstimateSignature.snapshot).filter(
+    """current and inventory_rows, or current alone as a function returning both, built only when needed. Signed when
+    the move matches the signed estimate, or, for one signed before the inventory moved into its tables, matches the
+    move as it stood right after that (migrated_state): the tables write the same list in another form."""
+    record = db.query(EstimateSignature.snapshot, EstimateSignature.migrated_state).filter(
         EstimateSignature.lead_id == lead_id, EstimateSignature.job_id == job_id,
         EstimateSignature.signed_at.isnot(None),
     ).order_by(EstimateSignature.signed_at.desc()).first()
@@ -46,10 +54,15 @@ def estimate_signature_status(db, lead_id, job_id, current, inventory_rows, inve
         snapshot = json.loads(record.snapshot)
         previous = estimate_state(snapshot['data'], snapshot.get('rows', []))
     except (ValueError, KeyError, TypeError, AttributeError):
+        previous = None
+    if previous is None and not record.migrated_state:
         return 'changed'
     if callable(current):
         current, inventory_rows = current()
-    return 'signed' if previous == estimate_state(current, inventory_rows) else 'changed'
+    now = estimate_state(current, inventory_rows)
+    if now == previous or (record.migrated_state and state_fingerprint(now) == record.migrated_state):
+        return 'signed'
+    return 'changed'
 
 
 def estimate_requires_signature(db, lead_id, job_id, report_id, current, inventory_rows=None, inventory_pending=False):
@@ -76,8 +89,20 @@ def signed_estimates(db, lead_id, job_id=None):
     legacy = [row.id for row in rows if not row.report_id]
     snapshots = dict(db.query(EstimateSignature.id, EstimateSignature.snapshot)
                      .filter(EstimateSignature.id.in_(legacy)).all()) if legacy else {}
+    # Each estimate's Bill of Lading spots signed since its signing, newest first: they show and go with it.
+    bills = {}
+    if rows:
+        signed = {row.id: row.signed_at for row in rows}
+        for bill in (db.query(BillOfLadingSignature.id, BillOfLadingSignature.signer_name, BillOfLadingSignature.signed_at,
+                              BillOfLadingSignature.spot, BillOfLadingSignature.estimate_signature_id)
+                     .filter(BillOfLadingSignature.estimate_signature_id.in_(list(signed)))
+                     .order_by(BillOfLadingSignature.signed_at.desc())):
+            if bill.signed_at >= signed[bill.estimate_signature_id]:
+                bills.setdefault(bill.estimate_signature_id, []).append(
+                    {'id': bill.id, 'name': bill.signer_name, 'signed_at': bill.signed_at.isoformat() + 'Z', 'spot': bill.spot + 1})
     return [{'id': row.id, 'name': row.signer_name, 'signed_at': row.signed_at.isoformat() + 'Z',
-             'report_id': row.report_id or _snapshot_report_id(snapshots.get(row.id))} for row in rows]
+             'report_id': row.report_id or _snapshot_report_id(snapshots.get(row.id)),
+             'bills_of_lading': bills.get(row.id, [])} for row in rows]
 
 
 def attach_signatures(reports, signatures):
@@ -85,7 +110,7 @@ def attach_signatures(reports, signatures):
     by_report = {}
     for signature in signatures:
         by_report.setdefault(signature['report_id'], []).append(
-            {key: signature[key] for key in ('id', 'name', 'signed_at')})
+            {key: signature[key] for key in ('id', 'name', 'signed_at', 'bills_of_lading')})
     for report in reports:
         report['signatures'] = by_report.get(report['id'], [])
     return reports

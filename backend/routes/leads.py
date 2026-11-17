@@ -4758,6 +4758,10 @@ def _refresh_lead_from_smartmoving(
     smartmoving_id = _clean_optional_text(lead.smartmoving_id)
     if not smartmoving_id:
         raise HTTPException(status_code=400, detail="Lead does not have a smartmoving_id")
+    # A signed estimate ends the SmartMoving sync: nothing from SmartMoving changes the lead after it.
+    from models import EstimateSignature
+    if db.query(EstimateSignature.id).filter(EstimateSignature.lead_id == lead.id, EstimateSignature.signed_at.isnot(None)).first():
+        raise HTTPException(status_code=409, detail="This lead has a signed estimate, so it no longer syncs from SmartMoving.")
 
     opportunity_result = get_opportunity(smartmoving_id)
     if opportunity_result.get("error"):

@@ -5,7 +5,7 @@ import re
 from starlette.concurrency import run_in_threadpool
 
 # Customer page requests that send something but save nothing another open copy of the page shows.
-CUSTOMER_PAGE_READS = {'realtime-token', 'send-code', 'verify', 'address-search', 'address-resolve', 'inventory.pdf',
+CUSTOMER_PAGE_READS = {'realtime-token', 'send-code', 'verify', 'inventory.pdf',
                        'mileage', 'availability', 'question-images', 'prepare-upload'}
 
 # What a save did, for the other open pages: they show signatures as notices, and reload the inventory list after its
@@ -19,7 +19,7 @@ CHANGES = [
     (re.compile(r'item-answer'), 'item_questions_answered'),
     (re.compile(r'reports/[^/]+/select'), 'inventory_report_chosen'),
     (re.compile(r'generate-inventory-report|recalculate-price|calculate-price'), 'estimate_updated'),
-    (re.compile(r'packing'), 'packing_changed'),
+    (re.compile(r'packing|no-extra-fees'), 'packing_changed'),
     (re.compile(r'details'), 'details_updated'),
     (re.compile(r'customer-discount'), 'discount_chosen'),
     (re.compile(r'rep-discounts'), 'discounts_changed'),

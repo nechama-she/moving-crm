@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import defer
 from models import LeadAttachment, LeadLiveSwitch
 from spark_history import archive_report_for_new_media
+from inventory_edits import report_inventory, lead_job_id
 
 
 def active_report_files(access, db):
@@ -41,7 +42,7 @@ def remove_report_file(access, attachment_id, db):
         saved = db.query(LeadLiveSwitch).filter_by(lead_id=access.lead_id).with_for_update().first()
         if saved:
             details = json.loads(saved.details or '{}')
-            if archive_report_for_new_media(details):
+            if archive_report_for_new_media(details, report_inventory(lead_job_id(access.lead_id, db), details, db)):
                 saved.details = json.dumps(details)
     db.commit()
     return {'ok': True}

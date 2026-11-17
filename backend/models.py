@@ -88,6 +88,9 @@ class EstimateSignature(Base):
     report_id = Column(Text)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     signed_at = Column(DateTime)
+    # Set once, by the move of inventories into their tables, for an estimate that showed as signed then: the
+    # fingerprint of the move as it stood after that move. It shows as signed while the move still matches it.
+    migrated_state = Column(String(64))
 
 
 def _uuid() -> str:
@@ -630,6 +633,10 @@ class LeadJob(Base):
     price_refresh_attempted_at = Column(DateTime)
     price_refresh_error = Column(Text)
     price = Column(Numeric(12, 2))
+    # The browser's driving distance from the company's office address to the pickup, for the out-of-area fee, and the
+    # route it was measured for (delivery_fees.route_revision): a changed address or office measures again.
+    out_of_area_meters = Column(Integer)
+    out_of_area_revision = Column(String(64))
     # SmartMoving's total for this job, as its sync last sent it. Shown on the lead page only; our price is `price`.
     smartmoving_price = Column(Numeric(12, 2))
     stop_types = Column(Text)
@@ -1049,6 +1056,10 @@ class PricingPlan(Base):
     fuel_percent = Column(Numeric(7, 3))
     # Origin destination & administration Fee, added to every job priced with this plan.
     admin_fee = Column(Numeric(12, 2))
+    # Out-of-area fee: a pickup more than out_of_area_miles driving miles from the company's office address pays
+    # out_of_area_fee. Either one blank: the book has no such fee.
+    out_of_area_miles = Column(Integer)
+    out_of_area_fee = Column(Numeric(12, 2))
     price_valid_days = Column(Integer, nullable=False, default=7, server_default='7')
     item_materials = Column(Text, nullable=True)
     item_selectors = Column(Text, nullable=True)
@@ -1095,6 +1106,8 @@ class PricingPlan(Base):
             "pickup_areas": pickup_areas(self),
             "fuel_percent": float(self.fuel_percent) if self.fuel_percent is not None else None,
             "admin_fee": float(self.admin_fee) if self.admin_fee is not None else None,
+            "out_of_area_miles": self.out_of_area_miles,
+            "out_of_area_fee": float(self.out_of_area_fee) if self.out_of_area_fee is not None else None,
             "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
             "rate_count": len(self.rates),
@@ -1459,28 +1472,6 @@ class LeadLiveSwitch(Base):
     details = Column(Text, nullable=False)
 
 
-class LeadSparkInventoryItem(Base):
-    __tablename__ = "lead_spark_inventory_items"
-
-    id = Column(String(36), primary_key=True, default=_uuid)
-    job_id = Column(String(36), ForeignKey("lead_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(Text, nullable=False)
-    cuft = Column(Numeric(12, 2))
-    amount = Column(Numeric(12, 2))
-    sort_order = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime(timezone=True), default=_now)
-    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "job_id": self.job_id,
-            "name": self.name or "",
-            "cuft": float(self.cuft) if self.cuft is not None else None,
-            "amount": float(self.amount) if self.amount is not None else None,
-            "sort_order": int(self.sort_order or 0),
-        }
-
 class PublicMoveAccess(Base):
     __tablename__ = 'public_move_access'
     id = Column(String(36), primary_key=True, default=_uuid)
@@ -1680,6 +1671,12 @@ class InventoryEditItem(Base):
     # True for a row from the customer's list or edited by hand: a new report keeps it.
     # False for a row from a LiveSwitch report: the next report replaces it. None: saved before this was recorded.
     manual = Column(Boolean)
+    # Units of this row an item answer took off the move (not shipping); quantity stays what the customer has.
+    excluded_quantity = Column(Integer, nullable=False, default=0, server_default='0')
+    # A report item's name as the report gave it (its photos are found by it), when the catalog's name replaced it.
+    reference_name = Column(String(200))
+    # What this row's item questions are identified by: kept as the row moves, so its answers stay with it.
+    question_key = Column(String(200))
     selections = Column(Text, nullable=False, default='{}')
     sort_order = Column(Integer, nullable=False, default=0)
     inventory_record_id = Column(String(36))
