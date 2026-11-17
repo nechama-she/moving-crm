@@ -56,6 +56,8 @@ type LeadAttachment = {
   is_external_link?: boolean;
   external_source?: string;
   uploaded_by_name?: string;
+  // A customer page document (signed estimate, Bill of Lading, work order, invoice): opened and downloaded, never renamed, moved or deleted.
+  document?: boolean;
 };
 
 type LeadJobItem = {
@@ -644,6 +646,7 @@ export default function LeadDetail() {
         is_external_link: Boolean(row.is_external_link),
         external_source: String(row.external_source || ""),
         uploaded_by_name: String(row.uploaded_by_name || ""),
+        document: Boolean(row.document),
       })));
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to load attachments");
@@ -1659,6 +1662,7 @@ export default function LeadDetail() {
           is_external_link: Boolean(row.is_external_link),
           external_source: String(row.external_source || ""),
           uploaded_by_name: String(row.uploaded_by_name || ""),
+          document: Boolean(row.document),
         }))] as const;
       }));
       const generalResponse = await fetch(`${API_BASE}/api/leads/${leadId}/attachments`, { headers: authHeaders(token) });
@@ -2131,7 +2135,7 @@ export default function LeadDetail() {
                       {jobAttachments.length === 0 ? <div className="lead-files-empty">No files attached to this job.{user?.role === "admin" ? " Drag a file here to move it." : ""}</div> : (
                         <div className="lead-files-list">
                           {jobAttachments.map((attachment) => (
-                            <article key={attachment.id} draggable={user?.role === "admin"} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
+                            <article key={attachment.id} draggable={user?.role === "admin" && !attachment.document} onDragStart={(event) => startAttachmentDrag(event, attachment.id)}>
                               <input
                                 type="checkbox"
                                 aria-label={`Select ${attachment.file_name}`}
@@ -2148,12 +2152,12 @@ export default function LeadDetail() {
                                     <button className="slds-button" type="button" onClick={() => { setRenamingId(""); setRenameValue(""); }}>Cancel</button>
                                   </div>
                                 ) : <strong title={attachment.file_name}>{attachment.file_name}</strong>}
-                                <small>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB{attachment.created_at ? ` · ${new Date(attachment.created_at).toLocaleString()}` : ""}{attachment.uploaded_by_name ? ` · ${attachment.uploaded_by_name}` : ""}</small>
+                                <small>{[attachment.document && !attachment.file_size ? "" : `${Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB`, attachment.created_at ? new Date(attachment.created_at).toLocaleString() : "", attachment.uploaded_by_name || ""].filter(Boolean).join(" · ")}</small>
                               </div>
                               <div className="lead-file-actions">
                                 <button className="slds-button" type="button" onClick={() => void openPreview(attachment.id, attachment.file_name, attachment.content_type, job.id)}>{attachment.is_external_link ? "Open" : "Preview"}</button>
                                 <button className="slds-button" type="button" onClick={() => void downloadAttachment(attachment.id, attachment.file_name, job.id)}>{attachment.is_external_link ? "Open link" : "Download"}</button>
-                                {canEditJobs ? (
+                                {canEditJobs && !attachment.document ? (
                                   <>
                                     <button className="slds-button" type="button" onClick={() => { setRenamingId(attachment.id); setRenameValue(attachment.file_name); }}>Rename</button>
                                     <button type="button" className="slds-button danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
@@ -3557,7 +3561,7 @@ export default function LeadDetail() {
                                   <span style={{ fontSize: 10, fontWeight: 800, color: "#0f172a", border: "1px solid #cbd5e1", borderRadius: 999, padding: "1px 6px", background: "#f8fafc", flexShrink: 0 }}>
                                     {fileIcon(attachment.file_name)}
                                   </span>
-                                  <span style={{ fontSize: 10, color: "#64748b" }}>{Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB</span>
+                                  <span style={{ fontSize: 10, color: "#64748b" }}>{attachment.document && !attachment.file_size ? "" : `${Math.max(1, Math.round((attachment.file_size || 0) / 1024))} KB`}</span>
                                 </div>
                                 <div style={{ fontSize: 12, color: "#0f172a", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {attachment.file_name}

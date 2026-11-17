@@ -3647,19 +3647,30 @@ def download_lead_attachments(
     if requested:
         query = query.filter(LeadAttachment.id.in_(requested))
     rows = query.order_by(LeadAttachment.created_at.asc()).all()
-    if not rows:
+    # The customer page's documents in the job files: built or read only when chosen (all, when nothing is chosen).
+    from job_documents import job_document, job_document_items
+    documents = [(job, item) for job in db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all()
+                 for item in job_document_items(db, job) if not requested or item["id"] in requested]
+    if not rows and not documents:
         raise HTTPException(status_code=404, detail="No files found")
 
     archive = io.BytesIO()
     used_names: set[str] = set()
     skipped: list[str] = []
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-        for row in rows:
-            content = _stored_attachment_bytes(row)
+        def document_bytes(job, document_id):
+            try:
+                return job_document(db, job, document_id)[0]
+            except HTTPException:  # Not ready (e.g. the estimate has unanswered questions): listed as not included.
+                return None
+        files = [(row.file_name or row.id, lambda row=row: _stored_attachment_bytes(row)) for row in rows]
+        files += [(item["file_name"], lambda job=job, item=item: document_bytes(job, item["id"])) for job, item in documents]
+        for file_name, read in files:
+            content = read()
             if content is None:
-                skipped.append(row.file_name or row.id)
+                skipped.append(file_name)
                 continue
-            name = _safe_attachment_name(row.file_name or row.id)
+            name = _safe_attachment_name(file_name)
             stem, extension = os.path.splitext(name)
             candidate = name
             suffix = 2
@@ -3718,7 +3729,8 @@ def list_job_attachments(
         item = attachment.to_dict()
         item["uploaded_by_name"] = uploader.name if uploader else ""
         items.append(item)
-    return {"items": items}
+    from job_documents import job_document_items
+    return {"items": items + job_document_items(db, job)}
 
 
 @router.post("/leads/{lead_id}/jobs/{job_id}/attachments")
@@ -3788,6 +3800,12 @@ def download_job_attachment(
     _ensure_attachment_job_column(db)
     _ensure_attachment_link_columns(db)
     job = _get_job_or_404(lead_id, job_id, user, db)
+    from job_documents import job_document
+    document = job_document(db, job, attachment_id)
+    if document:
+        pdf, file_name = document
+        return Response(content=pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="{file_name}"', "Cache-Control": "private, no-store"})
     row = (
         db.query(LeadAttachment)
         .filter(LeadAttachment.id == attachment_id, LeadAttachment.job_id == job.id)
