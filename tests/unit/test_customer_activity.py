@@ -23,30 +23,20 @@ def move(db):
     db.flush()
 
 
-def test_past_signatures_are_copied_in_once():
-    """The table starts with every signature saved so far; an unsigned copy is not one."""
-    from models import Base, BillOfLadingSignature, CustomerActivity, EstimateSignature
-    from customer_activity_log import create_activity_table
+def test_tables_are_created_once_with_the_kinds():
+    """The tables start empty, with the four kinds: events are logged from the deploy on."""
+    from models import Base, CustomerActivity, CustomerActivityKind
+    from customer_activity_log import KINDS, create_activity_table
     engine = create_engine('sqlite://')
     tables = [table for table in Base.metadata.sorted_tables if table.name not in {'customer_activity', 'customer_activity_kinds'}]
     Base.metadata.create_all(engine, tables=tables)
-    now = datetime.utcnow()
-    with Session(engine) as db:
-        move(db)
-        db.add_all([
-            EstimateSignature(id='signed', lead_id='lead', job_id='job', snapshot='{}', pdf=b'', signer_name='Jane', signed_at=now - timedelta(hours=2)),
-            EstimateSignature(id='unsigned', lead_id='lead', job_id='job', snapshot='{}', pdf=b'')])
-        db.flush()
-        db.add(BillOfLadingSignature(id='bol', lead_id='lead', job_id='job', estimate_signature_id='signed', content_hash='x', spot=1,
-                                     pdf=b'', signer_name='Jane D', signature='{}', signed_at=now - timedelta(hours=1)))
-        db.commit()
     with engine.begin() as connection:
-        assert create_activity_table(connection) == 2
+        assert create_activity_table(connection) is True
     with engine.begin() as connection:
-        assert create_activity_table(connection) == 0
+        assert create_activity_table(connection) is False
     with Session(engine) as db:
-        rows = sorted((row.kind_id, row.spot, row.actor) for row in db.query(CustomerActivity))
-    assert rows == [(1, None, 'Jane'), (2, 2, 'Jane D')]
+        assert db.query(CustomerActivity).count() == 0
+        assert {row.id: row.label for row in db.query(CustomerActivityKind)} == KINDS
     engine.dispose()
 
 

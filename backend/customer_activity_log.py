@@ -64,24 +64,12 @@ def log_estimate_changed(db, lead, job, by_rep):
 
 
 def create_activity_table(connection):
-    """Once: the tables, the kinds with their wording, and every signature saved so far, so Customer Activity lists what
-    it listed before."""
-    from sqlalchemy import inspect, select
-    from models import BillOfLadingSignature, CustomerActivity, CustomerActivityKind, EstimateSignature
+    """Once: the tables, and the kinds with their wording. Events are logged from then on."""
+    from sqlalchemy import inspect
+    from models import CustomerActivity, CustomerActivityKind
     if inspect(connection).has_table(CustomerActivity.__tablename__):
-        return 0
+        return False
     CustomerActivityKind.__table__.create(connection)
     connection.execute(CustomerActivityKind.__table__.insert(), [dict(id=kind_id, label=label) for kind_id, label in KINDS.items()])
     CustomerActivity.__table__.create(connection)
-    rows = []
-    for row in connection.execute(select(EstimateSignature.lead_id, EstimateSignature.job_id, EstimateSignature.signer_name,
-                                         EstimateSignature.signed_at).where(EstimateSignature.signed_at.isnot(None))):
-        rows.append(dict(id=str(uuid4()), lead_id=row.lead_id, job_id=row.job_id, kind_id=ESTIMATE_SIGNED,
-                         actor=row.signer_name or '', by_rep=False, spot=None, created_at=row.signed_at))
-    for row in connection.execute(select(BillOfLadingSignature.lead_id, BillOfLadingSignature.job_id, BillOfLadingSignature.signer_name,
-                                         BillOfLadingSignature.spot, BillOfLadingSignature.signed_at)):
-        rows.append(dict(id=str(uuid4()), lead_id=row.lead_id, job_id=row.job_id, kind_id=BILL_OF_LADING_SIGNED,
-                         actor=row.signer_name or '', by_rep=False, spot=row.spot + 1, created_at=row.signed_at))
-    if rows:
-        connection.execute(CustomerActivity.__table__.insert(), rows)
-    return len(rows)
+    return True
