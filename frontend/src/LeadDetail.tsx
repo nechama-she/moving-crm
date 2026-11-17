@@ -1258,7 +1258,8 @@ export default function LeadDetail() {
     const pricedJobs = leadJobs.filter(job => job.price != null || job.charges.length > 0);
     if (!pricedJobs.length) return null;
     const cents = (value: number) => Math.round(value * 100);
-    const finalCents = pricedJobs.reduce((sum, job) => sum + (job.price == null
+    // The same lines as each job's Charges box; the saved price only for a job without lines.
+    const finalCents = pricedJobs.reduce((sum, job) => sum + (job.charges.length || job.price == null
       ? job.charges.reduce((total, charge) => total + cents(charge.total_cost), 0)
       : cents(job.price)), 0);
     const discountCents = pricedJobs.reduce((sum, job) => sum + job.charges.reduce((total, charge) => total + cents(charge.discount_amount), 0), 0);

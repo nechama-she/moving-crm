@@ -408,20 +408,11 @@ class Lead(Base):
             "thirdPartyCommissionPaidAt": self.third_party_payout_paid_at or "",
         }
 
+    def estimated_total_data(self):
+        return lead_estimated_total(self.lines_total, self.lines_discount, self.lineless_prices, self.estimated_total)
+
     def to_dict(self):
-        estimated_total_data = None
-        if self.estimated_total:
-            try:
-                parsed = json.loads(self.estimated_total)
-                if isinstance(parsed, dict):
-                    estimated_total_data = {
-                        "subtotal": float(parsed.get("subtotal") or 0),
-                        "taxableAmount": float(parsed.get("taxableAmount") or 0),
-                        "tax": float(parsed.get("tax") or 0),
-                        "finalTotal": float(parsed.get("finalTotal") or 0),
-                    }
-            except Exception:
-                estimated_total_data = None
+        estimated_total_data = self.estimated_total_data()
 
         payments_data = [row.to_dict() for row in self.payments]
 
@@ -805,6 +796,43 @@ class LeadJobCharge(Base):
             "created_at": self.created_at.isoformat() if self.created_at else "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
+
+
+# The lead's total, added up from its jobs whenever a lead is read: each job's lines (as its Charges box shows them),
+# or its saved price when it has no lines. Only the tax comes from the saved estimated_total (SmartMoving sends it).
+def _lead_sums():
+    from sqlalchemy import exists, func, select
+    from sqlalchemy.orm import column_property
+    lines = (select(func.sum(LeadJobCharge.total_cost)).join(LeadJob, LeadJob.id == LeadJobCharge.job_id)
+             .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
+    discounts = (select(func.sum(LeadJobCharge.discount_amount)).join(LeadJob, LeadJob.id == LeadJobCharge.job_id)
+                 .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
+    prices = (select(func.sum(LeadJob.price)).where(LeadJob.lead_id == Lead.id, ~exists().where(LeadJobCharge.job_id == LeadJob.id))
+              .correlate_except(LeadJob).scalar_subquery())
+    Lead.lines_total = column_property(lines)
+    Lead.lines_discount = column_property(discounts)
+    Lead.lineless_prices = column_property(prices)
+
+
+_lead_sums()
+
+
+def lead_estimated_total(lines, discounts, prices, saved):
+    """The lead's total (subtotal, taxableAmount, tax, finalTotal) from its jobs' sums, with the saved tax; the saved
+    total as is when no job has lines or a price."""
+    try:
+        parsed = json.loads(saved) if saved else None
+    except ValueError:
+        parsed = None
+    parsed = parsed if isinstance(parsed, dict) else None
+    if lines is None and prices is None:
+        if parsed is None:
+            return None
+        return {key: float(parsed.get(key) or 0) for key in ("subtotal", "taxableAmount", "tax", "finalTotal")}
+    final = float(lines or 0) + float(prices or 0)
+    tax = float((parsed or {}).get("tax") or 0)
+    return {"subtotal": round(final + float(discounts or 0), 2), "taxableAmount": float((parsed or {}).get("taxableAmount") or 0),
+            "tax": tax, "finalTotal": round(final + tax, 2)}
 
 
 class DispatchCalendarDay(Base):

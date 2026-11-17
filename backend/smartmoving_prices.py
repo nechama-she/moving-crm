@@ -13,7 +13,8 @@ def drop_smartmoving_prices(db, job):
     final, discounts = Decimal(0), Decimal(0)
     for row in db.query(LeadJob).filter(LeadJob.lead_id == job.lead_id).all():
         charges = db.query(LeadJobCharge).filter(LeadJobCharge.job_id == row.id).all()
-        final += Decimal(str(row.price)) if row.price is not None else sum((Decimal(str(c.total_cost or 0)) for c in charges), Decimal(0))
+        # The job's lines, as its Charges box adds them; the saved price only for a job without lines.
+        final += sum((Decimal(str(c.total_cost or 0)) for c in charges), Decimal(0)) if charges or row.price is None else Decimal(str(row.price))
         discounts += sum((Decimal(str(c.discount_amount or 0)) for c in charges), Decimal(0))
     # Written straight to the table: SmartMoving's prices are not on the estimate, so a rep's approval stays.
     from sqlalchemy import update

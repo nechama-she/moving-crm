@@ -47,7 +47,7 @@ from libs.smartmoving.client import (
     finish_request_capture,
     update_opportunity_salesperson,
 )
-from models import Lead, LeadContact, LeadPayment, contact_key, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess, job_number
+from models import Lead, LeadContact, LeadPayment, contact_key, lead_estimated_total, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess, job_number
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
 from routes.templates import get_company_template, render_template
@@ -1076,7 +1076,7 @@ def get_dispatch_calendar(
                 "price": float(job.price) if job.price is not None else None,
                 "volume": float(lead.volume) if lead.volume is not None else None,
                 "weight": float(lead.weight) if lead.weight is not None else None,
-                "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
+                "estimatedTotal": lead.estimated_total_data(),
                 "payments": payments.get(lead.id, []),
                 "thirdPartyPayout": lead.third_party_payout(),
                 "status": lead.status or "",
@@ -1186,7 +1186,7 @@ def get_sales_calendar(
                 "pickup_zip": job.pickup_zip or "",
                 "delivery_zip": job.delivery_zip or "",
                 "price": float(job.price) if job.price is not None else None,
-                "estimatedTotal": _deserialize_estimated_total(lead.estimated_total),
+                "estimatedTotal": lead.estimated_total_data(),
                 "payments": payments.get(lead.id, []),
                 "thirdPartyPayout": lead.third_party_payout(),
                 "status": lead.status or "",
@@ -1223,7 +1223,7 @@ def get_sales_performance(
     rows = (
         db.query(
             LeadJob.booked_move_date,
-            Lead.estimated_total,
+            Lead.lines_total, Lead.lines_discount, Lead.lineless_prices, Lead.estimated_total,
             User.id.label("assigned_to"),
             User.name.label("assigned_to_name"),
         )
@@ -1241,7 +1241,7 @@ def get_sales_performance(
 
     month_keys = [month.strftime("%Y-%m") for month in months]
     rep_totals: dict[str, dict[str, Any]] = {}
-    for booked_date, estimated_total, assigned_to, assigned_to_name in rows.all():
+    for booked_date, lines_total, lines_discount, lineless_prices, estimated_total, assigned_to, assigned_to_name in rows.all():
         rep = rep_totals.setdefault(
             assigned_to,
             {
@@ -1250,7 +1250,7 @@ def get_sales_performance(
                 "months": {key: [0.0] * 31 for key in month_keys},
             },
         )
-        total = _deserialize_estimated_total(estimated_total)
+        total = lead_estimated_total(lines_total, lines_discount, lineless_prices, estimated_total)
         amount = float((total or {}).get("finalTotal") or 0)
         rep["months"][booked_date.strftime("%Y-%m")][booked_date.day - 1] += amount
 
@@ -2717,10 +2717,11 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
             from models import PublicMoveAccess
             for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
                 access.published_price = job.price
-        if job.price is not None:
-            final_before_tax += _to_money_decimal(job.price, 'price')
-        else:
+        # The job's lines, as its Charges box adds them; the saved price only for a job without lines.
+        if job.charges or job.price is None:
             final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0))
+        else:
+            final_before_tax += _to_money_decimal(job.price, 'price')
         discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0))
     tax = _to_money_decimal(existing.get('tax'), 'tax')
     lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
