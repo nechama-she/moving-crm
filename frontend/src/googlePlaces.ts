@@ -7,7 +7,8 @@ type PlacesLibrary = {
 };
 type DirectionsService = {route(request:{origin:string;destination:string;travelMode:string},callback:(result:{routes:{legs:{distance?:{value:number}}[]}[]} | null,status:string)=>void):void};
 type GeocodeResult={address_components:{short_name:string;types:string[]}[];geometry:{location:{lat():number;lng():number}}};
-type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary;DirectionsService?:new()=>DirectionsService;Geocoder?:new()=>{geocode(request:{address:string;region:string},callback:(results:GeocodeResult[]|null,status:string)=>void):void}}}; __crmAddressReady?:()=>void};
+type GeocodeRequest={address:string;region:string}|{location:{lat:number;lng:number}};
+type MapsBrowser = Window & {google?:{maps:{places?:PlacesLibrary;DirectionsService?:new()=>DirectionsService;Geocoder?:new()=>{geocode(request:GeocodeRequest,callback:(results:GeocodeResult[]|null,status:string)=>void):void}}}; __crmAddressReady?:()=>void};
 export type PricingLocation={address:string;state:string;zip_code:string;latitude:number;longitude:number};
 let loading: Promise<PlacesLibrary> | undefined;
 
@@ -67,20 +68,32 @@ export async function browserDrivingMeters(key:string,origin:string,destination:
   });
 }
 
-export async function browserPricingLocation(key:string,address:string):Promise<PricingLocation> {
-  await loadPlaces(key);
+function geocode(request:GeocodeRequest):Promise<{results:GeocodeResult[]|null;status:string}> {
   const Geocoder=(window as MapsBrowser).google?.maps.Geocoder;
-  if(!Geocoder) throw new Error('Location lookup unavailable');
+  if(!Geocoder) return Promise.reject(new Error('Location lookup unavailable'));
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(new Error('Location lookup timed out')),15000);
-    new Geocoder().geocode({address,region:'US'},(results,status)=>{
-      clearTimeout(timer);
-      const result=results?.[0];
-      const part=(type:string)=>result?.address_components.find(row=>row.types.includes(type))?.short_name || '';
-      if(status!=='OK' || results?.length!==1 || !result || part('country')!=='US' || !part('administrative_area_level_1')) {
-        reject(new Error('Location could not be resolved'));return;
-      }
-      resolve({address,state:part('administrative_area_level_1'),zip_code:part('postal_code'),latitude:result.geometry.location.lat(),longitude:result.geometry.location.lng()});
-    });
+    new Geocoder().geocode(request,(results,status)=>{clearTimeout(timer);resolve({results,status});});
   });
+}
+
+const addressPart=(result:GeocodeResult|undefined,type:string)=>result?.address_components.find(row=>row.types.includes(type))?.short_name || '';
+
+export async function browserPricingLocation(key:string,address:string):Promise<PricingLocation> {
+  await loadPlaces(key);
+  const {results,status}=await geocode({address,region:'US'});
+  const result=results?.[0];
+  const part=(type:string)=>addressPart(result,type);
+  if(status!=='OK' || results?.length!==1 || !result || part('country')!=='US' || !part('administrative_area_level_1')) {
+    throw new Error('Location could not be resolved');
+  }
+  const latitude=result.geometry.location.lat(), longitude=result.geometry.location.lng();
+  let zip=part('postal_code');
+  if(!zip) {
+    // A city or area alone has no ZIP: the ZIP at its point on the map, in the same state, prices it.
+    const point=await geocode({location:{lat:latitude,lng:longitude}}).catch(()=>null);
+    const found=point?.status==='OK' ? point.results?.find(row=>addressPart(row,'postal_code') && addressPart(row,'administrative_area_level_1')===part('administrative_area_level_1')) : undefined;
+    zip=addressPart(found,'postal_code');
+  }
+  return {address,state:part('administrative_area_level_1'),zip_code:zip,latitude,longitude};
 }
