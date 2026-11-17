@@ -7,8 +7,9 @@ from models import LeadJobCharge, PublicMoveAccess
 
 
 def price_is_locked(lead, job):
+    """A booked job's price: booked, scheduled or completed, or with a booked date. Lost and cancelled are not locked."""
     return bool(lead.booked_move_date or job.booked_move_date or
-                (lead.status or '').lower() in {'booked', 'confirmed', 'scheduled', 'completed', 'lost', 'cancelled'})
+                (lead.status or '').lower() in {'booked', 'scheduled', 'completed'})
 
 
 def utc_naive(value):
