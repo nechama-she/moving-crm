@@ -152,6 +152,8 @@ class Company(Base):
     office_address = Column(Text, nullable=False, default="", server_default="")
     dot_number = Column(String(30), nullable=False, default="", server_default="")
     mc_number = Column(String(30), nullable=False, default="", server_default="")
+    # Shown in message templates (@CompanyWebsite).
+    website = Column(String(255), nullable=False, default="", server_default="")
     # The shipment's valuation, per lb, printed on work orders.
     valuation_per_lb = Column(Numeric(6, 2))
     # Customer emails (e.g. portal codes) are sent from this address via SES; its domain must be verified in SES.
@@ -180,6 +182,7 @@ class Company(Base):
             "office_address": self.office_address or "",
             "dot_number": self.dot_number or "",
             "mc_number": self.mc_number or "",
+            "website": self.website or "",
             "valuation_per_lb": float(self.valuation_per_lb) if self.valuation_per_lb is not None else None,
             "sender_email": self.sender_email or "",
             "facebook_page_id": self.facebook_page_id or "",

@@ -28,7 +28,7 @@ def setup(monkeypatch):
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        db.add_all([Company(id='movers95', name='Movers 95', phone='240-226-3174'), Company(id='gorilla', name='Gorilla Haulers', phone='555-0100'),
+        db.add_all([Company(id='movers95', name='Movers 95', phone='240-226-3174', website='https://www.movers95.com'), Company(id='gorilla', name='Gorilla Haulers', phone='555-0100'),
                     User(id='eli', name='Eli Jones', email='eli@example.com', phone='555-0199', password_hash='x', role='admin')])
         db.flush()
         db.add_all([Lead(id='a', full_name='Gabrielle Taylor', phone='5512752490', company_id='movers95', assigned_to='eli'),
@@ -45,7 +45,7 @@ def test_default_text_filled_in_and_a_companys_own_text(setup):
     created = templates.create_template(templates.TemplateInput(name='Follow up', body='Hi @FirstName, this is @RepName from @CompanyName (@CompanyPhone). Moving @Pickup to @Delivery on @MoveDate. Email us at office@movers95.com.'), admin, db)
     filled = templates.lead_templates('a', admin, db)['items']
     assert filled == [{'id': created['id'], 'name': 'Follow up',
-                       'text': 'Hi Gabrielle, this is Eli Jones from Movers 95 (240-226-3174). Moving Norfolk, VA to Moyock, NC on 12/23/2026. Email us at office@movers95.com.'}]
+                       'text': 'Hi Gabrielle, this is Eli Jones from Movers 95 ((240) 226-3174). Moving Norfolk, VA to Moyock, NC on 12/23/2026. Email us at office@movers95.com.'}]
     # Movers 95 gets its own text; Gorilla Haulers keeps the default.
     templates.save_company_text(created['id'], 'movers95', templates.OverrideInput(body='Movers 95 here, @FirstName!'), admin, db)
     assert templates.lead_templates('a', admin, db)['items'][0]['text'] == 'Movers 95 here, Gabrielle!'
@@ -79,3 +79,22 @@ def test_blank_name_or_text_is_refused(setup):
     for name, body in (('   ', 'text'), ('Name', '  \n ')):
         with pytest.raises(pydantic.ValidationError):
             templates.TemplateInput(name=name, body=body)
+
+
+def test_every_field_in_the_list_is_filled_in(setup):
+    from models import Lead
+    templates, db, admin = setup
+    lead = db.get(Lead, 'a')
+    lead.volume, lead.weight, lead.move_size, lead.move_type, lead.referral_source = 286, 2002.5, '2 bedroom', 'long_distance', 'Facebook'
+    db.commit()
+    body = ' | '.join('@' + token for token, _, _ in templates.PLACEHOLDERS)
+    templates.create_template(templates.TemplateInput(name='All', body=body), admin, db)
+    text = templates.lead_templates('a', admin, db)['items'][0]['text']
+    assert not any('@' + token in text for token, _, _ in templates.PLACEHOLDERS)  # Every field was replaced.
+    filled = dict(zip([token for token, _, _ in templates.PLACEHOLDERS], text.split(' | ')))
+    assert filled['FirstName'] == 'Gabrielle' and filled['LastName'] == 'Taylor'
+    assert filled['LeadPhone'] == '(551) 275-2490' and filled['MoveType'] == 'Long Distance'
+    assert filled['Volume'] == '286 cu ft' and filled['Weight'] == '2,002.50 lb' and filled['MoveSize'] == '2 bedroom'
+    assert filled['RepFirstName'] == 'Eli' and filled['RepPhone'] == '555-0199' and filled['RepEmail'] == 'eli@example.com'
+    assert filled['JobNumber'].endswith('-1') and filled['ReferralSource'] == 'Facebook'
+    assert filled['CompanyWebsite'] == 'https://www.movers95.com'

@@ -14,12 +14,18 @@ router = APIRouter(prefix="/api", tags=["Message Templates"])
 
 # What a template can show, written @Token in its text: filled from the lead, its company and the rep the lead is
 # assigned to. (token, label, group)
+LEAD, COMPANY, REP = "Lead info", "Company info", "Rep info"
 PLACEHOLDERS = [
-    ("FirstName", "First name", "Lead info"), ("FullName", "Full name", "Lead info"), ("LeadPhone", "Phone", "Lead info"),
-    ("LeadEmail", "Email", "Lead info"), ("MoveDate", "Move date", "Lead info"), ("Pickup", "Pickup address", "Lead info"),
-    ("Delivery", "Delivery address", "Lead info"),
-    ("CompanyName", "Name", "Company info"), ("CompanyPhone", "Phone", "Company info"),
-    ("RepName", "Name", "Rep info"), ("RepPhone", "Phone", "Rep info"), ("RepEmail", "Email", "Rep info"),
+    ("FirstName", "First name", LEAD), ("LastName", "Last name", LEAD), ("FullName", "Full name", LEAD),
+    ("LeadPhone", "Phone", LEAD), ("LeadEmail", "Email", LEAD), ("MoveDate", "Move date", LEAD),
+    ("BookedDate", "Booked date", LEAD), ("MoveSize", "Move size", LEAD), ("MoveType", "Move type", LEAD),
+    ("Volume", "Volume (cu ft)", LEAD), ("Weight", "Weight (lb)", LEAD), ("Pickup", "Pickup address", LEAD),
+    ("Stops", "Stops", LEAD), ("Delivery", "Delivery address", LEAD), ("JobNumber", "Job number", LEAD),
+    ("EstimateTotal", "Estimate total", LEAD), ("ReferralSource", "Referral source", LEAD),
+    ("CompanyName", "Name", COMPANY), ("CompanyPhone", "Phone", COMPANY), ("CompanyEmail", "Email", COMPANY),
+    ("CompanyWebsite", "Website", COMPANY),
+    ("CompanyAddress", "Office address", COMPANY), ("DOTNumber", "DOT number", COMPANY), ("MCNumber", "MC number", COMPANY),
+    ("RepFirstName", "First name", REP), ("RepName", "Full name", REP), ("RepPhone", "Phone", REP), ("RepEmail", "Email", REP),
 ]
 # An @ starting a word, as the editor inserts it; one inside a word (an email address) is not a field.
 _TOKEN = re.compile(r"(?<![A-Za-z0-9])@([A-Za-z]+)")
@@ -28,6 +34,33 @@ _TOKEN = re.compile(r"(?<![A-Za-z0-9])@([A-Za-z]+)")
 def fill(text, values):
     """Each @Token replaced by its value; any other @word (an email address, a handle) is left as written."""
     return _TOKEN.sub(lambda match: values[match.group(1)] if match.group(1) in values else match.group(0), text)
+
+
+def _phone(value):
+    """A US number as people write it, (202) 937-2625; anything else as saved."""
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}" if len(digits) == 10 else (value or "").strip()
+
+
+def _date(value):
+    """12/23/2026 from a saved date (a date, or text such as 2026-12-23); text that is not a date as saved."""
+    from datetime import date
+    if isinstance(value, date):
+        return value.strftime("%m/%d/%Y")
+    try:
+        return date.fromisoformat((value or "").strip()[:10]).strftime("%m/%d/%Y")
+    except ValueError:
+        return (value or "").strip()
+
+
+def _amount(value, unit):
+    """60 cu ft, 420 lb: whole numbers without decimals."""
+    if value is None:
+        return ""
+    number = float(value)
+    return f"{number:,.0f} {unit}" if number == int(number) else f"{number:,.2f} {unit}"
 
 
 class TemplateInput(BaseModel):
@@ -120,20 +153,33 @@ def save_company_text(template_id: str, company_id: str, body: OverrideInput, us
 @router.get("/leads/{lead_id}/message-templates")
 def lead_templates(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The templates for this lead's company (its own text where it has one), filled in with the lead's details."""
+    from move_types import normalize_move_type
+    from models import job_number
     from routes.leads import _get_visible_lead_or_404, _read_job_route
     lead = _get_visible_lead_or_404(lead_id, user, db)
+    # The lead's first job: its route, dates and number.
     job = db.query(LeadJob).filter(LeadJob.lead_id == lead.id).order_by(LeadJob.job_order).first()
-    pickup, _, delivery = _read_job_route(db, job) if job else ("", [], "")
+    pickup, stops, delivery = _read_job_route(db, job) if job else ("", [], "")
     company = db.get(Company, lead.company_id) if lead.company_id else None
     rep = db.get(User, lead.assigned_to) if lead.assigned_to else None
-    full_name = (lead.full_name or "").strip()
+    names = (lead.full_name or "").split()
+    rep_names = ((rep.name or "") if rep else "").split()
+    total = (lead.estimated_total_data() or {}).get("finalTotal")
     values = {
-        "FirstName": full_name.split(" ")[0] if full_name else "", "FullName": full_name,
-        "LeadPhone": lead.phone or "", "LeadEmail": lead.email or "",
-        "MoveDate": (job.move_date if job and job.move_date else lead.move_date) or "",
-        "Pickup": pickup or "", "Delivery": delivery or "",
-        "CompanyName": company.name if company else "", "CompanyPhone": (company.phone or "") if company else "",
-        "RepName": rep.name if rep else "", "RepPhone": (rep.phone or "") if rep else "", "RepEmail": (rep.email or "") if rep else "",
+        "FirstName": names[0] if names else "", "LastName": " ".join(names[1:]), "FullName": " ".join(names),
+        "LeadPhone": _phone(lead.phone), "LeadEmail": (lead.email or "").strip(),
+        "MoveDate": _date(job.move_date if job and job.move_date else lead.move_date),
+        "BookedDate": _date(job.booked_move_date if job and job.booked_move_date else lead.booked_move_date),
+        "MoveSize": (lead.move_size or "").strip(), "MoveType": normalize_move_type(lead.move_type),
+        "Volume": _amount(lead.volume, "cu ft"), "Weight": _amount(lead.weight, "lb"),
+        "Pickup": pickup or "", "Stops": "; ".join(address for address in stops if address), "Delivery": delivery or "",
+        "JobNumber": job_number(lead, job) if job else (lead.number or ""),
+        "EstimateTotal": f"${total:,.2f}" if total else "", "ReferralSource": (lead.referral_source or "").strip(),
+        "CompanyName": company.name if company else "", "CompanyPhone": _phone(company.phone) if company else "",
+        "CompanyEmail": (company.sender_email or "") if company else "", "CompanyWebsite": (company.website or "") if company else "", "CompanyAddress": (company.office_address or "") if company else "",
+        "DOTNumber": (company.dot_number or "") if company else "", "MCNumber": (company.mc_number or "") if company else "",
+        "RepFirstName": rep_names[0] if rep_names else "", "RepName": " ".join(rep_names),
+        "RepPhone": _phone(rep.phone) if rep else "", "RepEmail": (rep.email or "") if rep else "",
     }
     overrides = {}
     if lead.company_id:

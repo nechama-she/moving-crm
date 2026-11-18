@@ -29,6 +29,9 @@ def migrate() -> None:
     from smartmoving_prices import detach_signed_leads
     with engine.begin() as connection:
         logger.info('Signed leads detached from SmartMoving: %s', detach_signed_leads(connection))
+    # Companies' website, for message templates (@CompanyWebsite). Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'companies', 'website', "VARCHAR(255) NOT NULL DEFAULT ''")
     # The message templates users pick when writing to a lead, and companies' own texts for them. Remove after a deploy ran it.
     from sqlalchemy import inspect
     from models import MessageTemplate, MessageTemplateOverride
