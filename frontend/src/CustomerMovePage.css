@@ -14,6 +14,9 @@
 .cm-company-welcome{display:block;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--cm-text-muted)}
 .cm-company-name{margin:2px 0 0!important;font-size:22px!important;color:var(--cm-text)!important;font-weight:700;line-height:1.2}
 .cm-company-header-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;font-size:13px;color:var(--cm-text-muted)}
+/* Too narrow for the phone and address beside the name: they go under it, lined up on the left. */
+.cm-company-header{container-type:inline-size}
+@container (max-width:560px){.cm-company-header-right{align-items:flex-start}}
 .cm-company-phone{color:var(--cm-primary);font-weight:600;text-decoration:none;transition:color .15s}
 .cm-company-phone:hover{color:var(--cm-primary-hover);text-decoration:underline}
 .cm-company-address{font-size:12px;color:var(--cm-text-muted)}
