@@ -70,8 +70,8 @@ def list_templates(company_id: str = "", user: User = Depends(get_current_user),
 @router.get("/message-templates/fields")
 def list_fields(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     """Every field there is, by group, and whether the @ list offers it."""
-    from template_fields import fields
-    enabled = {row.token for row in db.query(MessageTemplateField).filter(MessageTemplateField.enabled.is_(True))}
+    from template_fields import enabled_tokens, fields
+    enabled = enabled_tokens(db)
     return {"fields": [{"token": token, "label": label, "group": group, "enabled": token in enabled} for token, label, group in fields()]}
 
 
@@ -141,14 +141,14 @@ def save_company_text(template_id: str, company_id: str, body: OverrideInput, us
 def lead_templates(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The templates for this lead's company (its own text where it has one), filled in with the lead's details."""
     from routes.leads import _get_visible_lead_or_404, _read_job_route
-    from template_fields import values as field_values
+    from template_fields import customer_links, values as field_values
     lead = _get_visible_lead_or_404(lead_id, user, db)
     # The lead's first job: its route, dates and number.
     job = db.query(LeadJob).filter(LeadJob.lead_id == lead.id).order_by(LeadJob.job_order).first()
     route = _read_job_route(db, job) if job else ("", [], "")
     company = db.get(Company, lead.company_id) if lead.company_id else None
     rep = db.get(User, lead.assigned_to) if lead.assigned_to else None
-    values = field_values(lead, job, route, company, rep)
+    values = field_values(lead, job, route, company, rep, customer_links(db, lead))
     overrides = {}
     if lead.company_id:
         overrides = {row.template_id: row.body for row in db.query(MessageTemplateOverride).filter_by(company_id=lead.company_id)}

@@ -594,7 +594,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {/* Reply input */}
       {canReply && (
-        <div ref={composerRef} style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 8, padding: "12px 0", borderTop: "1px solid #e0e0e0" }}>
+        <div ref={composerRef} style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8, padding: "12px 0", borderTop: "1px solid #e0e0e0" }}>
           {templatesOpen && (
             <div role="listbox" aria-label="Message templates" style={{ position: "absolute", left: 0, right: 0, bottom: "100%", marginBottom: 4, maxHeight: 280, overflowY: "auto", background: "#fff", border: "1px solid #d8dde6", borderRadius: 8, boxShadow: "0 6px 18px rgba(15,23,42,.12)", zIndex: 5 }}>
               {templatesError ? <div style={{ padding: 12, fontSize: 13, color: "#ba0517" }}>{templatesError}</div>
@@ -610,11 +610,6 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
                 ))}
             </div>
           )}
-          <button type="button" className="slds-button" onClick={() => void toggleTemplates()} aria-expanded={templatesOpen} title="Insert a template"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 8, border: "1px solid #ccc", background: templatesOpen ? "#e3f2fd" : "#fff", color: "#1976d2", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></svg>
-            Templates
-          </button>
           <textarea
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
@@ -628,9 +623,9 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
             placeholder={`Reply via ${activeTab === "messages" ? "SMS" : "Messenger"}…`}
             disabled={sending}
             ref={replyBoxRef}
-            rows={1}
+            rows={3}
             style={{
-              flex: 1,
+              width: "100%",
               minWidth: 0,
               padding: "10px 14px",
               borderRadius: 8,
@@ -644,22 +639,30 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
               outline: "none",
             }}
           />
-          <button className="slds-button"
-            onClick={handleSendReply}
-            disabled={sending || !replyText.trim()}
-            style={{
-              padding: "10px 20px",
-              borderRadius: 8,
-              border: "none",
-              background: sending || !replyText.trim() ? "#ccc" : "#1976d2",
-              color: "#fff",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: sending || !replyText.trim() ? "default" : "pointer",
-            }}
-          >
-            {sending ? "Sending…" : "Send"}
-          </button>
+          {/* The text box takes the whole width; its actions sit under it. */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+            <button type="button" className="slds-button" onClick={() => void toggleTemplates()} aria-expanded={templatesOpen} title="Insert a template"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 8, border: "1px solid #ccc", background: templatesOpen ? "#e3f2fd" : "#fff", color: "#1976d2", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></svg>
+              Templates
+            </button>
+            <button className="slds-button"
+              onClick={handleSendReply}
+              disabled={sending || !replyText.trim()}
+              style={{
+                padding: "10px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: sending || !replyText.trim() ? "#ccc" : "#1976d2",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: sending || !replyText.trim() ? "default" : "pointer",
+              }}
+            >
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
         </div>
       )}
     </div>
