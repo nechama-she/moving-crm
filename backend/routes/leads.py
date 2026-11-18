@@ -4337,6 +4337,17 @@ def _apply_lead_update(
     prev_assigned_to = lead.assigned_to
 
     if body.status is not None:
+        # Booked in the CRM: the booked date is today, by the company's clock, as SmartMoving's sync records it.
+        if body.status.strip().lower() == "booked" and (lead.status or "").strip().lower() != "booked":
+            company = db.get(Company, lead.company_id) if lead.company_id else None
+            try:
+                zone = ZoneInfo((company.timezone if company else "") or "America/New_York")
+            except ZoneInfoNotFoundError:
+                zone = ZoneInfo("America/New_York")
+            booked_today = datetime.now(zone).date()
+            lead.booked_move_date = booked_today
+            for booked_job in db.query(LeadJob).filter(LeadJob.lead_id == lead.id).all():
+                booked_job.booked_move_date = booked_today
         lead.status = body.status
     if body.priority is not None:
         lead.priority = body.priority
