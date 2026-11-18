@@ -11,7 +11,9 @@ _JOB_BOOKKEEPING = {'pricing_match_key', 'pricing_plan_id', 'pricing_move_type',
                     'estimate_approved_id', 'estimate_approved_at',
                     'crew_size', 'trucks', 'start_time', 'estimated_hours', 'travel_hours', 'smartmoving_price',
                     # Internal and foreman notes are on the work order only, not the estimate.
-                    'notes', 'foreman_notes'}
+                    'notes', 'foreman_notes',
+                    # The day it was booked: the estimate does not show it.
+                    'booked_move_date'}
 _LEAD_SHOWN = {'full_name', 'phone', 'email', 'volume', 'weight', 'move_type', 'estimated_total', 'company_id'}
 _ACCESS_SHOWN = {'published_price', 'published_cuft'}
 _COMPANY_SHOWN = {'name', 'phone', 'office_address', 'logo', 'color', 'dot_number'}

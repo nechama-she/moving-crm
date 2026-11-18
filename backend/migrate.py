@@ -25,6 +25,10 @@ def migrate() -> None:
     from smartmoving_prices import drop_signed_smartmoving_prices
     with engine.begin() as connection:
         logger.info('Signed jobs without SmartMoving prices: %s', drop_signed_smartmoving_prices(connection))
+    # Leads already signed on the customer page detached from SmartMoving (their ids kept aside). Remove after a deploy ran it.
+    from smartmoving_prices import detach_signed_leads
+    with engine.begin() as connection:
+        logger.info('Signed leads detached from SmartMoving: %s', detach_signed_leads(connection))
 
 
 if __name__ == "__main__":

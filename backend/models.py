@@ -75,6 +75,15 @@ class BillOfLadingSignature(Base):
     signed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class DetachedSmartMovingLead(Base):
+    """A SmartMoving opportunity whose lead was signed on the customer page: the lead no longer carries its id, so
+    SmartMoving's updates find no lead, and a new lead is never created from it."""
+    __tablename__ = 'detached_smartmoving_leads'
+    smartmoving_id = Column(String(100), primary_key=True)
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    detached_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class EstimateSignature(Base):
     __tablename__ = 'estimate_signatures'
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
