@@ -51,6 +51,8 @@ export async function browserSuggestions(key:string,input:string,signal:AbortSig
 }
 
 export async function browserDrivingMeters(key:string,origin:string,destination:string):Promise<number> {
+  // The same place (often a city or ZIP for both): no driving, 0 miles, and no route request.
+  if(origin.trim().toLowerCase()===destination.trim().toLowerCase()) return 0;
   await loadPlaces(key);
   const Service=(window as MapsBrowser).google?.maps.DirectionsService;
   if(!Service) throw new Error('Driving directions are unavailable. Please try again.');
