@@ -158,7 +158,7 @@ export default function CompanyTemplatesPage() {
 
   return (
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>SMS Templates</h1>
+      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Automated SMS Templates</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b", fontSize: 13 }}>
         Edit the global system defaults or override them for an individual company.
       </p>

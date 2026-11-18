@@ -12,6 +12,7 @@ type Company = {
   office_address?: string;
   dot_number?: string;
   mc_number?: string;
+  website?: string;
   valuation_per_lb?: number | null;
   sender_email?: string;
   facebook_page_id?: string;
@@ -33,6 +34,7 @@ type CompanyForm = {
   office_address: string;
   dot_number: string;
   mc_number: string;
+  website: string;
   valuation_per_lb: string;
   sender_email: string;
   facebook_page_id: string;
@@ -53,6 +55,7 @@ const emptyForm: CompanyForm = {
   office_address: "",
   dot_number: "",
   mc_number: "",
+  website: "",
   valuation_per_lb: "",
   sender_email: "",
   facebook_page_id: "",
@@ -125,6 +128,7 @@ export default function CompaniesPage() {
       office_address: company.office_address || "",
       dot_number: company.dot_number || "",
       mc_number: company.mc_number || "",
+      website: company.website || "",
       valuation_per_lb: company.valuation_per_lb == null ? "" : String(company.valuation_per_lb),
       sender_email: company.sender_email || "",
       facebook_page_id: company.facebook_page_id || "",
@@ -159,6 +163,7 @@ export default function CompaniesPage() {
         office_address: form.office_address.trim(),
         dot_number: form.dot_number.trim(),
         mc_number: form.mc_number.trim(),
+        website: form.website.trim(),
         valuation_per_lb: form.valuation_per_lb.trim() === "" ? null : Number(form.valuation_per_lb),
         sender_email: form.sender_email.trim(),
         facebook_page_id: form.facebook_page_id.trim(),
@@ -316,6 +321,11 @@ export default function CompaniesPage() {
             Office address
             <input value={form.office_address} onChange={(e) => updateField("office_address", e.target.value)} style={inputStyle} placeholder="Street address, city, state, ZIP" maxLength={1000} />
             <small>Used for local travel time: office to pickup, and delivery back to office.</small>
+          </label>
+          <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
+            Website
+            <input value={form.website} onChange={(e) => updateField("website", e.target.value)} style={inputStyle} inputMode="url" placeholder="https://www.company.com" maxLength={255} />
+            <small>Used in message templates (@CompanyWebsite).</small>
           </label>
           <label style={{ ...fieldLabel, gridColumn: "1 / -1" }}>
             Sender email

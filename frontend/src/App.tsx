@@ -25,6 +25,7 @@ const SalesRepsPage = lazy(() => import("./SalesRepsPage"));
 const DispatchPage = lazy(() => import("./DispatchPage"));
 const CompaniesPage = lazy(() => import("./CompaniesPage"));
 const CompanyTemplatesPage = lazy(() => import("./CompanyTemplatesPage"));
+const MessageTemplatesPage = lazy(() => import("./MessageTemplatesPage"));
 const InventoryCatalogPage = lazy(() => import("./InventoryCatalogPage"));
 const MovingTermsPage = lazy(() => import("./MovingTermsPage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
@@ -118,6 +119,7 @@ function ProtectedRoutes() {
           <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
+          <Route path="/settings/message-templates" element={<MessageTemplatesPage />} />
           <Route path="/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/pending-duplications" element={<Navigate to="/pending-duplications" replace />} />
           <Route path="/settings/duplication-rules" element={user?.role === "admin" ? <LeadDuplicationRulesPage /> : <Navigate to="/" replace />} />

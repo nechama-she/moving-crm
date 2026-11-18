@@ -42,7 +42,8 @@ export default function SettingsPage() {
       entry("Duplication rules", "/settings/duplication-rules", "Configure lead duplication."),
     ] : [] },
     { title: "Communication", items: admin ? [
-      entry("SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages."),
+      entry("Automated SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages."),
+      entry("Message templates", "/settings/message-templates", "Messages to pick from when texting a lead, per company."),
       entry("Ignored numbers", "/settings/ignored-call-numbers", "Exclude numbers from the sales work queue."),
     ] : [] },
     { title: "My account", items: [

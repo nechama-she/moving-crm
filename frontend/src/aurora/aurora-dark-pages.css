@@ -754,6 +754,7 @@ html.aur-dark .pricing-job-context a { color: var(--aur-accent-ink); }
 html.aur-dark .pricing-overview h2,
 html.aur-dark .pricing-calculator h2 { color: var(--aur-ink); }
 html.aur-dark .pricing-overview p { color: var(--aur-muted); }
+html.aur-dark .pricing-out-of-area label { color: var(--aur-muted); }
 html.aur-dark .pricing-calc-fields input,
 html.aur-dark .pricing-calc-fields select,
 html.aur-dark .pricing-table-toolbar input,
@@ -966,6 +967,12 @@ html.aur-dark .ld-box-table .ld-box-icon:hover { background-color: var(--aur-acc
 html.aur-dark .ld-box-table .ld-box-empty { color: var(--aur-muted); }
 html.aur-dark .pricing-section-heading { background-color: var(--aur-subtle); }
 html.aur-dark .pricing-section-actions .slds-button:hover:not(:disabled) { background-color: var(--aur-accent-soft); }
+html.aur-dark .activity-notice { background-color: var(--aur-surface); color: var(--aur-ink, var(--aur-ink)); border: 1px solid var(--aur-line, var(--aur-line-strong)); }
+html.aur-dark .activity-notice-open small { color: var(--aur-muted, var(--aur-muted)); }
+html.aur-dark .activity-notice-close { color: var(--aur-muted, var(--aur-muted)); }
+html.aur-dark .activity-notice-close:hover,
+html.aur-dark .activity-notice-open:hover strong { color: var(--aur-accent, var(--aur-accent-ink)); }
+html.aur-dark .queue-activity-marked td { background-color: var(--aur-amber-bg); }
 
 /* Inline styles */
 html.aur-dark :is(
@@ -1059,6 +1066,7 @@ html.aur-dark :is(
   [style*="border-color:"][style*="rgb(238, 238, 238)"],
   [style*="border-color:"][style*="rgb(238, 240, 242)"],
   [style*="border-color:"][style*="rgb(238, 241, 244)"],
+  [style*="border-color:"][style*="rgb(238, 241, 245)"],
   [style*="border-color:"][style*="rgb(238, 242, 247)"],
   [style*="border-color:"][style*="rgb(238, 244, 251)"],
   [style*="border-color:"][style*="rgb(241, 240, 239)"],
@@ -1077,6 +1085,7 @@ html.aur-dark :is(
   [style*="dashed rgb(238, 238, 238)"],
   [style*="dashed rgb(238, 240, 242)"],
   [style*="dashed rgb(238, 241, 244)"],
+  [style*="dashed rgb(238, 241, 245)"],
   [style*="dashed rgb(238, 242, 247)"],
   [style*="dashed rgb(238, 244, 251)"],
   [style*="dashed rgb(241, 240, 239)"],
@@ -1095,6 +1104,7 @@ html.aur-dark :is(
   [style*="solid rgb(238, 238, 238)"],
   [style*="solid rgb(238, 240, 242)"],
   [style*="solid rgb(238, 241, 244)"],
+  [style*="solid rgb(238, 241, 245)"],
   [style*="solid rgb(238, 242, 247)"],
   [style*="solid rgb(238, 244, 251)"],
   [style*="solid rgb(241, 240, 239)"],
@@ -1237,6 +1247,7 @@ html.aur-dark :is(
   [style*="background-color: rgb(224, 231, 255)"],
   [style*="background-color: rgb(226, 232, 240)"],
   [style*="background-color: rgb(227, 242, 253)"],
+  [style*="background-color: rgb(232, 241, 251)"],
   [style*="background-color: rgb(232, 244, 253)"],
   [style*="background-color: rgb(234, 245, 254)"],
   [style*="background-color: rgb(236, 254, 255)"],
@@ -1250,6 +1261,7 @@ html.aur-dark :is(
   [style*="background: rgb(224, 231, 255)"],
   [style*="background: rgb(226, 232, 240)"],
   [style*="background: rgb(227, 242, 253)"],
+  [style*="background: rgb(232, 241, 251)"],
   [style*="background: rgb(232, 244, 253)"],
   [style*="background: rgb(234, 245, 254)"],
   [style*="background: rgb(236, 254, 255)"],

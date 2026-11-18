@@ -152,6 +152,8 @@ class Company(Base):
     office_address = Column(Text, nullable=False, default="", server_default="")
     dot_number = Column(String(30), nullable=False, default="", server_default="")
     mc_number = Column(String(30), nullable=False, default="", server_default="")
+    # Shown in message templates (@CompanyWebsite).
+    website = Column(String(255), nullable=False, default="", server_default="")
     # The shipment's valuation, per lb, printed on work orders.
     valuation_per_lb = Column(Numeric(6, 2))
     # Customer emails (e.g. portal codes) are sent from this address via SES; its domain must be verified in SES.
@@ -180,6 +182,7 @@ class Company(Base):
             "office_address": self.office_address or "",
             "dot_number": self.dot_number or "",
             "mc_number": self.mc_number or "",
+            "website": self.website or "",
             "valuation_per_lb": float(self.valuation_per_lb) if self.valuation_per_lb is not None else None,
             "sender_email": self.sender_email or "",
             "facebook_page_id": self.facebook_page_id or "",
@@ -1071,6 +1074,45 @@ class AppSetting(Base):
             "value": self.value or "",
             "updated_at": self.updated_at.isoformat() if self.updated_at else "",
         }
+
+
+# ---------------------------------------------------------------------------
+# Message templates a user picks when writing to a lead (not the automatic messages below)
+# ---------------------------------------------------------------------------
+class MessageTemplate(Base):
+    """A message a user can pick when writing to a lead. Its text is the default for every company; a company can
+    have its own text for it (MessageTemplateOverride)."""
+    __tablename__ = "message_templates"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    name = Column(String(120), nullable=False)
+    body = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class MessageTemplateOverride(Base):
+    """One company's own text for a message template, used instead of the default for that company's leads."""
+    __tablename__ = "message_template_overrides"
+
+    template_id = Column(String(36), ForeignKey("message_templates.id", ondelete="CASCADE"), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True)
+    body = Column(Text, nullable=False)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class MessageTemplateField(Base):
+    """Whether a template field (@Token, template_fields.py) is offered in the @ list. A field with no row, such as a
+    column added later, is not offered until it is turned on."""
+    __tablename__ = "message_template_fields"
+
+    token = Column(String(80), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 # ---------------------------------------------------------------------------
