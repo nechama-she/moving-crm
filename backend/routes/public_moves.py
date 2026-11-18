@@ -1850,8 +1850,6 @@ def _save_packing_change(body, access, db):
         origin=getattr(job,change.location+'_zip') or ''
         if change.stop_meters is not None and (change.route_origin != origin or len(change.stop_meters) != len(addresses)):
             raise HTTPException(409, 'The route changed. Refresh and calculate the stop distances again.')
-        if origin.strip().lower() in {a.lower() for a in addresses}:
-            raise HTTPException(422,'An additional stop must differ from the main address.')
         pickup,old,delivery=_read_job_route(db,job)
         retained=[row for row in _typed_stops(job,old) if row['type']!=change.location]
         rows=retained+[{'address':address,'type':change.location} for address in addresses]
