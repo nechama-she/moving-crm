@@ -5,6 +5,8 @@ import { authHeaders, useAuth } from "./AuthContext";
 type Company = { id: string; name: string };
 type Template = { id: string; name: string; body: string; override: string | null; sort_order: number };
 type Placeholder = { token: string; label: string; group: string };
+// A field of the Fields tab: whether the @ list offers it.
+type Field = Placeholder & { enabled: boolean };
 // The field list open while typing @ in a text box: which box, where the @ is, and what follows it.
 type Mention = { id: string; start: number; query: string; active: number };
 
@@ -34,6 +36,9 @@ export default function MessageTemplatesPage() {
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [mention, setMention] = useState<Mention | null>(null);
+  const [tab, setTab] = useState<"templates" | "fields">("templates");
+  // Every field there is, loaded each time the Fields tab opens.
+  const [allFields, setAllFields] = useState<Field[] | null>(null);
   const boxes = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const editingDefault = companyId === DEFAULT_ID;
 
@@ -140,6 +145,69 @@ export default function MessageTemplatesPage() {
     }, "Template deleted.");
   };
 
+  async function openFields() {
+    setTab("fields");
+    setAllFields(null);
+    setError("");
+    setInfo("");
+    try {
+      const res = await fetch(`${API_BASE}/api/message-templates/fields`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { fields: Field[] };
+      setAllFields(data.fields || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load fields");
+    }
+  }
+
+  // On or off at once; the @ list follows. A failed save puts the switch back.
+  async function switchField(field: Field, enabled: boolean) {
+    const apply = (value: boolean) => setAllFields((current) => (current || []).map((item) => (item.token === field.token ? { ...item, enabled: value } : item)));
+    apply(enabled);
+    setError("");
+    setInfo("");
+    try {
+      await request(`/api/message-templates/fields/${encodeURIComponent(field.token)}`, "PUT", { enabled });
+      setPlaceholders((current) => {
+        const others = current.filter((item) => item.token !== field.token);
+        if (!enabled) return others;
+        const order = (allFields || []).map((item) => item.token);
+        return [...others, { token: field.token, label: field.label, group: field.group }]
+          .sort((a, b) => order.indexOf(a.token) - order.indexOf(b.token));
+      });
+    } catch (err) {
+      apply(!enabled);
+      setError(err instanceof Error ? err.message : "Failed to save");
+    }
+  }
+
+  const fieldsPanel = allFields === null ? <div style={{ padding: 24, color: "#706e6b" }}>Loading...</div> : (
+    <div style={{ display: "grid", gap: 14 }}>
+      {GROUPS.map((group) => {
+        const items = allFields.filter((item) => item.group === group);
+        if (!items.length) return null;
+        return (
+          <section key={group} style={card}>
+            <h2 style={sectionHeader}>{group}</h2>
+            <div style={{ marginTop: 6 }}>
+              {items.map((item) => (
+                <label key={item.token} style={fieldRow}>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{item.label}</span>
+                    <span style={fieldToken}>@{item.token}</span>
+                  </span>
+                  <input type="checkbox" role="switch" checked={item.enabled} disabled={!isAdmin}
+                    onChange={(event) => void switchField(item, event.target.checked)}
+                    aria-label={`Offer ${group} ${item.label} in the @ list`} style={{ width: 18, height: 18, flex: "0 0 auto", cursor: "pointer" }} />
+                </label>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+
   // The fields matching what follows the @, in the list's order: Lead info, Company info, Rep info.
   const matches = (query: string) => {
     const needle = query.toLowerCase();
@@ -238,6 +306,18 @@ export default function MessageTemplatesPage() {
         Messages to pick from when texting a lead. Write the default for all companies, or give one company its own version.
       </p>
 
+      <div role="tablist" aria-label="Message templates" style={{ display: "flex", gap: 4, borderBottom: "1px solid #dddbda", marginBottom: 14 }}>
+        <button type="button" role="tab" aria-selected={tab === "templates"} className="slds-button"
+          onClick={() => { setTab("templates"); setError(""); setInfo(""); }} style={tab === "templates" ? tabActive : tabButton}>Templates</button>
+        <button type="button" role="tab" aria-selected={tab === "fields"} className="slds-button"
+          onClick={() => void openFields()} style={tab === "fields" ? tabActive : tabButton}>Fields</button>
+      </div>
+
+      {tab === "fields" ? (
+        <p style={{ ...desc, marginBottom: 14 }}>
+          Choose which fields the @ list offers when writing a template. A field added to the system later starts off. Turning one off does not change templates already using it.
+        </p>
+      ) : (<>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
         <label htmlFor="message-template-company" style={{ fontSize: 13, fontWeight: 600, color: "#3e3e3c" }}>Company</label>
         <select id="message-template-company" value={companyId} onChange={(event) => setCompanyId(event.target.value)}
@@ -251,11 +331,12 @@ export default function MessageTemplatesPage() {
       <p style={{ ...desc, marginBottom: 14 }}>
         Type @ in a message to add lead, company or rep info. It is filled in with the lead's details when the template is picked.
       </p>
+      </>)}
 
       {error && <div style={errorBox}>{error}</div>}
       {info && <div style={infoBox}>{info}</div>}
 
-      {loading ? <div style={{ padding: 24, color: "#706e6b" }}>Loading...</div> : (
+      {tab === "fields" ? fieldsPanel : loading ? <div style={{ padding: 24, color: "#706e6b" }}>Loading...</div> : (
         <div style={{ display: "grid", gap: 14 }}>
           {templates.length === 0 && <div style={{ ...card, color: "#706e6b", fontSize: 13 }}>No templates yet.{editingDefault && isAdmin ? " Add the first one below." : ""}</div>}
           {templates.map((template) => {
@@ -325,6 +406,9 @@ const fieldList: React.CSSProperties = { position: "absolute", left: 0, top: "10
 const fieldGroup: React.CSSProperties = { padding: "8px 12px 4px", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#706e6b" };
 const fieldOption: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, width: "100%", padding: "7px 12px", border: "none", textAlign: "left", fontSize: 13, color: "#0f172a", cursor: "pointer" };
 const fieldToken: React.CSSProperties = { fontSize: 12, color: "#0176d3", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" };
+const fieldRow: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 0", borderTop: "1px solid #eef1f5", cursor: "pointer" };
+const tabButton: React.CSSProperties = { background: "transparent", color: "#3e3e3c", border: "none", borderBottom: "2px solid transparent", borderRadius: 0, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: -1 };
+const tabActive: React.CSSProperties = { ...tabButton, color: "#0176d3", borderBottom: "2px solid #0176d3" };
 const ghostButton: React.CSSProperties = { background: "#fff", color: "#0176d3", border: "1px solid #0176d3", borderRadius: 4, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" };
 const dangerButton: React.CSSProperties = { ...ghostButton, color: "#ba0517", border: "1px solid #ba0517" };
 const primaryButton: React.CSSProperties = { background: "#0176d3", color: "#fff", border: "none", borderRadius: 4, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer" };

@@ -87,11 +87,13 @@ def test_every_field_in_the_list_is_filled_in(setup):
     lead = db.get(Lead, 'a')
     lead.volume, lead.weight, lead.move_size, lead.move_type, lead.referral_source = 286, 2002.5, '2 bedroom', 'long_distance', 'Facebook'
     db.commit()
-    body = ' | '.join('@' + token for token, _, _ in templates.PLACEHOLDERS)
+    from template_fields import fields
+    tokens = [token for token, _, _ in fields()]
+    body = ' | '.join('@' + token for token in tokens)
     templates.create_template(templates.TemplateInput(name='All', body=body), admin, db)
     text = templates.lead_templates('a', admin, db)['items'][0]['text']
-    assert not any('@' + token in text for token, _, _ in templates.PLACEHOLDERS)  # Every field was replaced.
-    filled = dict(zip([token for token, _, _ in templates.PLACEHOLDERS], text.split(' | ')))
+    assert not any('@' + token in text for token in tokens)  # Every field was replaced.
+    filled = dict(zip(tokens, text.split(' | ')))
     assert filled['FirstName'] == 'Gabrielle' and filled['LastName'] == 'Taylor'
     assert filled['LeadPhone'] == '(551) 275-2490' and filled['MoveType'] == 'Long Distance'
     assert filled['Volume'] == '286 cu ft' and filled['Weight'] == '2,002.50 lb' and filled['MoveSize'] == '2 bedroom'
@@ -109,3 +111,46 @@ def test_a_sales_reps_own_phone_and_email(setup):
     db.commit()
     templates.create_template(templates.TemplateInput(name='Call', body='@RepName: @RepPhone, @RepEmail'), admin, db)
     assert templates.lead_templates('a', admin, db)['items'][0]['text'] == 'Sam Rep: (202) 937-2625, sam@example.com'
+
+
+def test_a_new_column_is_offered_by_itself_and_internal_ones_never():
+    from sqlalchemy import Column, String
+    from models import Company
+    from template_fields import fields
+    offered = {token for token, _, _ in fields()}
+    assert {'CompanyWebsite', 'CompanyOfficeAddress', 'MoveSize', 'CrewSize'} <= offered
+    for internal in ('CompanyLogo', 'CompanyColor', 'RepPasswordHash', 'RepRole', 'Notes', 'ForemanNotes', 'Source', 'CompanyAircallName'):
+        assert internal not in offered
+    # A column added later: offered with no code change; a secret one is not.
+    table = Company.__table__
+    added = [Column('yelp_link', String(255)), Column('api_secret', String(255))]
+    for column in added:
+        table.append_column(column)
+    try:
+        offered = {(token, label, group) for token, label, group in fields()}
+        assert ('CompanyYelpLink', 'Yelp link', 'Company info') in offered
+        assert not any(token == 'CompanyApiSecret' for token, _, _ in offered)
+    finally:
+        for column in added:
+            table._columns.remove(column)
+
+
+def test_the_at_list_offers_only_fields_turned_on(setup):
+    from fastapi import HTTPException
+    from models import MessageTemplateField
+    templates, db, admin = setup
+    # Nothing turned on yet (a field with no row, like a column added later, is off).
+    assert templates.list_templates('', admin, db)['placeholders'] == []
+    templates.set_field('FirstName', templates.FieldInput(enabled=True), admin, db)
+    templates.set_field('CompanyWebsite', templates.FieldInput(enabled=True), admin, db)
+    assert [item['token'] for item in templates.list_templates('', admin, db)['placeholders']] == ['FirstName', 'CompanyWebsite']
+    listed = {item['token']: item['enabled'] for item in templates.list_fields(admin, db)['fields']}
+    assert listed['FirstName'] and listed['CompanyWebsite'] and not listed['RepName']
+    # Off again: gone from the @ list, but a template using it still fills it in.
+    templates.set_field('FirstName', templates.FieldInput(enabled=False), admin, db)
+    assert [item['token'] for item in templates.list_templates('', admin, db)['placeholders']] == ['CompanyWebsite']
+    templates.create_template(templates.TemplateInput(name='Hi', body='Hi @FirstName'), admin, db)
+    assert templates.lead_templates('a', admin, db)['items'][0]['text'] == 'Hi Gabrielle'
+    assert db.get(MessageTemplateField, 'FirstName').enabled is False
+    with pytest.raises(HTTPException):
+        templates.set_field('NoSuchField', templates.FieldInput(enabled=True), admin, db)

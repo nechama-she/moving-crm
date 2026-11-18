@@ -1104,6 +1104,17 @@ class MessageTemplateOverride(Base):
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class MessageTemplateField(Base):
+    """Whether a template field (@Token, template_fields.py) is offered in the @ list. A field with no row, such as a
+    column added later, is not offered until it is turned on."""
+    __tablename__ = "message_template_fields"
+
+    token = Column(String(80), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 # ---------------------------------------------------------------------------
 # Per-Company Message Templates (SMS bodies the system sends)
 # ---------------------------------------------------------------------------
