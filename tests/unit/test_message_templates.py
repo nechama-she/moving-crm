@@ -28,7 +28,7 @@ def setup(monkeypatch):
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        db.add_all([Company(id='movers95', name='Movers 95', phone='240-226-3174', website='https://www.movers95.com'), Company(id='gorilla', name='Gorilla Haulers', phone='555-0100'),
+        db.add_all([Company(id='movers95', name='Movers 95', phone='240-226-3174', website='https://www.movers95.com', sender_email='sales@movers95.com'), Company(id='gorilla', name='Gorilla Haulers', phone='555-0100'),
                     User(id='eli', name='Eli Jones', email='eli@example.com', phone='555-0199', password_hash='x', role='admin')])
         db.flush()
         db.add_all([Lead(id='a', full_name='Gabrielle Taylor', phone='5512752490', company_id='movers95', assigned_to='eli'),
@@ -95,6 +95,17 @@ def test_every_field_in_the_list_is_filled_in(setup):
     assert filled['FirstName'] == 'Gabrielle' and filled['LastName'] == 'Taylor'
     assert filled['LeadPhone'] == '(551) 275-2490' and filled['MoveType'] == 'Long Distance'
     assert filled['Volume'] == '286 cu ft' and filled['Weight'] == '2,002.50 lb' and filled['MoveSize'] == '2 bedroom'
-    assert filled['RepFirstName'] == 'Eli' and filled['RepPhone'] == '555-0199' and filled['RepEmail'] == 'eli@example.com'
+    # Eli is an admin: his name, with the company's phone and email, not his profile's.
+    assert filled['RepName'] == 'Eli Jones' and filled['RepPhone'] == '(240) 226-3174' and filled['RepEmail'] == 'sales@movers95.com'
     assert filled['JobNumber'].endswith('-1') and filled['ReferralSource'] == 'Facebook'
     assert filled['CompanyWebsite'] == 'https://www.movers95.com'
+
+
+def test_a_sales_reps_own_phone_and_email(setup):
+    from models import Lead, User
+    templates, db, admin = setup
+    db.add(User(id='sam', name='Sam Rep', email='sam@example.com', phone='2029372625', password_hash='x', role='sales_rep'))
+    db.get(Lead, 'a').assigned_to = 'sam'
+    db.commit()
+    templates.create_template(templates.TemplateInput(name='Call', body='@RepName: @RepPhone, @RepEmail'), admin, db)
+    assert templates.lead_templates('a', admin, db)['items'][0]['text'] == 'Sam Rep: (202) 937-2625, sam@example.com'

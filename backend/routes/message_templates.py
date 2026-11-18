@@ -164,6 +164,7 @@ def lead_templates(lead_id: str, user: User = Depends(get_current_user), db: Ses
     rep = db.get(User, lead.assigned_to) if lead.assigned_to else None
     names = (lead.full_name or "").split()
     rep_names = ((rep.name or "") if rep else "").split()
+    admin_rep = bool(rep and rep.role == "admin")
     total = (lead.estimated_total_data() or {}).get("finalTotal")
     values = {
         "FirstName": names[0] if names else "", "LastName": " ".join(names[1:]), "FullName": " ".join(names),
@@ -179,7 +180,9 @@ def lead_templates(lead_id: str, user: User = Depends(get_current_user), db: Ses
         "CompanyEmail": (company.sender_email or "") if company else "", "CompanyWebsite": (company.website or "") if company else "", "CompanyAddress": (company.office_address or "") if company else "",
         "DOTNumber": (company.dot_number or "") if company else "", "MCNumber": (company.mc_number or "") if company else "",
         "RepFirstName": rep_names[0] if rep_names else "", "RepName": " ".join(rep_names),
-        "RepPhone": _phone(rep.phone) if rep else "", "RepEmail": (rep.email or "") if rep else "",
+        # An admin works from the company's own phone and email (a rep has their own); the name is always the person's.
+        "RepPhone": (_phone(company.phone) if company else "") if admin_rep else (_phone(rep.phone) if rep else ""),
+        "RepEmail": ((company.sender_email or "") if company else "") if admin_rep else ((rep.email or "") if rep else ""),
     }
     overrides = {}
     if lead.company_id:
