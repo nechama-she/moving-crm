@@ -21,7 +21,7 @@ from models import AccessAuditLog, Lead, User
 from customer_page_announcements import announce_customer_page_changes
 from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
-from routes import public_moves, local_pricing, inventory_questions, inventory_catalog
+from routes import public_moves, local_pricing, inventory_questions, inventory_catalog, message_templates
 from routes.meta import messenger, instagram
 
 logger = logging.getLogger("moving-crm.access")
@@ -457,6 +457,7 @@ app.include_router(outreach.router)
 app.include_router(assignment.router)
 app.include_router(tasks.router)
 app.include_router(templates.router)
+app.include_router(message_templates.router)
 app.include_router(local_pricing.router)
 app.include_router(pricing.router)
 app.include_router(system.router)

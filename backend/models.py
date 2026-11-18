@@ -1074,6 +1074,34 @@ class AppSetting(Base):
 
 
 # ---------------------------------------------------------------------------
+# Message templates a user picks when writing to a lead (not the automatic messages below)
+# ---------------------------------------------------------------------------
+class MessageTemplate(Base):
+    """A message a user can pick when writing to a lead. Its text is the default for every company; a company can
+    have its own text for it (MessageTemplateOverride)."""
+    __tablename__ = "message_templates"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    name = Column(String(120), nullable=False)
+    body = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class MessageTemplateOverride(Base):
+    """One company's own text for a message template, used instead of the default for that company's leads."""
+    __tablename__ = "message_template_overrides"
+
+    template_id = Column(String(36), ForeignKey("message_templates.id", ondelete="CASCADE"), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True)
+    body = Column(Text, nullable=False)
+    updated_by = Column(String(36), ForeignKey("users.id"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ---------------------------------------------------------------------------
 # Per-Company Message Templates (SMS bodies the system sends)
 # ---------------------------------------------------------------------------
 class CompanyMessageTemplate(Base):

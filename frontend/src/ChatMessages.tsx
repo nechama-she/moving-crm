@@ -63,10 +63,36 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const [activeTab, setActiveTab] = useState<string>("messenger");
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  // Message templates, filled in with this lead's details: loaded each time the list opens.
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [templates, setTemplates] = useState<{ id: string; name: string; text: string }[] | null>(null);
+  const [templatesError, setTemplatesError] = useState("");
+  const composerRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  // The reply box grows with its text (line breaks and wrapped lines), up to about 8 lines, then scrolls.
+  const replyBoxRef = useRef<HTMLTextAreaElement>(null);
+  // A phone or tablet (iPhone included): Enter breaks the line, and the text is 16px so Safari does not zoom in on tap.
+  const touchScreen = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  // The template list closes on a click or tap anywhere outside the reply area.
+  useEffect(() => {
+    if (!templatesOpen) return;
+    const close = (event: PointerEvent) => {
+      if (composerRef.current && !composerRef.current.contains(event.target as Node)) setTemplatesOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [templatesOpen]);
+
+  // Also on a tab change: the box is shown again (Calls has none) and must fit the text it still holds.
+  useEffect(() => {
+    const box = replyBoxRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight, 200)}px`;
+  }, [replyText, activeTab]);
   const tabPickedRef = useRef(false);
 
   useEffect(() => {
@@ -294,6 +320,31 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const messengerPageId = chatLinks.find(link => link.channel === "messenger" && link.client_identifier === connectedUserId)?.company_identifier
     || messages.find((m) => m.platform === "messenger" && m.page_id)?.page_id || "";
 
+  // A picked template fills the reply box (asking first when it already has text), ready to edit and send.
+  const pickTemplate = (text: string) => {
+    if (replyText.trim() && replyText !== text && !window.confirm("Replace the message you are writing with this template?")) return;
+    setReplyText(text);
+    setTemplatesOpen(false);
+    // Focused during the tap itself (an iPhone opens the keyboard only then); the caret goes to the end once filled.
+    replyBoxRef.current?.focus();
+    requestAnimationFrame(() => replyBoxRef.current?.setSelectionRange(text.length, text.length));
+  };
+
+  const toggleTemplates = async () => {
+    if (templatesOpen) { setTemplatesOpen(false); return; }
+    setTemplatesOpen(true);
+    setTemplates(null);
+    setTemplatesError("");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${encodeURIComponent(leadId)}/message-templates`, { headers: authHeaders(token) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { items?: { id: string; name: string; text: string }[] };
+      setTemplates(Array.isArray(data.items) ? data.items : []);
+    } catch (err: unknown) {
+      setTemplatesError(err instanceof Error ? err.message : "Could not load templates");
+    }
+  };
+
   const handleSendReply = async () => {
     if (!replyText.trim() || sending) return;
     setSending(true);
@@ -375,7 +426,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
           return (
             <button className="slds-button"
               key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => { setActiveTab(tab.key); setTemplatesOpen(false); }}
               style={{
                 padding: "10px 20px",
                 border: "none",
@@ -543,20 +594,53 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
 
       {/* Reply input */}
       {canReply && (
-        <div style={{ display: "flex", gap: 8, padding: "12px 0", borderTop: "1px solid #e0e0e0" }}>
-          <input
-            type="text"
+        <div ref={composerRef} style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 8, padding: "12px 0", borderTop: "1px solid #e0e0e0" }}>
+          {templatesOpen && (
+            <div role="listbox" aria-label="Message templates" style={{ position: "absolute", left: 0, right: 0, bottom: "100%", marginBottom: 4, maxHeight: 280, overflowY: "auto", background: "#fff", border: "1px solid #d8dde6", borderRadius: 8, boxShadow: "0 6px 18px rgba(15,23,42,.12)", zIndex: 5 }}>
+              {templatesError ? <div style={{ padding: 12, fontSize: 13, color: "#ba0517" }}>{templatesError}</div>
+                : templates === null ? <div style={{ padding: 12, fontSize: 13, color: "#64748b" }}>Loading templates...</div>
+                : templates.length === 0 ? <div style={{ padding: 12, fontSize: 13, color: "#64748b" }}>No templates yet. An admin can add them in Settings, Message templates.</div>
+                : templates.map((template) => (
+                  <button key={template.id} type="button" role="option" aria-selected={false}
+                    onClick={() => pickTemplate(template.text)}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 12px", border: "none", borderBottom: "1px solid #eef1f5", background: "#fff", cursor: "pointer" }}>
+                    <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{template.name}</span>
+                    <span style={{ display: "block", fontSize: 12, color: "#64748b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{template.text}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+          <button type="button" className="slds-button" onClick={() => void toggleTemplates()} aria-expanded={templatesOpen} title="Insert a template"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px", borderRadius: 8, border: "1px solid #ccc", background: templatesOpen ? "#e3f2fd" : "#fff", color: "#1976d2", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></svg>
+            Templates
+          </button>
+          <textarea
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendReply(); } }}
+            // As in messaging apps: on a computer Enter sends and Shift+Enter breaks the line; on a touch screen Enter
+            // breaks the line and the Send button sends. Enter while a keyboard is composing a word only finishes it.
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || touchScreen) return;
+              e.preventDefault();
+              handleSendReply();
+            }}
             placeholder={`Reply via ${activeTab === "messages" ? "SMS" : "Messenger"}…`}
             disabled={sending}
+            ref={replyBoxRef}
+            rows={1}
             style={{
               flex: 1,
+              minWidth: 0,
               padding: "10px 14px",
               borderRadius: 8,
               border: "1px solid #ccc",
-              fontSize: 14,
+              fontSize: touchScreen ? 16 : 14,
+              fontFamily: "inherit",
+              lineHeight: 1.4,
+              resize: "none",
+              overflowY: "auto",
+              boxSizing: "border-box",
               outline: "none",
             }}
           />

@@ -492,6 +492,8 @@ export default function LeadDetail() {
   const [savingCrewJobId, setSavingCrewJobId] = useState("");
   const [deletingJobId, setDeletingJobId] = useState("");
   const [activeJobTabId, setActiveJobTabId] = useState("");
+  // The job number just copied from its tab, for a moment's "Copied" feedback.
+  const [copiedJobNumber, setCopiedJobNumber] = useState("");
   const [noteTabByJob, setNoteTabByJob] = useState<Record<string, "customer_notes" | "notes" | "foreman_notes">>({});
   const [expandedMaterials, setExpandedMaterials] = useState<Record<string, boolean>>({});
   const consumedRouteJobRef = useRef("");
@@ -3030,25 +3032,44 @@ export default function LeadDetail() {
                 {leadJobs.map((job) => {
                   const active = activeJobTabId === job.id;
                   return (
-                    <button className="slds-button"
-                      key={job.id}
-                      type="button"
-                      onClick={() => setActiveJobTabId(job.id)}
-                      style={{
-                        border: active ? "1px solid #0176d3" : "1px solid #cbd5e1",
-                        borderBottom: active ? "2px solid #0176d3" : "1px solid #cbd5e1",
-                        background: active ? "#eaf5fe" : "#fff",
-                        color: active ? "#014486" : "#334155",
-                        borderRadius: 4,
-                        padding: "5px 10px",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {`${job.number}`}
-                    </button>
+                    <span key={job.id} style={{ display: "inline-flex", alignItems: "stretch", gap: 2 }}>
+                      <button className="slds-button"
+                        type="button"
+                        onClick={() => setActiveJobTabId(job.id)}
+                        style={{
+                          border: active ? "1px solid #0176d3" : "1px solid #cbd5e1",
+                          borderBottom: active ? "2px solid #0176d3" : "1px solid #cbd5e1",
+                          background: active ? "#eaf5fe" : "#fff",
+                          color: active ? "#014486" : "#334155",
+                          borderRadius: 4,
+                          padding: "5px 10px",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {`${job.number}`}
+                      </button>
+                      {active && job.number ? (
+                        <button className="slds-button"
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(job.number).then(() => {
+                              setCopiedJobNumber(job.number);
+                              window.setTimeout(() => setCopiedJobNumber((current) => (current === job.number ? "" : current)), 1500);
+                            });
+                          }}
+                          aria-label={copiedJobNumber === job.number ? "Job number copied" : `Copy job number ${job.number}`}
+                          title={copiedJobNumber === job.number ? "Copied" : "Copy job number"}
+                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", color: copiedJobNumber === job.number ? "#2e844a" : "#0176d3", cursor: "pointer", padding: 0 }}
+                        >
+                          {copiedJobNumber === job.number
+                            ? <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                            : <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>}
+                        </button>
+                      ) : null}
+                    </span>
                   );
                 })}
                 {canEditJobs ? (
