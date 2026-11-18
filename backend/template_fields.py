@@ -93,9 +93,11 @@ def _token(prefix, column):
 
 
 class _Move:
-    """What the fields are filled from: the lead, its first job and route, its company, and its rep."""
-    def __init__(self, lead, job, route, company, rep):
+    """What the fields are filled from: the lead, its first job and route, its company, its rep, and the customer's
+    links (customer_links)."""
+    def __init__(self, lead, job, route, company, rep, links=None):
         self.lead, self.job, self.company, self.rep = lead, job, company, rep
+        self.links = links or {}
         self.pickup, self.stops, self.delivery = route
         self.names = (lead.full_name or "").split()
         self.rep_names = ((rep.name or "") if rep else "").split()
@@ -136,6 +138,8 @@ BUILT_IN = [
     ("Delivery", "Delivery address", LEAD, {("leads", "delivery_zip"), ("lead_jobs", "delivery_zip")}, lambda m: m.delivery or ""),
     ("JobNumber", "Job number", LEAD, {("leads", "number")}, _job_number),
     ("EstimateTotal", "Estimate total", LEAD, set(), _total),
+    ("CustomerLink", "Customer page link", LEAD, set(), lambda m: m.links.get("customer", "")),
+    ("ParticipantLink", "Video call link (LiveSwitch)", LEAD, set(), lambda m: m.links.get("participant", "")),
     ("CompanyEmail", "Email", COMPANY, {("companies", "sender_email")},
      lambda m: (m.company.sender_email or "") if m.company else ""),
     ("RepFirstName", "First name", REP, {("users", "name")}, lambda m: m.rep_names[0] if m.rep_names else ""),
@@ -180,16 +184,47 @@ def fields():
     return sorted(listed, key=lambda field: order[field[2]])
 
 
-def offered(db):
-    """The fields turned on for the @ list (message_template_fields)."""
+def enabled_tokens(db):
+    """The fields the @ list offers. A switch saved in message_template_fields decides; with none saved, a built-in
+    field is on (it is added on purpose) and a column is off (one added later waits to be turned on)."""
     from models import MessageTemplateField
-    enabled = {token for (token,) in db.query(MessageTemplateField.token).filter(MessageTemplateField.enabled.is_(True))}
+    saved = dict(db.query(MessageTemplateField.token, MessageTemplateField.enabled).all())
+    built_in = {token for token, *_ in BUILT_IN}
+    return {token for token, _, _ in fields() if saved.get(token, token in built_in)}
+
+
+def offered(db):
+    """The fields turned on for the @ list."""
+    enabled = enabled_tokens(db)
     return [field for field in fields() if field[0] in enabled]
 
 
-def values(lead, job, route, company, rep):
+def customer_links(db, lead):
+    """The links a customer may be sent: their customer page, only while it opens (not revoked, not expired), and
+    their LiveSwitch video call link, as the CRM sends it. The rep's and host's links are never offered."""
+    import json
+    from models import LeadLiveSwitch, PublicMoveAccess
+    links = {}
+    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
+    if access is not None and not access.revoked and access.expires_at > datetime.utcnow():
+        from fastapi import HTTPException
+        from routes.public_moves import public_url
+        try:
+            links["customer"] = public_url(access)
+        except HTTPException:  # The customer website is not configured: no link rather than a broken one.
+            pass
+    conversation = db.get(LeadLiveSwitch, lead.id)
+    if conversation is not None:
+        try:
+            links["participant"] = str(json.loads(conversation.details or "{}").get("participantJoinUrl") or "").strip()
+        except ValueError:
+            pass
+    return links
+
+
+def values(lead, job, route, company, rep, links=None):
     """Each field's value for this lead, ready to read."""
-    move = _Move(lead, job, route, company, rep)
+    move = _Move(lead, job, route, company, rep, links)
     filled = {token: value(move) for token, _, _, _, value in BUILT_IN}
     rows = {"leads": lead, "companies": company, "users": rep}
     for token, _, _, table, column in _columns():

@@ -28,7 +28,7 @@ export default function MainNavigation({ role, mobile = false }: { role?: string
       ...(admin || dispatch ? [item('Dispatch Calendar', '/dispatch')] : []),
     ] },
     { label: 'Reports', items: [
-      ...(admin ? [item('Booking Percentage', '/reports/booking-percentage'), item('Stats', '/stats')] : []),
+      ...(admin ? [item('Booking Percentage', '/reports/booking-percentage'), item('Customer Page Bookings', '/reports/customer-page-bookings'), item('Stats', '/stats')] : []),
       item('Sales Performance', '/sales-performance'),
     ] },
   ];

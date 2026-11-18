@@ -3,7 +3,6 @@ where it has one, filled in with the lead's, company's and rep's details."""
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -138,19 +137,49 @@ def test_a_new_column_is_offered_by_itself_and_internal_ones_never():
 def test_the_at_list_offers_only_fields_turned_on(setup):
     from fastapi import HTTPException
     from models import MessageTemplateField
+    from template_fields import BUILT_IN
     templates, db, admin = setup
-    # Nothing turned on yet (a field with no row, like a column added later, is off).
-    assert templates.list_templates('', admin, db)['placeholders'] == []
-    templates.set_field('FirstName', templates.FieldInput(enabled=True), admin, db)
+    offered = lambda: [item['token'] for item in templates.list_templates('', admin, db)['placeholders']]
+    # With nothing saved: the built-in fields are on, the columns (like one added later) are off.
+    assert set(offered()) == {token for token, *_ in BUILT_IN} and 'CompanyWebsite' not in offered()
     templates.set_field('CompanyWebsite', templates.FieldInput(enabled=True), admin, db)
-    assert [item['token'] for item in templates.list_templates('', admin, db)['placeholders']] == ['FirstName', 'CompanyWebsite']
+    assert 'CompanyWebsite' in offered()
     listed = {item['token']: item['enabled'] for item in templates.list_fields(admin, db)['fields']}
-    assert listed['FirstName'] and listed['CompanyWebsite'] and not listed['RepName']
+    assert listed['FirstName'] and listed['CompanyWebsite'] and not listed['CompanyOfficeAddress']
     # Off again: gone from the @ list, but a template using it still fills it in.
     templates.set_field('FirstName', templates.FieldInput(enabled=False), admin, db)
-    assert [item['token'] for item in templates.list_templates('', admin, db)['placeholders']] == ['CompanyWebsite']
+    assert 'FirstName' not in offered()
     templates.create_template(templates.TemplateInput(name='Hi', body='Hi @FirstName'), admin, db)
     assert templates.lead_templates('a', admin, db)['items'][0]['text'] == 'Hi Gabrielle'
     assert db.get(MessageTemplateField, 'FirstName').enabled is False
     with pytest.raises(HTTPException):
         templates.set_field('NoSuchField', templates.FieldInput(enabled=True), admin, db)
+
+
+def test_customer_links_only_when_they_open(setup, monkeypatch):
+    import json
+    from datetime import datetime, timedelta
+    from models import LeadLiveSwitch, PublicMoveAccess
+    templates, db, admin = setup
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://moves.example.com')
+    templates.create_template(templates.TemplateInput(name='Links', body='Page: @CustomerLink | Video: @ParticipantLink'), admin, db)
+    text = lambda: templates.lead_templates('a', admin, db)['items'][0]['text']
+    # No customer page and no video call yet: nothing is sent rather than a broken link.
+    assert text() == 'Page:  | Video: '
+    access = PublicMoveAccess(id='11111111-1111-1111-1111-111111111111', lead_id='a', job_id='j', key_hash='k', request_hash='r',
+                              token_hash='t', expires_at=datetime.utcnow() + timedelta(days=30))
+    db.add(access)
+    db.add(LeadLiveSwitch(lead_id='a', details=json.dumps({'participantJoinUrl': 'https://api.production.liveswitch.com/contact/s/3cjkh9py',
+                                                            'hostJoinUrl': 'https://host.example/never-sent'})))
+    db.commit()
+    from routes.public_moves import public_url
+    assert text() == f'Page: {public_url(access)} | Video: https://api.production.liveswitch.com/contact/s/3cjkh9py'
+    assert public_url(access).startswith('https://moves.example.com/move/11111111-1111-1111-1111-111111111111#key=')
+    # Revoked or expired: the page would refuse it, so it is not sent.
+    access.revoked = True
+    db.commit()
+    assert text().startswith('Page:  | Video: https://api.production.liveswitch.com/')
+    access.revoked, access.expires_at = False, datetime.utcnow() - timedelta(minutes=1)
+    db.commit()
+    assert text().startswith('Page:  | Video:')
+    assert 'host.example' not in text()

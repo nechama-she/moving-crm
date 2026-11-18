@@ -26,6 +26,7 @@ export function navSections(role?: string): NavSection[] {
   const reports: NavItem[] = [
     ...(admin ? [
       { label: "Booking percentage", to: "/reports/booking-percentage", icon: "reports" as const },
+      { label: "Customer page bookings", to: "/reports/customer-page-bookings", icon: "reports" as const, keywords: "hallin crm fees" },
       { label: "Stats", to: "/stats", icon: "stats" as const },
     ] : []),
     { label: "Sales performance", to: "/sales-performance", icon: "performance" },

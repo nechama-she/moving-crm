@@ -1,6 +1,7 @@
 """Admin-only operational statistics."""
 
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
@@ -102,3 +103,41 @@ def booking_percentage(start: date, end: date, company_ids: list[str] = Query(de
     result['options'] = {'companies': [{'id': key, 'name': name} for key, name in sorted(companies.items(), key=lambda item: item[1])],
                          'reps': [{'id': key, 'name': name} for key, name in sorted(reps.items(), key=lambda item: item[1])]}
     return result
+
+
+# The customer page bookings report: card fees on every payment, and Hallin's (the CRM company's) share of the rest.
+CARD_FEE_PERCENT = Decimal("3.5")
+CRM_FEE_PERCENT = Decimal("15")
+
+
+def _cents(value):
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+@router.get("/customer-page-bookings")
+def customer_page_bookings(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Every lead whose estimate was signed on the customer page: its estimate total, its payments less 3.5% card fees
+    and its third-party payout (the total payment), and Hallin's 15% of that (the CRM fees). Read from what is saved."""
+    from sqlalchemy import func
+    from models import EstimateSignature, LeadPayment
+    signed = (db.query(EstimateSignature.lead_id, func.max(EstimateSignature.signed_at).label("signed_at"))
+              .filter(EstimateSignature.signed_at.isnot(None)).group_by(EstimateSignature.lead_id).subquery())
+    paid = (db.query(LeadPayment.lead_id, func.sum(LeadPayment.amount).label("payments"))
+            .group_by(LeadPayment.lead_id).subquery())
+    rows = (db.query(Lead, signed.c.signed_at, paid.c.payments)
+            .join(signed, signed.c.lead_id == Lead.id).outerjoin(paid, paid.c.lead_id == Lead.id)
+            .order_by(signed.c.signed_at.desc()).all())
+    items = []
+    for lead, signed_at, payments in rows:
+        payments = Decimal(str(payments or 0))
+        card_fees = _cents(payments * CARD_FEE_PERCENT / 100)
+        third_party = Decimal(str(lead.third_party_payout_amount or 0))
+        total_payment = payments - card_fees - third_party
+        crm_fees = _cents(max(Decimal(0), total_payment) * CRM_FEE_PERCENT / 100)
+        estimate = (lead.estimated_total_data() or {}).get("finalTotal") or 0
+        items.append({"lead_id": lead.id, "name": lead.full_name or "", "signed_at": signed_at.isoformat() + "Z",
+                      "estimate_total": float(estimate), "payments": float(payments), "card_fees": float(card_fees),
+                      "third_party": float(third_party), "total_payment": float(total_payment), "crm_fees": float(crm_fees)})
+    keys = ("estimate_total", "payments", "card_fees", "third_party", "total_payment", "crm_fees")
+    totals = {key: float(sum((Decimal(str(item[key])) for item in items), Decimal(0))) for key in keys}
+    return {"items": items, "totals": totals, "card_fee_percent": float(CARD_FEE_PERCENT), "crm_fee_percent": float(CRM_FEE_PERCENT)}

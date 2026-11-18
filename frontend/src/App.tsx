@@ -44,6 +44,7 @@ const ChatsPage = lazy(() => import("./UnifiedCommunicationsPage"));
 const UnansweredMessagesPage = lazy(() => import("./UnansweredMessagesPage"));
 const IgnoredCallNumbersPage = lazy(() => import("./IgnoredCallNumbersPage"));
 const ReportsPage = lazy(() => import("./ReportsPage"));
+const CustomerPageBookingsPage = lazy(() => import("./CustomerPageBookingsPage"));
 const StatsPage = lazy(() => import("./StatsPage"));
 const AccessHistoryPage = lazy(() => import("./AccessHistoryPage"));
 
@@ -102,6 +103,7 @@ function ProtectedRoutes() {
           <Route path="/sales-work-queue" element={user?.role === "admin" ? <UnansweredMessagesPage /> : <Navigate to="/" replace />} />
           <Route path="/reports" element={user?.role === "admin" ? <Navigate to="/reports/booking-percentage" replace /> : <Navigate to="/" replace />} />
           <Route path="/reports/booking-percentage" element={user?.role === "admin" ? <ReportsPage /> : <Navigate to="/" replace />} />
+          <Route path="/reports/customer-page-bookings" element={user?.role === "admin" ? <CustomerPageBookingsPage /> : <Navigate to="/" replace />} />
           <Route path="/walkthrough-requests" element={user?.role === "admin" ? <WalkthroughRequestsPage /> : <Navigate to="/" replace />} />
           <Route path="/stats" element={user?.role === "admin" ? <StatsPage /> : <Navigate to="/" replace />} />
           <Route path="/outreach" element={<OutreachEventsPage />} />
