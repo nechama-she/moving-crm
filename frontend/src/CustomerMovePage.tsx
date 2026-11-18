@@ -104,6 +104,37 @@ type Details = {
   participant_url: string;
   files: { id: string; name: string; size: number; content_type?: string }[];
 };
+type CompanyHeaderDetails = { logo?: string; name: string; phone: string; office_address: string };
+// The company's header: on the verification screen (from verify-options) and on the move page, the same.
+function CompanyHeader({details, fallbackName}: {details?: CompanyHeaderDetails; fallbackName?: string}) {
+  return (
+    <header className="cm-company-header">
+      <div className="cm-company-header-left">
+        <div className="cm-company-logo-placeholder" style={details?.logo ? { border: 0, background: "transparent", overflow: "hidden", flexShrink: 0 } : undefined}>
+          {details?.logo ? <img src={details.logo} alt={`${details.name} logo`} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>LOGO</span>}
+        </div>
+        <div>
+          <span className="cm-company-welcome">Welcome to</span>
+          <h2 className="cm-company-name">{details?.name || fallbackName || 'Your Moving Team'}</h2>
+        </div>
+      </div>
+      {(details?.phone || details?.office_address) && (
+        <div className="cm-company-header-right">
+          {details.phone && (
+            <a className="cm-company-phone" href={`tel:${details.phone}`}>
+              📞 {details.phone}
+            </a>
+          )}
+          {details.office_address && (
+            <span className="cm-company-address">
+              📍 {details.office_address}
+            </span>
+          )}
+        </div>
+      )}
+    </header>
+  );
+}
 function CompletionIcon({complete, label}: {complete: boolean; label: string}) {
   return <svg className={`cm-completion-icon ${complete ? 'is-complete' : 'needs-attention'}`} width="20" height="20" viewBox="0 0 24 24" role="img" aria-label={label}><title>{label}</title><circle cx="12" cy="12" r="11" fill="currentColor"/>{complete ? <path d="m7 12 3 3 7-7" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/> : <><path d="M12 6v7" stroke="white" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="17" r="1.2" fill="white"/></>}</svg>;
 }
@@ -461,6 +492,8 @@ export default function CustomerMovePage() {
     if (nextPricing) setPackingStep(nextPricing); else setShowQuestions(false);
   }
   const [themeColor, setThemeColor] = useState<string>(() => bootstrap?.move?.company_details?.color || '#214c3e');
+  // The company's header on the verification screen, before the move itself is loaded.
+  const [verifyCompany, setVerifyCompany] = useState<CompanyHeaderDetails | undefined>(undefined);
   const previews=useRef<string[]>([]);
   const base=`${API_BASE}/api/public-moves/${accessId}`;
   // This open page's id: its saves are announced to the move's other open pages, not back to it.
@@ -861,7 +894,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);if(value.company?.name)setVerifyCompany(value.company);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -1176,7 +1209,8 @@ export default function CustomerMovePage() {
             We sent an email{(data?.link_email || linkEmail)?.email_hint ? ` to ${(data?.link_email || linkEmail)?.email_hint}` : ''} with a link to this page. You can use it to return anytime.
           </p>
         )}
-        {!session ? (
+        {!session ? (<>
+          {verifyCompany && <CompanyHeader details={verifyCompany} />}
           <section className="cm-verify">
             <div className="cm-eyebrow">WELCOME</div>
             <h1>Let's get your<br/>move underway.</h1>
@@ -1203,7 +1237,7 @@ export default function CustomerMovePage() {
             )}
             <small className="cm-private">Your information is private. No account or password needed.</small>
           </section>
-        ) : !data ? (
+        </>) : !data ? (
           <div>
             {error ? <>
               <p className="cm-error" role="alert">{error}</p>
@@ -1212,31 +1246,7 @@ export default function CustomerMovePage() {
           </div>
         ) : (
           <>
-            <header className="cm-company-header">
-              <div className="cm-company-header-left">
-                <div className="cm-company-logo-placeholder" style={data.company_details?.logo ? { border: 0, background: "transparent", overflow: "hidden", flexShrink: 0 } : undefined}>
-                  {data.company_details?.logo ? <img src={data.company_details.logo} alt={`${data.company_details.name} logo`} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>LOGO</span>}
-                </div>
-                <div>
-                  <span className="cm-company-welcome">Welcome to</span>
-                  <h2 className="cm-company-name">{data.company_details?.name || data.company || 'Your Moving Team'}</h2>
-                </div>
-              </div>
-              {(data.company_details?.phone || data.company_details?.office_address) && (
-                <div className="cm-company-header-right">
-                  {data.company_details.phone && (
-                    <a className="cm-company-phone" href={`tel:${data.company_details.phone}`}>
-                      📞 {data.company_details.phone}
-                    </a>
-                  )}
-                  {data.company_details.office_address && (
-                    <span className="cm-company-address">
-                      📍 {data.company_details.office_address}
-                    </span>
-                  )}
-                </div>
-              )}
-            </header>
+            <CompanyHeader details={data.company_details} fallbackName={data.company} />
 
             <section className="cm-two-col cm-intro">
               <div>

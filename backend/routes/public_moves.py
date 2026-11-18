@@ -399,8 +399,9 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
     company_color = shown['color']
     if is_rep_request(access, request):
         contacts, _, company = rep_contacts(access, db)
+        rep_shown = _company_details(company) if company else shown
         return {'audience': 'rep', 'options': [{'channel': channel, 'label': value['label'], 'destination': '***' + value['phone'][-4:]} for channel, value in contacts.items()],
-                'company': {'name': company.name if company else 'Your moving team',
+                'company': {**{key: rep_shown[key] for key in ('name', 'logo', 'phone', 'office_address')},
                             'color': company.color if company and company.color else company_color}}
     def masked(kind, value):
         if kind == 'phone':
@@ -420,7 +421,8 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         'customer_can_edit': CUSTOMER_CAN_EDIT,
         'link_sms': customer_link_sms_notice(access),
         'link_email': customer_link_email_notice(access),
-        'company': {key: shown[key] for key in ('name', 'color', 'logo')},
+        # The page's header before the customer is verified: the company's public details only.
+        'company': {key: shown[key] for key in ('name', 'color', 'logo', 'phone', 'office_address')},
     }
 
 
