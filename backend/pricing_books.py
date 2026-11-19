@@ -128,7 +128,7 @@ def job_keeps_book(job, plan, db, now=None):
     if db.query(EstimateSignature.id).filter(EstimateSignature.job_id == job.id, EstimateSignature.signed_at.isnot(None)).first():
         return True
     since = job.pricing_plan_at or job.price_calculated_at
-    return bool(since) and (now or datetime.utcnow()) < since + timedelta(days=plan.price_valid_days or 7)
+    return bool(since) and (now or datetime.utcnow()) < since + timedelta(days=plan.price_valid_days)
 
 
 def kept_by_jobs(db, plan, now=None):
@@ -136,7 +136,7 @@ def kept_by_jobs(db, plan, now=None):
     from datetime import datetime, timedelta
     from sqlalchemy import exists, func, or_
     from models import EstimateSignature, LeadJob
-    cutoff = (now or datetime.utcnow()) - timedelta(days=plan.price_valid_days or 7)
+    cutoff = (now or datetime.utcnow()) - timedelta(days=plan.price_valid_days)
     signed = exists().where(EstimateSignature.job_id == LeadJob.id, EstimateSignature.signed_at.isnot(None))
     return db.query(LeadJob.id).filter(
         LeadJob.pricing_plan_id == plan.id,

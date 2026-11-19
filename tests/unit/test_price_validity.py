@@ -84,29 +84,11 @@ def test_custom_validity_and_exact_expiry_boundary(quote):
     assert refresh_expired_price(lead,job,db,now+timedelta(days=6))
 
 
-@pytest.mark.parametrize('status', ['booked','scheduled','completed'])
-def test_booked_prices_are_never_refreshed(quote,status):
-    db,lead,job,plan,pricing,now = quote
-    lead.status = status
-    db.commit()
-    assert not refresh_expired_price(lead,job,db,now)
-    assert job.price == 100
-    pricing.calculate_and_save_lead_job_price.assert_not_called()
-
-
-@pytest.mark.parametrize('status', ['confirmed','lost','cancelled','quoted'])
-def test_other_statuses_do_not_lock_the_price(status):
-    from types import SimpleNamespace
-    from price_validity import price_is_locked
-    assert not price_is_locked(SimpleNamespace(status=status, booked_move_date=None), SimpleNamespace(booked_move_date=None))
-
-
-def test_booking_date_also_locks_price(quote):
-    db,lead,job,plan,pricing,now = quote
-    job.booked_move_date = now.date()
-    db.commit()
-    assert not refresh_expired_price(lead,job,db,now)
-    pricing.calculate_and_save_lead_job_price.assert_not_called()
+@pytest.mark.parametrize('status', ['confirmed','lost','cancelled','quoted','new'])
+def test_other_statuses_are_not_booked(status):
+    from price_validity import is_booked
+    assert not is_booked(status)
+    assert is_booked(' Booked ')
 
 
 def test_failed_refresh_rolls_back_and_does_not_extend_validity(quote):

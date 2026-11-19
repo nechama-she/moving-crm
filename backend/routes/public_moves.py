@@ -756,11 +756,7 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
     before = saved()
     result = _move_details(access, db, pricing_only=True, individual_charges=is_rep_request(access, request))
     from delivery_fees import browser_fee_routes
-    from price_validity import price_is_locked
-    locked = price_is_locked(lead, job)
-    # A booked or closed move keeps its price: list changes save, and Done does not price them.
-    result['price_locked'] = locked
-    result['mileage_routes'] = [] if locked else browser_fee_routes(lead, job, db)
+    result['mileage_routes'] = browser_fee_routes(lead, job, db)
     # The browser measures a missing distance with this key as soon as this section loads.
     result['google_maps_browser_key'] = setting('GOOGLE_MAPS_BROWSER_KEY')
     # Keep a newly worked-out plan match, so the next load reads it instead of working it out again.
@@ -947,13 +943,20 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
 @with_job_locations
 def _price_sheet(lead, job, db):
     """The job's price sheet for the rep page: its name, whether it is an earlier version the job keeps (signed, or
-    within its valid days), and the CRM page that shows it for this job."""
-    from models import PricingPlan
+    within its valid days), the CRM page that shows it for this job, and how long the job keeps it: while signed, for
+    good; otherwise for its valid days from when the job got it (or from when a signature was removed)."""
+    from models import EstimateSignature, PricingPlan
     plan = db.get(PricingPlan, job.pricing_plan_id) if job.pricing_plan_id else None
     if plan is None:
         return None
+    signed = db.query(EstimateSignature.id).filter(EstimateSignature.job_id == job.id,
+                                                   EstimateSignature.signed_at.isnot(None)).first() is not None
+    since = job.pricing_plan_at or job.price_calculated_at
+    until = since + timedelta(days=plan.price_valid_days) if since and not signed else None
     return {'name': plan.name, 'earlier_version': bool(plan.retired_at),
-            'url': f'/pricing?lead_id={lead.id}&job_id={job.id}'}
+            'url': f'/pricing?lead_id={lead.id}&job_id={job.id}',
+            'signed': signed, 'valid_days': plan.price_valid_days,
+            'valid_until': until.replace(tzinfo=timezone.utc).isoformat() if until else None}
 
 
 def _customer_pricing_options(lead, job, db):
@@ -1422,6 +1425,9 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     record.snapshot = json.dumps(snapshot)
     record.pdf = pdf
     record.signer_name = record.signed_at = record.signature = None
+    # The price sheet the job kept while signed stays its sheet for the sheet's valid days from now, so the customer
+    # can change the move and sign again on the same sheet (pricing_books.job_keeps_book counts from this).
+    db.get(LeadJob, record.job_id).pricing_plan_at = datetime.utcnow()
     # Who removed it: the customer, or the rep the lead is assigned to.
     from customer_activity_log import ESTIMATE_SIGNATURE_REMOVED, publish as publish_activity, record as log_activity
     by_rep = is_rep_request(access, request)
@@ -1438,8 +1444,10 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     # Another signature still on the job stays signed: only a person removes a signature.
     status = 'signed' if status == 'changed' else status
     work_order = status == 'signed' and is_rep_request(access, request)
+    # Rep pages show how long the job now keeps its price sheet.
     return {'removed_id': record.id, 'signature_status': status, 'work_order_available': work_order,
-            'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed')}
+            'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed'),
+            'price_sheet': _price_sheet(lead, db.get(LeadJob, access.job_id), db) if by_rep else None}
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog/search')
@@ -1512,20 +1520,16 @@ class BrowserFeeDistances(BaseModel):
 @router.get('/api/public-moves/{access_id}/mileage')
 def mileage_routes(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from delivery_fees import browser_fee_routes
-    from price_validity import price_is_locked
     lead, job = db.get(Lead, access.lead_id), db.get(LeadJob, access.job_id)
-    return {'routes': [] if price_is_locked(lead, job) else browser_fee_routes(lead, job, db)}
+    return {'routes': browser_fee_routes(lead, job, db)}
 
 
 @router.post('/api/public-moves/{access_id}/mileage')
 def save_mileage(body: BrowserFeeDistances, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     from delivery_fees import browser_fee_routes
-    from price_validity import price_is_locked
     from routes.pricing import sync_origin_fee, sync_delivery_fee, sync_out_of_area_fee
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
-    if price_is_locked(lead, job):
-        raise HTTPException(409, 'The price is locked for this booked or closed move.')
     current = {row['kind']: row for row in browser_fee_routes(lead, job, db)}
     selection = json.loads(job.customer_packing_package or '{}')
     for row in body.routes:
@@ -1620,14 +1624,11 @@ class CustomerDiscountInput(BaseModel):
 def save_customer_discount(body: CustomerDiscountInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
     """The customer's pick among the price sheet's named discounts, for the transportation subtotal. Only the sheet's
     discounts, at the sheet's value; never over a discount a rep set."""
-    from price_validity import price_is_locked
     from routes.pricing import infer_job_move_type
     lead = db.get(Lead, access.lead_id)
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
     if not lead or not job:
         raise HTTPException(404, 'Move not found.')
-    if price_is_locked(lead, job):
-        raise HTTPException(409, 'The price is locked for this booked or closed move.')
     if _discount_choices(lead, job, db) is None:
         raise HTTPException(409, 'A discount cannot be chosen for this estimate.')
     if body.title is None:
@@ -1692,14 +1693,11 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     if not is_rep_request(access, request):
         raise HTTPException(403, 'Rep access required.')
     from models import LeadJobCharge
-    from price_validity import price_is_locked
     from routes.leads import _refresh_lead_estimated_total
     lead = db.get(Lead, access.lead_id)
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
     if not lead or not job:
         raise HTTPException(404, 'Move not found.')
-    if price_is_locked(lead, job):
-        raise HTTPException(409, 'The price is locked for this booked or closed move.')
     if body.type == 'percent' and body.value > 100:
         raise HTTPException(422, 'Percentage cannot exceed 100.')
     if body.charge_id == 'package':
@@ -1735,9 +1733,6 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
     job = db.get(LeadJob, access.job_id)
     if not lead or not job or job.lead_id != lead.id:
         raise HTTPException(404, 'Move not found.')
-    from price_validity import price_is_locked
-    if price_is_locked(lead, job):
-        raise HTTPException(409, 'The price is locked for this booked or closed move.')
     with db.begin_nested():
         price = calculate_and_save_lead_job_price(lead, job, db)
         if price is None:
