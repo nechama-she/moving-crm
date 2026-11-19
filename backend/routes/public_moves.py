@@ -1151,6 +1151,7 @@ def approve_estimate(signature_id: str, access: PublicMoveAccess = Depends(verif
     record = _signature_record(signature_id, access, db)
     if record.signed_at:
         raise HTTPException(409, 'This estimate is already signed.')
+    _refuse_a_second_signature(record, access, db)
     snapshot = json.loads(record.snapshot)
     current_data, current_rows = _estimate_document(access, db)
     if estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
@@ -1169,12 +1170,22 @@ def signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
+def _refuse_a_second_signature(record, access, db):
+    """A job has one signed estimate at a time: another copy is approved or signed only after Re-sign removes it (a
+    page that missed the signing still shows the estimate unsigned)."""
+    if db.query(EstimateSignature.id).filter(
+            EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+            EstimateSignature.signed_at.isnot(None), EstimateSignature.id != record.id).first():
+        raise HTTPException(409, 'This estimate is already signed. Use Re-sign to change it.')
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/sign')
 def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from estimate_pdf import build_estimate_pdf
     record = _signature_record(signature_id, access, db, lock=True)
     if record.signed_at:
         return {'id': record.id, 'signed_at': record.signed_at.isoformat() + 'Z'}
+    _refuse_a_second_signature(record, access, db)
     name = body.name.strip()
     if not name:
         raise HTTPException(422, 'Enter your full name')
