@@ -1004,7 +1004,7 @@ export default function PricingPage() {
               </PricingSection>}
 
               {/* Shown only when pricing a job opened from a lead. */}
-              <section className="pricing-card pricing-calculator" hidden={!jobContext}>
+              <section className="pricing-card pricing-calculator" hidden>
                 <div><span className="eyebrow">Job pricing</span><h2>Calculate price</h2></div>
                 {jobContext && !destination ? (
                   <div className="pricing-inline-unavailable">
