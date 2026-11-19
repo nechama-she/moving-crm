@@ -55,6 +55,10 @@ def test_real_pricing_save_keeps_service_and_client_data():
     from bulky_items import is_bulky_row, save_bulky_items
     from long_distance_packing import PACKING_CARD_PREFIX, PackingCard, save_packing_card
     from datetime import datetime, timezone
+    from pricing_books import book_to_edit
+    # The real choice of the book to save into: with no job keeping it, the book itself.
+    from fastapi import Response
+    scope.update(Response=Response, _plan_to_edit=lambda db, user, plan_id, response=None: book_to_edit(db, db.get(models.PricingPlan, plan_id)))
     scope.update(datetime=datetime,timezone=timezone,PlanUpdate=Row,Session=Session,Depends=Depends,require_admin=lambda:None,get_db=lambda:None,HTTPException=HTTPException,json=json,
                  set_pickup_areas=set_pickup_areas,EXTRA_STOPS_PREFIX=EXTRA_STOPS_PREFIX,ExtraStopsCard=ExtraStopsCard,save_stops_card=save_stops_card,
                  ELEVATOR_PREFIX=ELEVATOR_PREFIX,ElevatorCard=ElevatorCard,save_elevator_card=save_elevator_card,
@@ -90,10 +94,10 @@ def test_real_pricing_save_keeps_service_and_client_data():
         for _ in range(2):
             scope['update_pricing_plan']('plan',body,Row(),db)
             db.expire_all()
-            assert db.get(models.PricingService,'original').rate_text=='75'
+            assert db.get(models.PricingService,('original','plan')).rate_text=='75'
             assert db.query(models.PricingService).count()==1
-            assert db.get(models.PricingRate,'rate').rate==0
-            assert db.get(models.PricingRule,'rule').title=='Renamed'
+            assert db.get(models.PricingRate,('rate','plan')).rate==0
+            assert db.get(models.PricingRule,('rule','plan')).title=='Renamed'
             assert (job.customer_packing,job.customer_packing_package,job.estimated_materials)==before
             assert db.get(models.Lead,'lead').full_name=='Customer'
         assert not any(sql.lstrip().upper().startswith(('DELETE ', 'INSERT ')) for sql in writes)

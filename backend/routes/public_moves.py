@@ -917,13 +917,15 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     pricing_data['bill_of_lading'] = _bill_of_lading_status(access, db, pricing_data['signature_status'] == 'signed')
     pricing_data['discount_choices'] = None if individual_charges else _discount_choices(lead, job, db)
+    # Rep pages: the price sheet the job is priced with (an earlier version when the job keeps it), opened in the CRM.
+    pricing_data['price_sheet'] = _price_sheet(lead, job, db) if individual_charges else None
     # The CRM payments, as the customer sees them; SmartMoving's are not shown.
     payments = [{'id': row.id, 'amount': float(row.amount or 0), 'paid_at': row.paid_at.isoformat() if row.paid_at else '',
                  'method': row.method or '', 'confirmation_number': row.confirmation_number or ''}
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
         return dict(pricing_data, payments=payments)
-    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -943,6 +945,17 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
 
 
 @with_job_locations
+def _price_sheet(lead, job, db):
+    """The job's price sheet for the rep page: its name, whether it is an earlier version the job keeps (signed, or
+    within its valid days), and the CRM page that shows it for this job."""
+    from models import PricingPlan
+    plan = db.get(PricingPlan, job.pricing_plan_id) if job.pricing_plan_id else None
+    if plan is None:
+        return None
+    return {'name': plan.name, 'earlier_version': bool(plan.retired_at),
+            'url': f'/pricing?lead_id={lead.id}&job_id={job.id}'}
+
+
 def _customer_pricing_options(lead, job, db):
     """The service cards, built from the plan and the customer's saved answers."""
     from routes.pricing import (customer_packing_options, customer_packing_package,
@@ -1138,6 +1151,7 @@ def approve_estimate(signature_id: str, access: PublicMoveAccess = Depends(verif
     record = _signature_record(signature_id, access, db)
     if record.signed_at:
         raise HTTPException(409, 'This estimate is already signed.')
+    _refuse_a_second_signature(record, access, db)
     snapshot = json.loads(record.snapshot)
     current_data, current_rows = _estimate_document(access, db)
     if estimate_state(current_data, current_rows) != estimate_state(snapshot['data'], snapshot['rows']):
@@ -1156,12 +1170,22 @@ def signature_pdf(signature_id: str, access: PublicMoveAccess = Depends(verified
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
+def _refuse_a_second_signature(record, access, db):
+    """A job has one signed estimate at a time: another copy is approved or signed only after Re-sign removes it (a
+    page that missed the signing still shows the estimate unsigned)."""
+    if db.query(EstimateSignature.id).filter(
+            EstimateSignature.lead_id == access.lead_id, EstimateSignature.job_id == access.job_id,
+            EstimateSignature.signed_at.isnot(None), EstimateSignature.id != record.id).first():
+        raise HTTPException(409, 'This estimate is already signed. Use Re-sign to change it.')
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/sign')
 def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
     from estimate_pdf import build_estimate_pdf
     record = _signature_record(signature_id, access, db, lock=True)
     if record.signed_at:
         return {'id': record.id, 'signed_at': record.signed_at.isoformat() + 'Z'}
+    _refuse_a_second_signature(record, access, db)
     name = body.name.strip()
     if not name:
         raise HTTPException(422, 'Enter your full name')

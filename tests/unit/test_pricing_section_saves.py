@@ -28,10 +28,10 @@ class SectionSaveTests(unittest.TestCase):
         tree = ast.parse((BACKEND / 'routes/pricing.py').read_text(encoding='utf-8'))
         handler = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'update_pricing_section')
         handler.decorator_list = []
-        handler.args.defaults = []
+        handler.args.defaults = [ast.parse('None', mode='eval').body]  # Only the response keeps its default (none here).
         future = ast.parse('from __future__ import annotations').body[0]
         from datetime import datetime, timezone
-        self.scope = {'_plan_or_404': lambda *args: self.plan, 'HTTPException': HttpError, 'json': json, 'datetime': datetime, 'timezone': timezone,
+        self.scope = {'_plan_or_404': lambda *args: self.plan, '_plan_to_edit': lambda *args: self.plan, 'HTTPException': HttpError, 'json': json, 'datetime': datetime, 'timezone': timezone,
                       'PricingService': Row, 'PricingRate': Row, 'PricingRule': Row}
         for key in ['EXTRA_STOPS', 'ELEVATOR', 'LONG_CARRY', 'STAIRS', 'STORAGE', 'ORIGIN_FEE', 'DELIVERY_FEE', 'SHUTTLE', 'PACKING_CARD']:
             self.scope[key + '_PREFIX'] = key + ':'

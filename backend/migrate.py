@@ -21,33 +21,23 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # SmartMoving's prices deleted from every job already signed on the customer page. Remove after a deploy ran it.
-    from smartmoving_prices import drop_signed_smartmoving_prices
+    # Pricing book versions: a book jobs still keep is retired, not changed, when edited. Remove after a deploy ran it.
     with engine.begin() as connection:
-        logger.info('Signed jobs without SmartMoving prices: %s', drop_signed_smartmoving_prices(connection))
-    # Leads already signed on the customer page detached from SmartMoving (their ids kept aside). Remove after a deploy ran it.
-    from smartmoving_prices import detach_signed_leads
-    with engine.begin() as connection:
-        logger.info('Signed leads detached from SmartMoving: %s', detach_signed_leads(connection))
-    # Companies' website, for message templates (@CompanyWebsite). Remove after a deploy ran it.
-    with engine.begin() as connection:
-        add_column(connection, 'companies', 'website', "VARCHAR(255) NOT NULL DEFAULT ''")
-    # The message templates users pick when writing to a lead, and companies' own texts for them. Remove after a deploy ran it.
-    from sqlalchemy import inspect
-    from models import MessageTemplate, MessageTemplateField, MessageTemplateOverride
-    with engine.begin() as connection:
-        for table in (MessageTemplate.__table__, MessageTemplateOverride.__table__):
-            if not inspect(connection).has_table(table.name):
-                table.create(connection)
-                logger.info('Created table %s', table.name)
-    # Which fields the @ list offers: every field there is now starts on; a column added later starts off.
-    # Remove after a deploy ran it.
-    from template_fields import fields
-    with engine.begin() as connection:
-        if not inspect(connection).has_table(MessageTemplateField.__tablename__):
-            MessageTemplateField.__table__.create(connection)
-            connection.execute(MessageTemplateField.__table__.insert(), [dict(token=token, enabled=True) for token, _, _ in fields()])
-            logger.info('Created table %s with its fields on', MessageTemplateField.__tablename__)
+        add_column(connection, 'pricing_plans', 'retired_at', 'TIMESTAMP')
+        add_column(connection, 'pricing_plans', 'replaced_by_id', 'VARCHAR(36) REFERENCES pricing_plans(id)')
+        add_column(connection, 'lead_jobs', 'pricing_plan_at', 'TIMESTAMP')
+        connection.execute(text('CREATE INDEX IF NOT EXISTS ix_pricing_plans_replaced_by_id ON pricing_plans (replaced_by_id)'))
+        # A version keeps its rows' ids: these rows are keyed by their book and their id, no longer their id alone.
+        for table in ('pricing_bulky_items', 'pricing_plan_pickup_areas', 'pricing_rates', 'pricing_rules', 'pricing_services',
+                      'pricing_elevator_tiers', 'pricing_shuttle_areas'):
+            key = connection.execute(text(
+                "SELECT tc.constraint_name, array_agg(kcu.column_name::text ORDER BY kcu.column_name) FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_name = tc.table_name "
+                "WHERE tc.table_name = :table AND tc.constraint_type = 'PRIMARY KEY' GROUP BY tc.constraint_name"), {'table': table}).first()
+            if key and list(key[1]) != ['id', 'plan_id']:
+                connection.execute(text(f'ALTER TABLE {table} DROP CONSTRAINT {key[0]}'))
+                connection.execute(text(f'ALTER TABLE {table} ADD PRIMARY KEY (plan_id, id)'))
+                logger.info('%s keyed by book and id', table)
 
 
 if __name__ == "__main__":

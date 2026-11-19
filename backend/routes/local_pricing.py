@@ -1,7 +1,7 @@
 """Book-scoped local rate settings and hourly estimates."""
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -70,10 +70,12 @@ def get_settings(plan_id: str, user: User = Depends(get_current_user), db: Sessi
 
 
 @router.put('/{plan_id}')
-def save_settings(plan_id: str, body: LocalSettingsPayload, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+def save_settings(plan_id: str, body: LocalSettingsPayload, user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
     # The settings need no company (the master book has none); only travel routes are the company's.
-    plan = _plan_or_404(db, user, plan_id)
-    key = f'local_pricing:{plan_id}'
+    # Into the book's current version, or a new version when jobs keep it (pricing_books.book_to_edit).
+    from pricing_books import book_to_edit
+    plan = book_to_edit(db, _plan_or_404(db, user, plan_id), response)
+    key = f'local_pricing:{plan.id}'
     settings = LocalSettings.model_validate(body.model_dump())
     row = db.get(AppSetting, key)
     if row:

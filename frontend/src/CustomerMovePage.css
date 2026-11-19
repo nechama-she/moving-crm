@@ -355,3 +355,6 @@
 .cm-read-only{display:contents}
 /* Rep pages: changes were made after the estimate was signed (it stays signed). */
 .cm-signature-changed{margin:0 0 12px;padding:10px 14px;border:1px solid #eed69a;border-radius:8px;background:#fff8e6;color:#715311;font-size:13px}
+/* Rep pages: the job's price sheet, opened in the CRM. */
+.cm-price-sheet{margin:0 0 12px;color:var(--cm-text-muted);font-size:13px}
+.cm-price-sheet a{color:var(--cm-primary);font-weight:600}

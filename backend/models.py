@@ -625,6 +625,8 @@ class LeadJob(Base):
     # The pricing plan and move type this job matched, and a fingerprint of what the match used
     # (company, addresses, the company's plans and local routes); matched again only when that changes.
     pricing_plan_id = Column(String(36))
+    # When the job got that pricing book: its valid days count from here.
+    pricing_plan_at = Column(DateTime)
     pricing_move_type = Column(String(50))
     pricing_match_key = Column(String(64))
     # The plan's minimum billable cu ft for this job, stored once per plan match.
@@ -1165,6 +1167,10 @@ class PricingPlan(Base):
     item_materials = Column(Text, nullable=True)
     item_selectors = Column(Text, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
+    # An earlier version of a book: saving a book that jobs still keep (signed, or within its valid days) leaves those
+    # jobs this version, unchanged, and saves the edit as a new version that replaces it for everything else.
+    retired_at = Column(DateTime)
+    replaced_by_id = Column(String(36), ForeignKey("pricing_plans.id"), nullable=True, index=True)
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -1211,6 +1217,9 @@ class PricingPlan(Base):
             "out_of_area_fee": float(self.out_of_area_fee) if self.out_of_area_fee is not None else None,
             "price_valid_days": self.price_valid_days,
             "active": bool(self.active),
+            # An earlier version, kept by the jobs priced or signed with it: when, and its replacement.
+            "retired_at": self.retired_at.isoformat() + "Z" if self.retired_at else "",
+            "replaced_by_id": self.replaced_by_id or "",
             "rate_count": len(self.rates),
             "rule_count": len(self.rules),
             "service_count": len(self.services) + len(self.bulky_items) + len(self._card_rows()),
@@ -1280,7 +1289,7 @@ class PricingElevatorTier(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     # The unique (plan_id, up_to_cuft) index also serves lookups by plan_id.
-    plan_id = Column(String(36), ForeignKey("pricing_elevator.plan_id", ondelete="CASCADE"), nullable=False)
+    plan_id = Column(String(36), ForeignKey("pricing_elevator.plan_id", ondelete="CASCADE"), primary_key=True)
     up_to_cuft = Column(Integer)
     fee = Column(Numeric(10, 2), nullable=False)
 
@@ -1350,7 +1359,7 @@ class PricingShuttleArea(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     # The unique (plan_id, state, zip_code) index also serves lookups by plan_id.
-    plan_id = Column(String(36), ForeignKey("pricing_shuttle.plan_id", ondelete="CASCADE"), nullable=False)
+    plan_id = Column(String(36), ForeignKey("pricing_shuttle.plan_id", ondelete="CASCADE"), primary_key=True)
     state = Column(String(2), nullable=False)
     zip_code = Column(String(20), nullable=False, default="", server_default="")
 
@@ -1403,7 +1412,7 @@ class PricingBulkyItem(Base):
     __tablename__ = "pricing_bulky_items"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True, index=True)
     name = Column(String(500), nullable=False)
     handling = Column(Numeric(10, 2))
     packing = Column(Numeric(10, 2))
@@ -1463,7 +1472,7 @@ class PricingPickupArea(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     # The unique (plan_id, state, zip_code) index also serves lookups by plan_id.
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
     state = Column(String(2), nullable=False)
     zip_code = Column(String(5), nullable=False, default="", server_default="")
 
@@ -1472,7 +1481,7 @@ class PricingRule(Base):
     __tablename__ = "pricing_rules"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True, index=True)
     category = Column(String(50), nullable=False, default="general")
     title = Column(String(255), nullable=False, default="Pricing rule")
     description = Column(Text, nullable=False, default="")
@@ -1496,7 +1505,7 @@ class PricingRate(Base):
 
     id = Column(String(36), primary_key=True, default=_uuid)
     # The unique (plan_id, destination, band_label) index also serves lookups by plan_id.
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True)
     destination = Column(String(255), nullable=False, index=True)
     destination_group = Column(String(100), nullable=False, default="")
     minimum_price = Column(Numeric(12, 2))
@@ -1528,7 +1537,7 @@ class PricingService(Base):
     __tablename__ = "pricing_services"
 
     id = Column(String(36), primary_key=True, default=_uuid)
-    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(String(36), ForeignKey("pricing_plans.id", ondelete="CASCADE"), primary_key=True, index=True)
     name = Column(String(500), nullable=False)
     rate_text = Column(String(255), nullable=False, default="")
     comments = Column(Text, nullable=False, default="")
