@@ -225,3 +225,44 @@ def test_every_kind_of_fee_shows_once_with_its_discount():
     # The breakdown adds the fees' own discounts up once: 11 fees at $100, $10 off each.
     assert ('Additional services and fees See Additional services and fees (includes pending charges) $1,100.00 $990.00 Discount -$110.00'
             in text)
+
+
+def test_fee_rows_are_grouped_by_the_customer_page_tabs():
+    """The PDF's fee rows sit under the same tabs the customer page groups its price lines by, each with its total;
+    every row it had is still there."""
+    from uuid import uuid5, NAMESPACE_URL
+    from estimate_pdf import _kit, _services_table
+    from fee_tabs import fee_tabs
+    service_id = lambda key: str(uuid5(NAMESPACE_URL, f'customer-packing:job:{key}'))
+    data = dict(job_id='job', elevator={'terms': '$150 per elevator', 'locations': [
+                    {'location': 'pickup', 'uses_elevator': False}, {'location': 'delivery', 'uses_elevator': True}]},
+                packing_items=[{'label': 'TV Flat Screen (80 - 100)', 'services': [{'kind': '— Movers Unmount', 'price': 286}]}],
+                packing_package={'box_items': [{'label': 'Kitchen'}]},
+                estimate={'price': '1000', 'charges': [
+                    {'id': service_id('elevator:delivery'), 'name': 'Elevator', 'description': 'Elevator at delivery', 'total': 75},
+                    {'id': service_id('tv'), 'name': 'TV Flat Screen (80 - 100) — Movers Unmount', 'description': '1 item', 'total': 286},
+                    {'id': service_id('mirror'), 'name': 'Mirror Boxing', 'description': 'Mirror box', 'total': 35},
+                    {'id': service_id('sofa'), 'name': 'Sofa - 5 Cushions Boxing', 'description': 'Crate', 'total': 148},
+                    {'id': service_id('kitchen'), 'name': 'Kitchen Packing', 'description': 'Boxes', 'total': 90},
+                    {'id': service_id('fee'), 'name': 'Mileage fee', 'description': 'Long drive', 'total': 40}]})
+    styles, p, table = _kit(9)
+    def text(cell):
+        if isinstance(cell, list):
+            return ' '.join(text(item) for item in cell)
+        return getattr(cell, 'text', cell) or ''
+    cells = [[text(cell) for cell in row] for row in _services_table(data, p, table, styles)._cellvalues]
+    flat = [row[0] for row in cells]
+    def index(value):
+        return next(i for i, row in enumerate(flat) if value in row)
+    # A line of no tab first, then the tabs in the page's order, each title before its rows.
+    assert index('Mileage fee') < index('<b>Elevator</b>') < index('Elevator - pickup') < index('Elevator - delivery')
+    assert index('Elevator - delivery') < index('<b>Packing &amp; crating</b>') < index('Movers Unmount')
+    assert index('Movers Unmount') < index('<b>Packing services - Item protection</b>') < index('Mirror Boxing') < index('Sofa - 5')
+    assert index('Sofa - 5') < index('<b>Packing services - Boxes</b>') < index('Kitchen Packing')
+    # Each tab's total, as the page shows it.
+    assert '$183.00' in cells[index('<b>Packing services - Item protection</b>')][2]
+    assert '$75.00' in cells[index('<b>Elevator</b>')][2]
+    # The page gets the very same tabs.
+    tabs = fee_tabs(data)
+    assert tabs[service_id('mirror')] == 'package:protection' and tabs[service_id('kitchen')] == 'package:boxes'
+    assert tabs[service_id('tv')] == 'bulky:' and tabs[service_id('elevator:delivery')] == 'elevator:' and service_id('fee') not in tabs

@@ -877,6 +877,9 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         packing_items=packing_items, item_questions=item_questions),
         package_saved='mode' in saved_package)
     pricing_data = dict(pricing_error=pricing_error, extra_stops=extra_stops, elevator=elevator, long_carry=long_carry, stairs=stairs, storage=storage, shuttle=shuttle, item_questions=item_questions, packing_package=packing_package, packing_items=packing_items, packing_saved=job.customer_packing is not None, unanswered_questions=required_questions, pricing_required=pricing_required, estimate=estimate)
+    # Each price line's tab, as the page groups them (and the PDFs group their fee rows).
+    from fee_tabs import fee_tabs
+    pricing_data['fee_tabs'] = fee_tabs(pricing_data)
     from estimate_signature_history import estimate_signature_status
     from item_selectors import inventory_selectors
     from company_documents import documents_for
@@ -923,7 +926,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
         return dict(pricing_data, payments=payments)
-    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'payments': payments, 'fee_tabs': pricing_data['fee_tabs'], 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,

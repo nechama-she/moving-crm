@@ -45,6 +45,8 @@ type PricingDelta = {
   cuft?: number | null;
 };
 type Details = {
+  // Each price line's tab (by line id), from the server: the page groups its lines by these, as the PDFs do.
+  fee_tabs?: Record<string, string>;
   extra_stops?: ExtraStopsOption | null;
   elevator?: ElevatorOption | null;
   long_carry?: CarryOption | null;
@@ -572,20 +574,12 @@ export default function CustomerMovePage() {
     const rank = (group: Group) => group.target ? pricingSteps.indexOf(group.target.step) * 3 + (['service', 'protection', 'boxes'].indexOf(group.target.section || 'service')) : -1;
     return result.sort((a, b) => rank(a) - rank(b));
   }
-  function chargeQuestion(charge: {name: string; description: string}): {step: PricingStep; section?: 'service' | 'boxes' | 'protection'} | null {
-    const name = charge.name.toLowerCase();
-    if (data?.extra_stops && (name === 'additional stops' || /(?:extra|additional) (pickup|delivery) stop/.test(name))) return {step: 'stops'};
-    if (data?.elevator && name.includes('elevator')) return {step: 'elevator'};
-    if ((data?.long_carry || data?.shuttle) && /long carry|shuttle/.test(name)) return {step: 'access'};
-    if (data?.stairs && name.includes('stairs')) return {step: 'stairs'};
-    if (data?.storage && name.includes('storage')) return {step: 'storage'};
-    if (data?.packing_items.some(item => item.services.some(service => `${item.label} ${service.kind}`.toLowerCase() === name))) return {step: 'bulky'};
-    if (data?.packing_package) {
-      if (/^(full packing|partial packing|unpacking)$/.test(name)) return {step: 'package', section: 'service'};
-      if (data.packing_package.box_items?.some(item => `${item.label} Packing`.toLowerCase() === name)) return {step: 'package', section: 'boxes'};
-      if (/packing|boxing/.test(name)) return {step: 'package', section: 'protection'};
-    }
-    return null;
+  // A price line's tab comes from the server (fee_tabs), the same grouping the PDFs use for their fee rows.
+  function chargeQuestion(charge: {id?: string}): {step: PricingStep; section?: 'service' | 'boxes' | 'protection'} | null {
+    const tab = charge.id ? data?.fee_tabs?.[charge.id] : undefined;
+    if (!tab) return null;
+    const [step, section] = tab.split(':') as [PricingStep, '' | 'service' | 'boxes' | 'protection'];
+    return section ? {step, section} : {step};
   }
   function openChargeQuestion(target: {step: PricingStep; section?: 'service' | 'boxes' | 'protection'}) {
     openRequiredQuestions([]);
