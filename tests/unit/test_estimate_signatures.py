@@ -225,3 +225,29 @@ def test_staff_report_history_lists_signatures_and_serves_only_signed_pdfs(porta
     with pytest.raises(HTTPException):
         scope['get_signed_estimate_pdf'](lead.id, 'signed', None, db)
 
+
+
+def test_removing_a_signature_restarts_the_kept_price_sheet_days(portal, monkeypatch):
+    """Signed long ago on a sheet: removing the signature keeps that sheet for its valid days from the removal."""
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import estimate_pdf
+    from models import LeadJob
+    from pricing_books import job_keeps_book
+    mod, db, lead, access = portal
+    data = {'estimate': {'price': 100, 'charges': []}}
+    monkeypatch.setattr(mod, '_estimate_document', lambda *args: (data, []))
+    monkeypatch.setattr(estimate_pdf, 'build_estimate_pdf', lambda snapshot, rows: json.dumps(snapshot).encode())
+    version = mod.prepare_estimate_signature(access, db)['id']
+    job = db.get(LeadJob, access.job_id)
+    job.estimate_approved_id = version  # Approved by the rep.
+    db.commit()
+    mod.sign_estimate(version, mod.SigningInput(name='Jane', consent=True, strokes=[[(.1, .2), (.3, .4)]]), access, db)
+    job.pricing_plan_at = datetime.utcnow() - timedelta(days=30)  # Got the sheet a month ago.
+    db.commit()
+    sheet = SimpleNamespace(price_valid_days=7)
+    mod.clear_estimate_signature(version, access, db)
+    db.refresh(job)
+    assert job_keeps_book(job, sheet, db)
+    assert job_keeps_book(job, sheet, db, now=datetime.utcnow() + timedelta(days=6))
+    assert not job_keeps_book(job, sheet, db, now=datetime.utcnow() + timedelta(days=8))

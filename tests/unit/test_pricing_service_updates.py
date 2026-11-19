@@ -86,7 +86,7 @@ def test_real_pricing_save_keeps_service_and_client_data():
         before=(job.customer_packing,job.customer_packing_package,job.estimated_materials)
         rate=Row(id='rate',destination='GA',destination_group='',minimum_price=None,minimum_text='',band_label='All',cubic_feet_min=0,cubic_feet_max=None,rate=0,rate_text='0')
         rule=Row(id='rule',category='general',title='Renamed',description='New')
-        body=Row(name='Book',pickup_areas=None,pickup_regions='',fuel_percent=10,active=True,rules=[rule],rates=[rate],
+        body=Row(name='Book',pickup_areas=None,pickup_regions='',fuel_percent=10,price_valid_days=7,active=True,rules=[rule],rates=[rate],
                  services=[Row(id='original',name='Piano',rate_text='75',comments='')])
         from sqlalchemy import event
         writes=[]

@@ -947,13 +947,20 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
 @with_job_locations
 def _price_sheet(lead, job, db):
     """The job's price sheet for the rep page: its name, whether it is an earlier version the job keeps (signed, or
-    within its valid days), and the CRM page that shows it for this job."""
-    from models import PricingPlan
+    within its valid days), the CRM page that shows it for this job, and how long the job keeps it: while signed, for
+    good; otherwise for its valid days from when the job got it (or from when a signature was removed)."""
+    from models import EstimateSignature, PricingPlan
     plan = db.get(PricingPlan, job.pricing_plan_id) if job.pricing_plan_id else None
     if plan is None:
         return None
+    signed = db.query(EstimateSignature.id).filter(EstimateSignature.job_id == job.id,
+                                                   EstimateSignature.signed_at.isnot(None)).first() is not None
+    since = job.pricing_plan_at or job.price_calculated_at
+    until = since + timedelta(days=plan.price_valid_days) if since and not signed else None
     return {'name': plan.name, 'earlier_version': bool(plan.retired_at),
-            'url': f'/pricing?lead_id={lead.id}&job_id={job.id}'}
+            'url': f'/pricing?lead_id={lead.id}&job_id={job.id}',
+            'signed': signed, 'valid_days': plan.price_valid_days,
+            'valid_until': until.replace(tzinfo=timezone.utc).isoformat() if until else None}
 
 
 def _customer_pricing_options(lead, job, db):
@@ -1422,6 +1429,9 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     record.snapshot = json.dumps(snapshot)
     record.pdf = pdf
     record.signer_name = record.signed_at = record.signature = None
+    # The price sheet the job kept while signed stays its sheet for the sheet's valid days from now, so the customer
+    # can change the move and sign again on the same sheet (pricing_books.job_keeps_book counts from this).
+    db.get(LeadJob, record.job_id).pricing_plan_at = datetime.utcnow()
     # Who removed it: the customer, or the rep the lead is assigned to.
     from customer_activity_log import ESTIMATE_SIGNATURE_REMOVED, publish as publish_activity, record as log_activity
     by_rep = is_rep_request(access, request)
@@ -1438,8 +1448,10 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     # Another signature still on the job stays signed: only a person removes a signature.
     status = 'signed' if status == 'changed' else status
     work_order = status == 'signed' and is_rep_request(access, request)
+    # Rep pages show how long the job now keeps its price sheet.
     return {'removed_id': record.id, 'signature_status': status, 'work_order_available': work_order,
-            'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed')}
+            'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed'),
+            'price_sheet': _price_sheet(lead, db.get(LeadJob, access.job_id), db) if by_rep else None}
 
 
 @router.get('/api/public-moves/{access_id}/inventory-catalog/search')

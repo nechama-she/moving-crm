@@ -44,7 +44,7 @@ def _may_have_expired(lead, job, db, now):
     except Exception:
         return True  # The locked refresh records the failure and keeps the previous estimate.
     # No matching book is recorded as a refresh error under the lock below.
-    return not plan or now >= utc_naive(calculated) + timedelta(days=plan.price_valid_days or 7)
+    return not plan or now >= utc_naive(calculated) + timedelta(days=plan.price_valid_days)
 
 
 def refresh_expired_price(lead, job, db, now=None):
@@ -75,7 +75,7 @@ def refresh_expired_price(lead, job, db, now=None):
             _, plan = infer_job_move_type(lead, job, db)
             if not plan:
                 raise HTTPException(422, 'No pricing book matches this move.')
-            if now < utc_naive(calculated) + timedelta(days=plan.price_valid_days or 7):
+            if now < utc_naive(calculated) + timedelta(days=plan.price_valid_days):
                 return False
             price = calculate_and_save_lead_job_price(lead, job, db)
             if price is None:

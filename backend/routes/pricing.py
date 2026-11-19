@@ -355,7 +355,7 @@ class ServiceInput(BaseModel):
 
 class PlanUpdate(BaseModel):
     name: str
-    price_valid_days: int = Field(default=7, ge=1, le=3650)
+    price_valid_days: int = Field(ge=1, le=3650)
     pickup_regions: str = ""
     pickup_areas: list[PickupArea] | None = Field(default=None, max_length=51)
     fuel_percent: float | None = Field(default=None, ge=0, le=100)
@@ -2185,7 +2185,7 @@ def update_pricing_plan(
         set_pickup_areas(plan, [area.model_dump() for area in body.pickup_areas])
     plan.fuel_percent = body.fuel_percent
     plan.admin_fee = getattr(body, 'admin_fee', None)
-    plan.price_valid_days = getattr(body, 'price_valid_days', 7)
+    plan.price_valid_days = body.price_valid_days
     plan.active = body.active
     retained_rules = []
     for index, (existing, row) in enumerate(rule_updates):
