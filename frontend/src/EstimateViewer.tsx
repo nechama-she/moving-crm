@@ -41,7 +41,15 @@ export default function EstimateViewer({ base, headers, customerName, version, u
   async function resign() {
     setClearing(true); setLoadError('');
     try {
-      const response = await fetch(`${base}/estimate-signatures/${encodeURIComponent(version)}/resign`, { method: 'POST', headers, cache: 'no-store' });
+      const remove = (withoutCopy: boolean) => fetch(`${base}/estimate-signatures/${encodeURIComponent(version)}/resign${withoutCopy ? '?without_copy=true' : ''}`, { method: 'POST', headers, cache: 'no-store' });
+      let response = await remove(false);
+      if (response.status === 409) {
+        // No copy of the signed PDF could be saved: removed only if the person confirms.
+        const detail = (await response.json().catch(() => ({}))).detail;
+        if (detail?.code !== 'no_copy') throw new Error('Could not remove the signature. Please try Re-sign again.');
+        if (!window.confirm(detail.message)) return;
+        response = await remove(true);
+      }
       if (!response.ok) throw new Error('Could not remove the signature. Please try Re-sign again.');
       setCleared(true); setSigned(false);
       onSignatureRemoved(await response.json());

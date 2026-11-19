@@ -75,6 +75,24 @@ class BillOfLadingSignature(Base):
     signed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class SignedPdfArchive(Base):
+    """A copy of every signed PDF, kept in S3 for the record. Written when a PDF is signed (or before its signature is
+    removed) and read only by the staff archive page: nothing on the customer page reads it."""
+    __tablename__ = 'signed_pdf_archive'
+    __table_args__ = (UniqueConstraint('kind', 'signature_id', 'signed_at', name='uq_signed_pdf_archive_signing'),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String(36), ForeignKey('leads.id'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id'), nullable=False, index=True)
+    # 'estimate' or 'bill_of_lading'; signature_id is that signature's row id.
+    kind = Column(String(30), nullable=False)
+    signature_id = Column(String(36), nullable=False)
+    spot = Column(Integer)
+    signer_name = Column(String(200), nullable=False)
+    signed_at = Column(DateTime, nullable=False)
+    s3_key = Column(Text, nullable=False)
+    archived_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class DetachedSmartMovingLead(Base):
     """A SmartMoving opportunity whose lead was signed on the customer page: the lead no longer carries its id, so
     SmartMoving's updates find no lead, and a new lead is never created from it."""

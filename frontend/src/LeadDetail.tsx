@@ -388,6 +388,8 @@ const LEAD_STATUS_OPTIONS = [
   "cancelled",
 ];
 
+type SignedPdf = { id: string; job_id: string; kind: string; title: string; spot: number | null; signer_name: string; signed_at: string };
+
 export default function LeadDetail() {
   const { leadId } = useParams<{ leadId: string }>();
   const navigate = useNavigate();
@@ -437,6 +439,8 @@ export default function LeadDetail() {
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [groupedAttachments, setGroupedAttachments] = useState<Record<string, LeadAttachment[]>>({});
   const [groupedAttachmentsLoading, setGroupedAttachmentsLoading] = useState(false);
+  // The archived copies of signed PDFs, by job: shown with the job's files, read-only.
+  const [signedPdfs, setSignedPdfs] = useState<Record<string, SignedPdf[]>>({});
   const [previewTitle, setPreviewTitle] = useState("");
   const [previewType, setPreviewType] = useState<"image" | "pdf" | "text" | "none">("none");
   const [previewText, setPreviewText] = useState("");
@@ -1681,10 +1685,31 @@ export default function LeadDetail() {
           uploaded_by_name: String(row.uploaded_by_name || ""),
         }));
       setGroupedAttachments({ ...Object.fromEntries(entries), __general__: generalRows });
+      const signedResponse = await fetch(`${API_BASE}/api/leads/${leadId}/signed-pdfs`, { headers: authHeaders(token) });
+      if (!signedResponse.ok) throw new Error("Could not load signed PDFs");
+      const signedData = (await signedResponse.json()) as { items: SignedPdf[] };
+      const byJob: Record<string, SignedPdf[]> = {};
+      for (const item of signedData.items) (byJob[item.job_id] ||= []).push(item);
+      setSignedPdfs(byJob);
     } catch (err: unknown) {
       setAttachmentsError(err instanceof Error ? err.message : "Failed to load files");
     } finally {
       setGroupedAttachmentsLoading(false);
+    }
+  }
+
+  async function openSignedPdf(archiveId: string) {
+    // Opened before the request so the browser does not block it as a pop-up.
+    const viewer = window.open("", "_blank");
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/signed-pdfs/${encodeURIComponent(archiveId)}/url`, { headers: authHeaders(token) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || "Could not open the signed PDF");
+      if (viewer) viewer.location.href = body.url;
+      else window.location.href = body.url;
+    } catch (err: unknown) {
+      viewer?.close();
+      setAttachmentsError(err instanceof Error ? err.message : "Could not open the signed PDF");
     }
   }
 
@@ -2161,6 +2186,22 @@ export default function LeadDetail() {
                                     <button type="button" className="slds-button danger" onClick={() => { if (window.confirm("Delete this file?")) void deleteAttachment(attachment.id, job.id); }}>Delete</button>
                                   </>
                                 ) : null}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                      {(signedPdfs[job.id] || []).length > 0 && (
+                        <div className="lead-files-list" aria-label={`Job ${job.job_order} signed PDFs`}>
+                          {(signedPdfs[job.id] || []).map((pdf) => (
+                            <article key={pdf.id}>
+                              <span className="lead-file-type">PDF</span>
+                              <div className="lead-file-info">
+                                <strong title={pdf.title}>{`Signed ${pdf.title}${pdf.spot ? ` (signature ${pdf.spot})` : ""}`}</strong>
+                                <small>{[`Signed by ${pdf.signer_name}`, new Date(pdf.signed_at).toLocaleString()].join(" · ")}</small>
+                              </div>
+                              <div className="lead-file-actions">
+                                <button className="slds-button" type="button" onClick={() => void openSignedPdf(pdf.id)}>Open</button>
                               </div>
                             </article>
                           ))}

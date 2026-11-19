@@ -21,6 +21,13 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
+    # The archive of signed PDFs (a new, empty table). Remove after a deploy ran it.
+    from sqlalchemy import inspect
+    from models import SignedPdfArchive
+    with engine.begin() as connection:
+        if not inspect(connection).has_table(SignedPdfArchive.__tablename__):
+            SignedPdfArchive.__table__.create(connection)
+            logger.info('Created table %s', SignedPdfArchive.__tablename__)
     # Pricing book versions: a book jobs still keep is retired, not changed, when edited. Remove after a deploy ran it.
     with engine.begin() as connection:
         add_column(connection, 'pricing_plans', 'retired_at', 'TIMESTAMP')

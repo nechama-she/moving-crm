@@ -21,7 +21,7 @@ from models import AccessAuditLog, Lead, User
 from customer_page_announcements import announce_customer_page_changes
 from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
-from routes import public_moves, local_pricing, inventory_questions, inventory_catalog, message_templates
+from routes import public_moves, local_pricing, inventory_questions, inventory_catalog, message_templates, signed_pdfs
 from routes.meta import messenger, instagram
 
 logger = logging.getLogger("moving-crm.access")
@@ -448,6 +448,7 @@ app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
 app.include_router(public_moves.router)
+app.include_router(signed_pdfs.router)
 app.include_router(inventory_questions.router)
 app.include_router(inventory_catalog.router)
 # Triggers backend Lambda processing - admin only.

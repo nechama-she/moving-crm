@@ -8,6 +8,7 @@ from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -38,6 +39,7 @@ from public_move_sync import queue_files, sync_status
 from routes.leads import LeadContactInput, save_lead_contacts, _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
+logger = logging.getLogger('moving-crm')
 
 NOW = datetime.utcnow
 # The one switch: customers can see everything and sign, but change nothing, until changes made at the same time by a
@@ -1212,6 +1214,7 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNED, name, is_rep_request(access, request))
     db.commit()
     publish_activity(db, access.lead_id, activity_id)
+    _archive_signed_pdf(db, 'estimate', record)
     # The page shows the estimate signed from this answer, without loading its pricing again.
     work_order = is_rep_request(access, request)
     return {'id': record.id, 'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'report_id': record.report_id,
@@ -1398,6 +1401,7 @@ def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: Pu
     activity_id = log_activity(db, access.lead_id, access.job_id, BILL_OF_LADING_SIGNED, name, is_rep_request(access, request), spot=spot + 1)
     db.commit()
     publish_activity(db, access.lead_id, activity_id)
+    _archive_signed_pdf(db, 'bill_of_lading', record, spot + 1)
     # estimate_id and spot: the page adds this signature under its estimate in the report history.
     return {'id': record.id, 'name': name, 'signed_at': signature['signed_at'], 'spot': spot + 1, 'estimate_id': estimate.id}
 
@@ -1414,11 +1418,34 @@ def bill_of_lading_signature_pdf(signature_id: str, access: PublicMoveAccess = D
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
+def _archive_signed_pdf(db, kind, record, spot=None):
+    """Copies a just-signed PDF to the archive. A failure does not undo the signing: the signed PDF is still saved on its
+    signature, and removing an estimate signature copies it first."""
+    from signed_pdf_archive import archive
+    try:
+        archive(db, kind, record, spot)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception('Could not archive signed %s %s', kind, record.id)
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')
-def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None,
+                             without_copy: bool = Query(False)):
     from estimate_pdf import build_estimate_pdf
     from estimate_signature_history import estimate_signature_status
     record = _signature_record(signature_id, access, db, lock=True)
+    # The signed PDF is copied to the archive before its signature comes off. When no copy can be saved, the person is
+    # told and removes it only after confirming (without_copy).
+    if record.signed_at:
+        from signed_pdf_archive import archive
+        try:
+            archive(db, 'estimate', record)
+        except Exception:
+            logger.exception('Could not archive signed estimate %s before removing its signature', record.id)
+            if not without_copy:
+                raise HTTPException(409, {'code': 'no_copy', 'message': 'A copy of the signed estimate could not be saved. If you remove the signature, the signed PDF will not be kept. Remove it anyway?'})
     snapshot = json.loads(record.snapshot)
     snapshot['data'].pop('signature', None)
     pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
