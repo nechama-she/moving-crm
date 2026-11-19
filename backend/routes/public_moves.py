@@ -901,15 +901,18 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                     discount_titles={key: value.get('title') for key, value in saved_package.get('rep_discounts', {}).items()},
                     estimate_needs_update=estimate_needs_update), rows
     # Built only when a signed copy exists to compare with.
-    pricing_data['signature_status'] = estimate_signature_status(
+    compared = estimate_signature_status(
         db, access.lead_id, access.job_id, estimate_data, None, inventory_pending=estimate_needs_update)
-    if pricing_data['signature_status'] == 'changed':
+    # A signed estimate stays signed: only a person removes a signature. Changes made since only add a note for the rep.
+    pricing_data['signature_status'] = 'signed' if compared == 'changed' else compared
+    pricing_data['signature_changed'] = compared == 'changed'
+    if compared == 'changed':
         # Customer Activity: the first time a signed estimate shows as changed, by whoever's page it is (the rep's page
         # shows every price line).
         from customer_activity_log import log_estimate_changed
         log_estimate_changed(db, lead, job, individual_charges)
     pricing_data['estimate_needs_update'] = estimate_needs_update
-    pricing_data['signature_requires_resign'] = pricing_data['signature_status'] == 'changed'
+    pricing_data['signature_requires_resign'] = False
     # Rep pages show every price line (individual_charges), and only they get the work order, once the estimate is signed.
     pricing_data['work_order_available'] = bool(individual_charges and pricing_data['signature_status'] == 'signed')
     pricing_data['bill_of_lading'] = _bill_of_lading_status(access, db, pricing_data['signature_status'] == 'signed')
@@ -920,7 +923,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
         return dict(pricing_data, payments=payments)
-    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -1404,6 +1407,8 @@ def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depen
     # estimate is built only when another signed copy is left to compare with.
     status = estimate_signature_status(db, access.lead_id, access.job_id,
                                        lambda: _move_details(access, db, pricing_only=True, estimate_only=True), None)
+    # Another signature still on the job stays signed: only a person removes a signature.
+    status = 'signed' if status == 'changed' else status
     work_order = status == 'signed' and is_rep_request(access, request)
     return {'removed_id': record.id, 'signature_status': status, 'work_order_available': work_order,
             'bill_of_lading': _bill_of_lading_status(access, db, status == 'signed')}
