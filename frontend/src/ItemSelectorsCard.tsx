@@ -7,7 +7,8 @@ export type ItemSelector = {id:string; label:string; options:string[]; default?:
 type Row = ItemSelector & {item_ids:string[]};
 type Setup = {rows:Row[]; items:{id:string; name:string; cuft:number}[]};
 
-export default function ItemSelectorsCard({planId, blocked}:{planId:string; blocked:boolean}) {
+// onSaved: the save's response, which names the book it went into (a new version when jobs keep this one).
+export default function ItemSelectorsCard({planId, blocked, onSaved}:{planId:string; blocked:boolean; onSaved?:(response:Response)=>void}) {
   const {token, user} = useAuth();
   const [data, setData] = useState<Setup|null>(null), [rows, setRows] = useState<Row[]>([]);
   const [open, setOpen] = useState(false), [editing, setEditing] = useState(false), [busy, setBusy] = useState(false);
@@ -36,6 +37,7 @@ export default function ItemSelectorsCard({planId, blocked}:{planId:string; bloc
       const body = await response.json();
       if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : 'Check the service names and options.');
       setData(body); setRows(body.rows); setEditing(false);
+      onSaved?.(response);
     } catch (e) {setError((e as Error).message);} finally {setBusy(false);}
   }
   const matches = (data?.items || []).filter(item => search.toLowerCase().trim().split(/\s+/).every(word => item.name.toLowerCase().includes(word)));

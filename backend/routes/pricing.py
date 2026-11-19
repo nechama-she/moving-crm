@@ -13,7 +13,7 @@ import json
 import math
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -145,7 +145,7 @@ def _plan_destination_for_delivery(
 def _plan_versions(company_id, db):
     """Count and last change of the company's active plans and local routes, in one query."""
     from sqlalchemy import select
-    active = (PricingPlan.company_id == company_id) & PricingPlan.active.is_(True)
+    active = (PricingPlan.company_id == company_id) & PricingPlan.active.is_(True) & PricingPlan.retired_at.is_(None)
     local = LocalPricingRoute.company_id == company_id
     row = db.execute(select(select(func.count(PricingPlan.id)).where(active).scalar_subquery(),
                             select(func.max(PricingPlan.updated_at)).where(active).scalar_subquery(),
@@ -177,14 +177,39 @@ def infer_job_move_type(lead, job, db, plans=None):
         from sqlalchemy.orm import lazyload
         from request_cache import cached
         plan = cached(db, ('plan', plan_id), lambda: db.get(PricingPlan, plan_id, options=[lazyload('*')])) if plan_id else None
-        return job.pricing_move_type, plan
-    move_type, plan = _match_job_move_type(lead, job, db)
+        # An earlier version only while the job still keeps it: once its days are over (unsigned), it is matched again.
+        from pricing_books import job_keeps_book
+        if plan is None or plan.retired_at is None or job_keeps_book(job, plan, db):
+            return job.pricing_move_type, plan
+    # A job keeps the book it was priced with (signed, or within its valid days) while that book still fits it;
+    # otherwise it takes the current book that fits.
+    move_type, plan = _kept_book(lead, job, db) or _match_job_move_type(lead, job, db)
     if plan is not None:
         from request_cache import cached
         cached(db, ('plan', plan.id), lambda: plan)  # The rest of the request uses this plan as loaded.
     if key:
+        if (plan.id if plan else None) != job.pricing_plan_id:
+            job.pricing_plan_at = datetime.utcnow()  # Its valid days count from here.
         job.pricing_match_key, job.pricing_plan_id, job.pricing_move_type = key, plan.id if plan else None, move_type
         job.minimum_cuft = None  # A new match may mean a different plan minimum.
+    return move_type, plan
+
+
+def _kept_book(lead, job, db):
+    """(move type, book) when the job keeps its book (pricing_books.job_keeps_book) and that book still fits it: the
+    usual match, on that book alone, and for a long distance move a rate for the delivery. None otherwise."""
+    from pricing_books import job_keeps_book
+    plan = db.get(PricingPlan, job.pricing_plan_id) if job.pricing_plan_id else None
+    if plan is None or not job_keeps_book(job, plan, db):
+        return None
+    move_type, matched = _match_job_move_type(lead, job, db, [plan])
+    if matched is not plan:
+        return None
+    if move_type == 'Long Distance':
+        delivery_address = (job.delivery_zip or '').strip()
+        delivery_state, delivery_zip = delivery_location(delivery_address)
+        if not _plan_destination_for_delivery(plan, delivery_address, delivery_state, delivery_zip):
+            return None
     return move_type, plan
 
 
@@ -209,7 +234,8 @@ def _match_job_move_type(
         plans = (
             db.query(PricingPlan)
             .options(lazyload('*'), selectinload(PricingPlan.pickup_rows), selectinload(PricingPlan.rates))
-            .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
+            # Current books only: an earlier version prices only the jobs that keep it (_kept_book).
+            .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True), PricingPlan.retired_at.is_(None))
             .order_by(PricingPlan.sort_order, PricingPlan.name)
             .all()
         )
@@ -252,6 +278,13 @@ def _plan_or_404(db: Session, user: User, plan_id: str) -> PricingPlan:
     if not plan:
         raise HTTPException(status_code=404, detail="Pricing plan not found")
     return plan
+
+
+def _plan_to_edit(db: Session, user: User, plan_id: str, response: Response | None = None) -> PricingPlan:
+    """The book a save goes into (pricing_books.book_to_edit): its current version, or a new version when jobs keep
+    the current one. The response names it (X-Pricing-Book-Id), and the Pricing page follows it."""
+    from pricing_books import book_to_edit
+    return book_to_edit(db, _plan_or_404(db, user, plan_id), response)
 
 
 class RuleInput(BaseModel):
@@ -737,7 +770,8 @@ def list_pricing_plans(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = _accessible_query(db, user)
+    # Current books only: earlier versions open only by their id (a job's book).
+    query = _accessible_query(db, user).filter(PricingPlan.retired_at.is_(None))
     if company_id:
         query = query.filter(PricingPlan.company_id == company_id)
     plans = (
@@ -761,7 +795,7 @@ def get_job_pricing_context(
     lead = db.get(Lead, job.lead_id)
     all_plans = (
         _accessible_query(db, user)
-        .filter(PricingPlan.active.is_(True))
+        .filter(PricingPlan.active.is_(True), PricingPlan.retired_at.is_(None))
         .order_by(PricingPlan.company_name, PricingPlan.sort_order, PricingPlan.name)
         .all()
     )
@@ -769,7 +803,9 @@ def get_job_pricing_context(
     pickup_state, pickup_zip_code = job_location(lead, job, db, job.pickup_zip)
     delivery_state, delivery_zip_code = job_location(lead, job, db, job.delivery_zip)
 
-    inferred_move_type, recommended = infer_job_move_type(lead, job, db, company_plans)
+    # The job's own book: the one it keeps (signed, or within its valid days, an earlier version included) while it
+    # still fits, else the current match.
+    inferred_move_type, recommended = infer_job_move_type(lead, job, db)
     selected_plan = recommended or (company_plans[0] if company_plans else (all_plans[0] if all_plans else None))
     if not pickup_state:
         serviceability = "unknown_pickup"
@@ -1729,16 +1765,11 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
     pickup_state, pickup_zip = delivery_location(pickup_addr)
     delivery_state, delivery_zip = delivery_location(delivery_addr)
 
-    plans = (
-        db.query(PricingPlan)
-        .filter(PricingPlan.company_id == company_id, PricingPlan.active.is_(True))
-        .order_by(PricingPlan.sort_order, PricingPlan.name)
-        .all()
-    )
-    if not plans:
+    # The job's book: the one it keeps (signed, or within its valid days) while it still fits, else the current match.
+    move_type, matched_plan = infer_job_move_type(lead, job, db)
+    if not matched_plan and not db.query(PricingPlan.id).filter(
+            PricingPlan.company_id == company_id, PricingPlan.active.is_(True), PricingPlan.retired_at.is_(None)).first():
         return no_price('There are no active pricing sheets for the move company.')
-
-    move_type, matched_plan = infer_job_move_type(lead, job, db, plans)
     if move_type:
         lead.move_type = move_type
     if not move_type or not matched_plan:
@@ -2023,12 +2054,12 @@ class CopyMaster(BaseModel):
 
 
 @router.post("/{plan_id}/copy-master")
-def copy_master_into_plan(plan_id: str, body: CopyMaster, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+def copy_master_into_plan(plan_id: str, body: CopyMaster, user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
     """Replaces the chosen cards of this book with the master book's."""
     from pricing_books import NEW_BOOK_PARTS, copy_book, master_id
     if not body.parts or not set(body.parts) <= set(NEW_BOOK_PARTS):
         raise HTTPException(status_code=422, detail="Choose the cards to copy")
-    plan = _plan_or_404(db, user, plan_id)
+    plan = _plan_to_edit(db, user, plan_id, response)
     master = master_id(db.connection())
     if not master:
         raise HTTPException(status_code=404, detail="There is no default pricing book")
@@ -2037,7 +2068,7 @@ def copy_master_into_plan(plan_id: str, body: CopyMaster, user: User = Depends(r
     copy_book(db.connection(), master, plan.id, list(dict.fromkeys(body.parts)))
     db.commit()
     db.expire_all()
-    return _plan_summary_rows([db.get(PricingPlan, plan_id)], db)[0]
+    return _plan_summary_rows([db.get(PricingPlan, plan.id)], db)[0]
 
 
 @router.delete("/{plan_id}")
@@ -2045,7 +2076,13 @@ def delete_pricing_plan(plan_id: str, user: User = Depends(require_admin), db: S
     """Deletes a pricing book with everything in it (its tables are deleted with it by the database). Jobs it priced keep
     their saved prices; their next price matches the company's remaining books."""
     from models import AppSetting
+    from pricing_books import kept_by_jobs, retire
     plan = _plan_or_404(db, user, plan_id)
+    if kept_by_jobs(db, plan):
+        # Jobs still keep it (signed, or within its valid days): it is retired, not deleted, and prices only them.
+        retire(db, plan)
+        db.commit()
+        return {"deleted": plan_id}
     db.query(PricingPlan).filter(PricingPlan.id == plan.id).delete(synchronize_session=False)
     # Its local pricing is a setting named after it.
     db.query(AppSetting).filter(AppSetting.key == f"local_pricing:{plan.id}").delete(synchronize_session=False)
@@ -2097,14 +2134,13 @@ def update_pricing_plan(
     body: PlanUpdate,
     user: User = Depends(require_admin),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
-    plan = db.query(PricingPlan).filter(PricingPlan.id == plan_id).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Pricing plan not found")
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="Plan name is required")
     if not body.rates:
         raise HTTPException(status_code=400, detail="At least one pricing rate is required")
+    plan = _plan_to_edit(db, user, plan_id, response)
 
     from pricing_service_updates import prepare_service_updates
     stop_cards = [row for row in body.services if row.comments.startswith(EXTRA_STOPS_PREFIX)]
@@ -2186,8 +2222,8 @@ def update_pricing_plan(
 
 
 @router.put('/{plan_id}/discounts')
-def update_discounts(plan_id: str, body: list[RuleInput], user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    plan = _plan_or_404(db, user, plan_id)
+def update_discounts(plan_id: str, body: list[RuleInput], user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
+    plan = _plan_to_edit(db, user, plan_id, response)
     if any(row.category not in {'discount_amount', 'discount_percent', 'discount_rate'} for row in body):
         raise HTTPException(422, 'Only transportation discounts can be saved here.')
     from pricing_row_updates import prepare_row_updates
@@ -2222,8 +2258,8 @@ class SectionUpdate(BaseModel):
 
 
 @router.put('/{plan_id}/sections/{section}')
-def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    plan = _plan_or_404(db, user, plan_id)
+def update_pricing_section(plan_id: str, section: str, body: SectionUpdate, user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
+    plan = _plan_to_edit(db, user, plan_id, response)
     from pricing_row_updates import prepare_row_updates
     from pricing_service_updates import prepare_service_updates
     prefixes = {'extraStops': EXTRA_STOPS_PREFIX, 'elevator': ELEVATOR_PREFIX,
@@ -2351,8 +2387,8 @@ def get_item_materials(plan_id: str, user: User = Depends(get_current_user), db:
 
 
 @router.put('/{plan_id}/item-materials')
-def put_item_materials(plan_id: str, body: ItemMaterialsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    plan = _plan_or_404(db, user, plan_id)
+def put_item_materials(plan_id: str, body: ItemMaterialsInput, user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
+    plan = _plan_to_edit(db, user, plan_id, response)
     return save_material_assignments(plan, body, db)
 
 
@@ -2362,5 +2398,5 @@ def get_item_selectors(plan_id: str, user: User = Depends(get_current_user), db:
 
 
 @router.put('/{plan_id}/item-selectors')
-def put_item_selectors(plan_id: str, body: ItemSelectorsInput, user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return save_selectors(_plan_or_404(db, user, plan_id), body, db)
+def put_item_selectors(plan_id: str, body: ItemSelectorsInput, user: User = Depends(require_admin), db: Session = Depends(get_db), response: Response = None):
+    return save_selectors(_plan_to_edit(db, user, plan_id, response), body, db)

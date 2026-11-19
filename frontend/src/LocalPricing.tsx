@@ -54,7 +54,9 @@ async function failure(response: Response) {
   return "Could not complete the request. Please retry.";
 }
 
-export default function LocalPricing({ planId, companyName, bookName, job, services = [] }: { planId: string; companyName: string; bookName: string; job?: Job; services?: Service[] }) {
+// onSaved: the settings save's response, which names the book it went into (a new version when jobs keep this one).
+// readOnly: an earlier version of the book, shown as it is (its rate settings are not edited).
+export default function LocalPricing({ planId, companyName, bookName, job, services = [], onSaved, readOnly = false }: { planId: string; companyName: string; bookName: string; job?: Job; services?: Service[]; onSaved?: (response: Response) => void; readOnly?: boolean }) {
   const { token, user } = useAuth();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [routes, setRoutes] = useState<LocalRoute[]>([]);
@@ -156,6 +158,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       setDraft(normalize(data.settings));
       setEditing(false);
       setNotice("Local settings saved for this pricing book.");
+      onSaved?.(response);
     } catch (reason) { setError((reason as Error).message); }
     finally { savingRef.current = false; setSaving(false); }
   }
@@ -258,7 +261,7 @@ export default function LocalPricing({ planId, companyName, bookName, job, servi
       <p className="local-hint">Estimated hours = cubic feet ÷ (movers × {settings.capacity_per_mover} cf/hour). Billable time rounds up to the next 30 minutes, with a minimum of {duration(settings.minimum_hours)}. Trucks are a planning count; no separate truck fee is included.</p>
     </section>}
     <form className="pricing-card local-settings" onSubmit={saveSettings}>
-      <div className="local-section-heading"><div><span className="eyebrow">Rate settings</span><h2>A simple table. Every day.</h2></div>{user?.role === "admin" && !editing && <button type="button" className="slds-button" onClick={() => { setDraft(settings ? structuredClone(settings) : blankSettings()); setEditing(true); setNotice(""); }}>Edit local settings</button>}</div>
+      <div className="local-section-heading"><div><span className="eyebrow">Rate settings</span><h2>A simple table. Every day.</h2></div>{user?.role === "admin" && !readOnly && !editing && <button type="button" className="slds-button" onClick={() => { setDraft(settings ? structuredClone(settings) : blankSettings()); setEditing(true); setNotice(""); }}>Edit local settings</button>}</div>
       {!settings && !editing && <p className="local-warning">Local rates have not been set for this book. Add values in Edit local settings to start quoting.</p>}
       <fieldset disabled={saving}>
         <div className="local-routes">

@@ -66,6 +66,8 @@ type Details = {
   // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
   discount_choices?: { options: { title: string; type: 'amount' | 'percent' | 'rate'; value: number }[]; selected: string | null } | null;
   signature_requires_resign?: boolean;
+  // Rep pages: the job's price sheet (an earlier version when the job keeps it), opened in the CRM.
+  price_sheet?: { name: string; earlier_version: boolean; url: string } | null;
   // Changes were made after the estimate was signed. It stays signed: only a person removes a signature.
   signature_changed?: boolean;
   estimate_needs_update?: boolean;
@@ -743,7 +745,8 @@ export default function CustomerMovePage() {
   // After Re-sign clears the signature: the status it answered with, the signature off its report, then the current
   // estimate (a new copy if anything changed).
   function openCurrentEstimate(result: SignatureRemoved) {
-    setData(previous => previous ? {...previous, signature_status: result.signature_status,
+    // The removed signature's note goes with it; the next load says whether a signature left on the job has changes since.
+    setData(previous => previous ? {...previous, signature_status: result.signature_status, signature_changed: false,
       signature_requires_resign: result.signature_status === 'changed', work_order_available: result.work_order_available,
       bill_of_lading: result.bill_of_lading,
       report_history: previous.report_history?.map(report => ({...report, signatures: (report.signatures || []).filter(item => item.id !== result.removed_id)}))} : previous);
@@ -855,7 +858,8 @@ export default function CustomerMovePage() {
   // A new signature: the estimate is signed, the signature joins its report in the history, and the work order may show.
   function showSignature(signature: SignResult) {
     const row = { id: signature.id, name: signature.name, signed_at: signature.signed_at };
-    setData(previous => previous ? {...previous, signature_status: 'signed', signature_requires_resign: false,
+    // Just signed: it matches what was signed, so no note that changes were made after signing.
+    setData(previous => previous ? {...previous, signature_status: 'signed', signature_requires_resign: false, signature_changed: false,
       work_order_available: signature.work_order_available, bill_of_lading: signature.bill_of_lading,
       report_history: previous.report_history?.map(report => report.id === signature.report_id
         ? {...report, signatures: [row, ...(report.signatures || []).filter(item => item.id !== signature.id)]} : report)} : previous);
@@ -1556,6 +1560,7 @@ export default function CustomerMovePage() {
               {repPage && data.signature_status === 'signed' && data.signature_changed && <p className="cm-signature-changed" role="status">Changes were made after this estimate was signed.</p>}
               {billOfLadingOpen && <BillOfLadingViewer changedElsewhere={billOfLadingChanged} base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
                 onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onSpotSigned={showBillOfLadingSignature} onClose={() => setBillOfLadingOpen(false)} />}
+              {repPage && data.price_sheet && <p className="cm-price-sheet">Price sheet: <a href={data.price_sheet.url} target="_blank" rel="noopener noreferrer">{data.price_sheet.name}</a>{data.price_sheet.earlier_version ? ' (the earlier version this job keeps)' : ''}</p>}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
               {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}

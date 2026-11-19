@@ -131,7 +131,9 @@ def test_saved_as_numbers_and_priced(monkeypatch):
             db.commit()
             assert job.price == 2000
             assert db.query(models.LeadJobCharge).filter_by(name='Out-of-area fee').count() == 0
-            # Turned off on the book: no fee and nothing to measure.
-            api.update_pricing_section('plan', 'details', api.SectionUpdate(**details, out_of_area_miles=None, out_of_area_fee=None), None, db)
-            assert (plan.out_of_area_miles, plan.out_of_area_fee) == (None, None)
+            # Turned off on the book: no fee and nothing to measure. The job priced with it keeps it for its valid days,
+            # so the edit is saved as a new version, and the job's version keeps its fee.
+            saved = api.update_pricing_section('plan', 'details', api.SectionUpdate(**details, out_of_area_miles=None, out_of_area_fee=None), None, db)
+            assert saved['id'] != 'plan' and (saved['out_of_area_miles'], saved['out_of_area_fee']) == (None, None)
+            assert (plan.out_of_area_miles, plan.out_of_area_fee) == (100, Decimal('750.00'))
         engine.dispose()

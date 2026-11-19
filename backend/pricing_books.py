@@ -103,11 +103,10 @@ def copy_book(connection, source_id, target_id, parts=NEW_BOOK_PARTS):
         for name in names:
             table = tables[name]
             rows = [dict(row) for row in connection.execute(table.select().where(_where(table, source_id, spec.get('rows')))).mappings()]
-            own_id = [column.name for column in table.primary_key.columns] == ['id']
+            # Rows keep their ids (each is keyed by its book and its id): a version's rows are the same rows, so what a
+            # job saved by them (its choices, its price lines) still finds them.
             for row in rows:
                 row['plan_id'] = target_id
-                if own_id:
-                    row['id'] = str(uuid4())
             if rows:
                 connection.execute(table.insert(), rows)
     if 'local' in parts:
@@ -117,6 +116,73 @@ def copy_book(connection, source_id, target_id, parts=NEW_BOOK_PARTS):
         if local is not None:
             connection.execute(text("INSERT INTO app_settings (key, value) VALUES (:key, :value)"),
                                {'key': f'local_pricing:{target_id}', 'value': local})
+
+
+def job_keeps_book(job, plan, db, now=None):
+    """Whether the job keeps the book it was priced with, every rate and fee of it: once its estimate is signed,
+    forever; otherwise for the book's valid days from when the job got it."""
+    from datetime import datetime, timedelta
+    from models import EstimateSignature
+    if plan is None:
+        return False
+    if db.query(EstimateSignature.id).filter(EstimateSignature.job_id == job.id, EstimateSignature.signed_at.isnot(None)).first():
+        return True
+    since = job.pricing_plan_at or job.price_calculated_at
+    return bool(since) and (now or datetime.utcnow()) < since + timedelta(days=plan.price_valid_days or 7)
+
+
+def kept_by_jobs(db, plan, now=None):
+    """Whether any job keeps this book (job_keeps_book), in one query."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import exists, func, or_
+    from models import EstimateSignature, LeadJob
+    cutoff = (now or datetime.utcnow()) - timedelta(days=plan.price_valid_days or 7)
+    signed = exists().where(EstimateSignature.job_id == LeadJob.id, EstimateSignature.signed_at.isnot(None))
+    return db.query(LeadJob.id).filter(
+        LeadJob.pricing_plan_id == plan.id,
+        or_(signed, func.coalesce(LeadJob.pricing_plan_at, LeadJob.price_calculated_at) > cutoff)).first() is not None
+
+
+def book_to_edit(db, plan, response=None):
+    """The book an edit is saved into: the current version (an earlier one is never changed), or, when jobs keep it,
+    a new version that takes its place for everything else while those jobs keep it as it is. The response, when
+    given, names it (X-Pricing-Book-Id), and the Pricing page follows it."""
+    from models import PricingPlan
+    while plan.replaced_by_id:
+        plan = db.get(PricingPlan, plan.replaced_by_id)
+    if kept_by_jobs(db, plan):
+        plan = _new_version(db, plan)
+    if response is not None:
+        response.headers['X-Pricing-Book-Id'] = plan.id
+        response.headers['Access-Control-Expose-Headers'] = 'X-Pricing-Book-Id'
+    return plan
+
+
+def retire(db, plan, replaced_by=None):
+    """The book stays as it is for the jobs that keep it, out of matching and lists: its name for imports and
+    transfers goes to the version that replaces it, and it keeps one of its own."""
+    from datetime import datetime
+    plan.source_key = f'{plan.source_key}@{plan.id}'
+    plan.retired_at, plan.replaced_by_id = datetime.utcnow(), replaced_by
+    db.flush()
+
+
+def _new_version(db, plan):
+    """A copy of the book, with every row under it, that takes its place; the book itself stays as it is, retired,
+    for the jobs that keep it."""
+    from models import PricingPlan
+    table = PricingPlan.__table__
+    values = {column.name: getattr(plan, column.key) for column in table.columns
+              if column.name not in {'id', 'created_at', 'updated_at', 'retired_at', 'replaced_by_id'}}
+    version = PricingPlan(**values, id=str(uuid4()))
+    retire(db, plan)  # Frees the book's name first: it is unique.
+    db.add(version)
+    db.flush()
+    copy_book(db.connection(), plan.id, version.id, tuple(PARTS))
+    plan.replaced_by_id = version.id
+    db.flush()
+    db.expire(version)
+    return version
 
 
 def master_id(connection):

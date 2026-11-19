@@ -8,7 +8,8 @@ type DefaultRow={material_id:string;requirement:'required'|'optional';quantity:s
 type Setup={rows:Row[];defaults:DefaultRow[];items:{id:string;name:string;cuft?:number}[];materials:{id:string;name:string}[];protection_review?:{item_id:string;name:string;reason:string}[]};
 const volumeLabel = (cuft?:number) => cuft == null ? '' : ` · ${cuft.toLocaleString(undefined,{maximumFractionDigits:2})} cu ft / item`;
 
-export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocked:boolean}) {
+// onSaved: the save's response, which names the book it went into (a new version when jobs keep this one).
+export default function ItemMaterialsCard({planId,blocked,onSaved}:{planId:string;blocked:boolean;onSaved?:(response:Response)=>void}) {
   const {token,user}=useAuth();
   const [open,setOpen]=useState(false),[editing,setEditing]=useState(false),[busy,setBusy]=useState(false);
   const [data,setData]=useState<Setup|null>(null),[rows,setRows]=useState<Row[]>([]),[defaults,setDefaults]=useState<DefaultRow[]>([]);
@@ -33,6 +34,7 @@ export default function ItemMaterialsCard({planId,blocked}:{planId:string;blocke
       const body=await response.json();
       if(!response.ok)throw new Error(typeof body.detail==='string'?body.detail:'Check the materials and quantities.');
       setData(body);setRows(body.rows);setDefaults(body.defaults||[]);setEditing(false);setSelected('');
+      onSaved?.(response);
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
   const words=search.toLowerCase().trim().split(/\s+/).filter(Boolean);

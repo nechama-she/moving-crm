@@ -235,6 +235,7 @@ html.aur-dark .cm-completion-icon.is-complete { color: var(--aur-green-fg); }
 html.aur-dark .cm-completion-icon.needs-attention { color: var(--aur-amber-fg); }
 html.aur-dark .customer-move .cm-flow-step { background-color: var(--aur-surface); }
 html.aur-dark .cm-discount-choice select { background-color: var(--aur-surface); }
+html.aur-dark .cm-signature-changed { border: 1px solid var(--aur-amber-line); background-color: var(--aur-amber-bg); color: var(--aur-amber-fg); }
 
 /* CustomerQuestionManager.css */
 html.aur-dark .cq-manager { color: var(--aur-ink); }

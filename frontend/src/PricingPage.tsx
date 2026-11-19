@@ -25,6 +25,8 @@ type PlanSummary = {
   service_count: number; updated_at: string;
   // The default book: new books start with its values, and others can copy them.
   master?: boolean;
+  // An earlier version, kept by the jobs priced or signed with it: when it was replaced, and by which book.
+  retired_at?: string; replaced_by_id?: string;
 };
 // The cards "Copy from default" can copy (pricing_books.PARTS); all but the transportation rates are checked to start
 // with. Pickup areas are each book's own and are never copied.
@@ -250,9 +252,17 @@ export default function PricingPage() {
       if (!response.ok) throw new Error(formatApiError(body, "Failed to copy the default book"));
       setPlans(current => current.map(value => value.id === row.id ? body as PlanSummary : value));
       setCopyChoice(null);
-      setSelectedId(row.id);
+      setSelectedId((body as PlanSummary).id || row.id);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to copy the default book"); }
     finally { setBookBusy(false); }
+  }
+  // A save into a book that jobs keep (signed, or within its valid days) is saved as a new version, which the response
+  // names: the page follows it, and its row in the list now stands for it. Earlier versions stay with those jobs.
+  function followVersion(response: Response, fromId: string) {
+    const id = response.headers.get('X-Pricing-Book-Id');
+    if (!id || id === fromId) return;
+    setPlans(rows => rows.map(row => row.id === fromId ? {...row, id} : row));
+    setSelectedId(id);
   }
   async function deleteBook(row: PlanSummary) {
     if (!window.confirm(`Delete the pricing book ${bookLabel(row)}? Its rates, rules and services are deleted with it. This cannot be undone.`)) return;
@@ -412,6 +422,8 @@ export default function PricingPage() {
 
   const hasPendingRateGroups = pendingRateGroups.length > 0;
   const active = editing || sectionEditing.length > 0 || hasPendingRateGroups ? draft : plan;
+  // An earlier version opened from a job: shown as it is, never edited (saving its values would undo the current one's).
+  const retired = Boolean(plan?.retired_at);
   const editingSection = (section: string) => sectionEditing.includes(section);
   useEffect(() => { setSectionEditing([]); }, [plan?.id]);
   const destinations = useMemo(
@@ -563,12 +575,12 @@ export default function PricingPage() {
   const detailedTotal = Math.max(0, discountBase - discountTotal);
 
   function startServiceEdit(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems' | 'services') {
-    if (user?.role !== 'admin' || saving) return;
+    if (user?.role !== 'admin' || retired || saving) return;
     setOpenSections(current => ({ ...current, [section]: true }));
     setSectionEditing(current => [...new Set([...current, section])]);
   }
   function serviceEditActions(section: 'materials' | 'extraStops' | 'elevator' | 'longCarry' | 'stairs' | 'storage' | 'originFees' | 'deliveryFees' | 'shuttle' | 'pickup' | 'rates' | 'packing' | 'bulkyItems' | 'services') {
-    if (user?.role !== 'admin') return null;
+    if (user?.role !== 'admin' || retired) return null;
     return editingSection(section) ? <>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => cancelSection(section)}>Cancel changes</button>
       <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={saving} onClick={() => void saveSection(section)}>{saving ? 'Saving...' : 'Save changes'}</button>
@@ -631,6 +643,7 @@ export default function PricingPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(formatApiError(data, 'Could not save section'));
+      followVersion(response, draft.id);
       setPlan(current => current ? mergeSection(current, data, section) : current);
       setDraft(current => current ? mergeSection(current, data, section) : current);
       setSectionEditing(current => current.filter(name => name !== section));
@@ -754,6 +767,7 @@ export default function PricingPage() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(formatApiError(body, 'Could not save discounts'));
+      followVersion(response, plan.id);
       const merge = (current: Plan | null) => current ? {...current, rules: [...current.rules.filter(rule => !isDiscountRule(rule)), ...body]} : current;
       setPlan(merge); setDraft(merge); setDiscountDraft(null);
     } catch (error) { setDiscountError(error instanceof Error ? error.message : 'Could not save discounts'); }
@@ -773,6 +787,7 @@ export default function PricingPage() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(formatApiError(result, 'Could not save price sheet details'));
+      followVersion(response, draft.id);
       const merge = (current: Plan | null) => current ? {...current, name: result.name, company_id: result.company_id, company_name: result.company_name, fuel_percent: result.fuel_percent, admin_fee: result.admin_fee, out_of_area_miles: result.out_of_area_miles, out_of_area_fee: result.out_of_area_fee, price_valid_days: result.price_valid_days} : current;
       setPlan(merge); setDraft(merge); setEditing(false);
       setPlans(current => current.map(row => row.id === result.id ? {...row, name: result.name, company_id: result.company_id, company_name: result.company_name} : row));
@@ -855,13 +870,17 @@ export default function PricingPage() {
 
       {error ? <div className="pricing-alert error">{error}</div> : null}
       {notice ? <div className="pricing-alert success">{notice}</div> : null}
+      {retired ? <div className="pricing-alert" role="status">
+        This is an earlier version of this price sheet, kept by the jobs that were priced or signed with it: their rates and fees stay exactly as shown here. It can't be edited.
+        {plan?.replaced_by_id ? <> <button type="button" className="slds-button" onClick={() => setSelectedId(plan.replaced_by_id || "")}>Open the current version</button></> : null}
+      </div> : null}
 
       <div className="pricing-toolbar">
         <div className="pricing-mode" aria-label="Pricing type">
           <button className="slds-button" type="button" aria-pressed={pricingMode === "local"} onClick={() => setPricingMode("local")}>Local</button>
           <button className="slds-button" type="button" aria-pressed={pricingMode === "long-distance"} onClick={() => setPricingMode("long-distance")}>Long Distance</button>
         </div>
-        {user?.role === "admin" && !jobContext && selectedBook && !copying ? (
+        {user?.role === "admin" && !retired && !jobContext && selectedBook && !copying ? (
           <div className="pricing-book-actions">
             {plans.some(value => value.master) && !selectedBook.master && <button type="button" className="slds-button secondary" disabled={bookBusy} onClick={() => { setCopyChoice({ planId: selectedBook.id, parts: COPY_CARDS.filter(card => card.picked).map(card => card.part) }); setSelectedId(plans.find(value => value.master)?.id || selectedBook.id); }}>Copy from default</button>}
             <button type="button" className="slds-button secondary pricing-delete-book" disabled={bookBusy} onClick={() => void deleteBook(selectedBook)}>Delete</button>
@@ -915,7 +934,7 @@ export default function PricingPage() {
             </section>
           ) : null}
           {pricingMode === "local" ? (
-            selectedId ? <><CopyPick label="Local pricing" pick={pickFor("local")} /><LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", number: jobContext.job?.number || "", volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /></> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
+            selectedId ? <><CopyPick label="Local pricing" pick={pickFor("local")} /><LocalPricing key={`${selectedId}:${jobContext?.job?.id || ""}`} planId={selectedId} readOnly={retired} onSaved={response => followVersion(response, selectedId)} companyName={plans.find(row => row.id === selectedId)?.company_name || ""} bookName={plans.find(row => row.id === selectedId)?.name || ""} job={jobContext ? { leadId: jobContext.lead?.id || "", jobId: jobContext.job?.id || "", name: jobContext.lead?.full_name || "", number: jobContext.job?.number || "", volume: jobContext.lead?.volume ?? null, pickup: jobContext.job?.pickup_zip || "", delivery: jobContext.job?.delivery_zip || "", moveType: jobContext.move_type || "" } : undefined} services={active?.services || []} /></> : <section className="pricing-card">{loading ? "Loading pricing?" : "Select a pricing book to set up Local pricing."}</section>
           ) : jobContext && jobContext.serviceability !== "supported" ? (
             <section className="pricing-card pricing-unavailable">
               <div className="pricing-unavailable-icon" aria-hidden="true">⌖</div>
@@ -957,7 +976,7 @@ export default function PricingPage() {
                   {/* The default book has no pickup areas: it prices no job, and books copy its values without them. */}
                   {!selectedBook?.master && <p>{active.pickup_regions || "Pickup coverage is described in the rules below."}</p>}
                 </div>
-                {user?.role === "admin" && active && pricingMode === "long-distance" ? (
+                {user?.role === "admin" && !retired && active && pricingMode === "long-distance" ? (
           <div className="pricing-actions">
             {editing ? (
               <>
@@ -1227,9 +1246,9 @@ export default function PricingPage() {
               </PricingSection>
 
               <CopyPick label="Item packing materials" pick={pickFor("itemMaterials")} />
-              <ItemMaterialsCard key={active.id} planId={active.id} blocked={saving} />
+              <ItemMaterialsCard key={active.id} planId={active.id} blocked={saving || retired} onSaved={response => followVersion(response, active.id)} />
               <CopyPick label="Item services" pick={pickFor("itemSelectors")} />
-              <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={saving} />
+              <ItemSelectorsCard key={`selectors-${active.id}`} planId={active.id} blocked={saving || retired} onSaved={response => followVersion(response, active.id)} />
 
               <PricingSection title="Bulky items rates" pick={pickFor("bulkyItems")} count={bulkyItems.length} open={openSections.bulkyItems} toggle={() => setOpenSections((s) => ({ ...s, bulkyItems: !s.bulkyItems }))} onDoubleClick={() => startServiceEdit('bulkyItems')} actions={serviceEditActions('bulkyItems')}>
                 <div className="pricing-services pricing-bulky-rates">
@@ -1256,7 +1275,7 @@ export default function PricingPage() {
                 </div>
               </PricingSection>
 
-              <PricingSection title="Discount" pick={pickFor("discounts")} count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && (discountDraft ? <>
+              <PricingSection title="Discount" pick={pickFor("discounts")} count={(discountDraft || plan?.rules.filter(isDiscountRule) || []).length} open={discountOpen} toggle={() => setDiscountOpen(value => !value)} actions={user?.role === 'admin' && !retired && (discountDraft ? <>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => { setDiscountDraft(null); setDiscountError(''); }}>Cancel changes</button>
                 <button type="button" className="slds-button pricing-section-action pricing-section-text-action" disabled={savingDiscounts} onClick={() => void saveDiscounts()}>{savingDiscounts ? 'Saving...' : 'Save changes'}</button>
               </> : <button type="button" className="slds-button pricing-section-action" aria-label="Edit discount" title="Edit" onClick={() => { setDiscountDraft(structuredClone(plan?.rules.filter(isDiscountRule) || [])); setDiscountError(''); setDiscountOpen(true); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z" /><path d="m13 6 5 5" /></svg></button>)}>

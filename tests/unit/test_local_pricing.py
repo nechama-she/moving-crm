@@ -135,7 +135,10 @@ def test_job_context_selects_pricing_by_state(pickup, delivery, expected):
 def test_saving_settings_preserves_book_isolation(api):
     db = MagicMock(); db.get.return_value = None
     settings = LocalSettings(full_pack_hourly=90)
-    api.save_settings('book-1', settings, object(), db)
+    # The book to save into (pricing_books.book_to_edit): here the book itself, as no job keeps it.
+    books = SimpleNamespace(book_to_edit=lambda db, plan, response=None: SimpleNamespace(id='book-1', company_id='company'))
+    with patch.dict(sys.modules, {'pricing_books': books}):
+        api.save_settings('book-1', settings, object(), db)
     assert api.AppSetting.call_args.kwargs['key'] == 'local_pricing:book-1'
     assert LocalSettings.model_validate_json(api.AppSetting.call_args.kwargs['value']).full_pack_hourly == 90
     db.commit.assert_called_once()
