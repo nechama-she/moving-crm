@@ -7,9 +7,23 @@ from models import LeadJobCharge, PublicMoveAccess
 
 
 def price_is_locked(lead, job):
-    """A booked job's price: booked, scheduled or completed, or with a booked date. Lost and cancelled are not locked."""
+    """A job whose price must not change: booked, scheduled or completed, or with a booked date, or with a signed
+    estimate (a contract between the company and the customer), whatever the status. Lost and cancelled are not
+    locked by status."""
     return bool(lead.booked_move_date or job.booked_move_date or
-                (lead.status or '').lower() in {'booked', 'scheduled', 'completed'})
+                (lead.status or '').lower() in {'booked', 'scheduled', 'completed'}) or estimate_signed(job)
+
+
+def estimate_signed(job):
+    """The customer signed an estimate for this job and no one removed the signature."""
+    from sqlalchemy import inspect
+    from models import EstimateSignature
+    state = inspect(job, raiseerr=False)
+    db = state.session if state is not None else None
+    if db is None or job.id is None:
+        return False
+    return db.query(EstimateSignature.id).filter(EstimateSignature.job_id == job.id,
+                                                 EstimateSignature.signed_at.isnot(None)).first() is not None
 
 
 def utc_naive(value):
