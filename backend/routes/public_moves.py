@@ -1821,10 +1821,6 @@ def _save_packing_change(body, access, db):
     from routes.leads import _refresh_lead_estimated_total
     job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().one()
     lead = db.get(Lead, access.lead_id)
-    # Every answer here reprices the estimate: none while the price is locked (a signed estimate, or a booked move).
-    from price_validity import price_is_locked
-    if price_is_locked(lead, job):
-        raise HTTPException(409, 'The price is locked for this signed or booked move. Your moving team can make changes.')
     if body.change and body.change.kind == 'extra_stops':
         from extra_stops import option as stops_option, sync_charges
         change=body.change
