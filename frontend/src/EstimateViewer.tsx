@@ -4,7 +4,7 @@ import PdfPages from './PdfPages';
 
 // The Re-sign answer: the signature removed, and the estimate's status without it.
 // The job's price sheet on rep pages, and how long the job keeps it.
-export type PriceSheet = { name: string; earlier_version: boolean; url: string; signed: boolean; valid_days: number; valid_until: string | null };
+export type PriceSheet = { name: string; earlier_version: boolean; url: string; signed: boolean; valid_days: number; valid_until: string | null; current: { name: string } | null };
 export type SignatureRemoved = { removed_id: string; signature_status: 'unsigned' | 'signed' | 'changed'; work_order_available: boolean;
   bill_of_lading: { signed: boolean } | null; price_sheet: PriceSheet | null };
 import './PdfViewer.css';

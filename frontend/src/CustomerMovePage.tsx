@@ -677,6 +677,22 @@ export default function CustomerMovePage() {
       setCalculatingPrice(false);
     }
   }
+  // Rep only: price the job on the current sheet that fits it instead of the one it keeps.
+  const [usingCurrentSheet, setUsingCurrentSheet] = useState(false);
+  async function switchToCurrentPriceSheet() {
+    setUsingCurrentSheet(true);
+    setCalculationError('');
+    try {
+      const result = await call('/use-current-price-sheet', {});
+      setData(previous => previous ? {...previous, price_sheet: result.price_sheet} : previous);
+      await refreshDetails();
+    } catch (error) {
+      if (isPriceFailure(error)) setPriceError((error as Error).message);
+      else setCalculationError((error as Error).message);
+    } finally {
+      setUsingCurrentSheet(false);
+    }
+  }
   const [preparedEstimate, setPreparedEstimate] = useState('');
   const [preparedSigned, setPreparedSigned] = useState(false);
   const [preparedApproved, setPreparedApproved] = useState(false);
@@ -1562,6 +1578,7 @@ export default function CustomerMovePage() {
               {repPage && data.price_sheet && <p className="cm-price-sheet">{data.price_sheet.signed
                 ? `This price sheet is locked while the estimate is signed. If the signature is removed, it stays valid for ${data.price_sheet.valid_days} days from the removal.`
                 : `This price sheet is valid for ${data.price_sheet.valid_days} days${data.price_sheet.valid_until ? `, until ${new Date(data.price_sheet.valid_until).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}.`}</p>}
+              {repPage && data.price_sheet?.current && <button type="button" className="cm-secondary-btn" disabled={usingCurrentSheet || calculatingPrice || readOnly} onClick={() => void switchToCurrentPriceSheet()}>{usingCurrentSheet ? 'Switching price sheet...' : `Use current price sheet (${data.price_sheet.current.name})`}</button>}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
               {data.spark && data.spark.status !== 'completed' && <p role="status">{data.spark.status === 'running' ? 'Analyzing your inventory...' : data.spark.status === 'failed' ? 'Inventory report failed.' : 'Inventory report queued.'}</p>}
               {pdfError && <p ref={pdfMessage} className="cm-field-error" role="alert">{pdfError}</p>}

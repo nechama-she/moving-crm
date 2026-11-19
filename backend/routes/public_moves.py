@@ -955,7 +955,11 @@ def _price_sheet(lead, job, db):
                                                    EstimateSignature.signed_at.isnot(None)).first() is not None
     since = job.pricing_plan_at or job.price_calculated_at
     until = since + timedelta(days=plan.price_valid_days) if since and not signed else None
+    from routes.pricing import _match_job_move_type
+    _, current = _match_job_move_type(lead, job, db)
     return {'name': plan.name, 'earlier_version': bool(plan.retired_at),
+            # The current sheet that fits the job, when it is not the one the job keeps: the rep may switch to it.
+            'current': {'name': current.name} if current is not None and current.id != plan.id else None,
             'url': f'/pricing?lead_id={lead.id}&job_id={job.id}',
             'signed': signed, 'valid_days': plan.price_valid_days,
             'valid_until': until.replace(tzinfo=timezone.utc).isoformat() if until else None}
@@ -1780,6 +1784,29 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
                 saved.details = json.dumps(details)
     db.commit()
     return {'ok': True, 'price': price}
+
+
+@router.post('/api/public-moves/{access_id}/use-current-price-sheet')
+def use_current_price_sheet(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+    """Rep only: the job leaves the price sheet it keeps for the current one that fits it, and is priced on it. On a
+    signed job too: the signed estimate is not touched, and the job keeps the new sheet while it stays signed."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from routes.pricing import _match_job_move_type, _pricing_match_key
+    lead = db.get(Lead, access.lead_id)
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not lead or not job:
+        raise HTTPException(404, 'Move not found.')
+    move_type, current = _match_job_move_type(lead, job, db)
+    if current is None:
+        raise HTTPException(409, 'No current price sheet fits this move.')
+    if current.id != job.pricing_plan_id:
+        job.pricing_match_key, job.pricing_plan_id, job.pricing_move_type = _pricing_match_key(lead, job, db), current.id, move_type
+        job.pricing_plan_at = datetime.utcnow()  # Its valid days count from here.
+        job.minimum_cuft = None
+        db.flush()
+    result = recalculate_current_price(access, db)
+    return {**result, 'price_sheet': _price_sheet(lead, job, db)}
 
 
 @router.post('/api/public-moves/{access_id}/calculate-price')
