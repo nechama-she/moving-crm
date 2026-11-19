@@ -211,7 +211,10 @@ def test_a_change_after_signing_is_logged_once(move, monkeypatch):
     monkeypatch.setattr(realtime, 'publish_realtime_event', sent.append)
     def page_load(rep):
         db.info.pop('request_cache', None)
-        return _move_details(db.get(PublicMoveAccess, 'A1'), db, pricing_only=True, individual_charges=rep)['signature_status']
+        result = _move_details(db.get(PublicMoveAccess, 'A1'), db, pricing_only=True, individual_charges=rep)
+        # A change keeps the estimate signed: the page says signed, with the note that changes were made.
+        assert result['signature_status'] == 'signed'
+        return 'changed' if result['signature_changed'] else 'signed'
     assert page_load(False) == 'signed'
     assert db.query(CustomerActivity).count() == 0
     db.get(LeadJob, 'J1').pickup_zip = '9 Other Rd, Rockville, MD 20850'

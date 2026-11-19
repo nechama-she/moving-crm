@@ -66,6 +66,8 @@ type Details = {
   // Customers only: the price sheet's named discounts they can pick for the transportation subtotal, and their pick.
   discount_choices?: { options: { title: string; type: 'amount' | 'percent' | 'rate'; value: number }[]; selected: string | null } | null;
   signature_requires_resign?: boolean;
+  // Changes were made after the estimate was signed. It stays signed: only a person removes a signature.
+  signature_changed?: boolean;
   estimate_needs_update?: boolean;
   price_locked?: boolean;
   new_file_count?: number;
@@ -363,7 +365,7 @@ export default function CustomerMovePage() {
         ...(result.item_questions && answerPending.current <= 1 ? {item_questions: result.item_questions} : {}),
         ...(result.cuft != null && previous.spark ? {spark: {...previous.spark, cuft: result.cuft}} : {}),
         estimate: previous.estimate && result.charges ? {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges} : previous.estimate,
-        ...(previous.signature_status === 'signed' ? {signature_status: 'changed' as const, signature_requires_resign: true} : {})};
+        ...(previous.signature_status === 'signed' ? {signature_changed: true} : {})};
     });
   }
   async function saveStoragePickup(date: string) {
@@ -1093,7 +1095,7 @@ export default function CustomerMovePage() {
   function applyDiscount(result: DiscountResult) {
     setData(previous => previous?.estimate ? {...previous,
       estimate: {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges},
-      ...(previous.signature_status === 'signed' ? {signature_status: 'changed' as const, signature_requires_resign: true} : {})} : previous);
+      ...(previous.signature_status === 'signed' ? {signature_changed: true} : {})} : previous);
   }
   async function refreshDetails(background = false, retryPricing = false, initial = false) {
     if (!session || !customerSessionActive(session) || (background && answerPending.current)) return;
@@ -1551,6 +1553,7 @@ export default function CustomerMovePage() {
               </ol>;
               })()}
               {data.signature_status === 'signed' && <small className="cm-estimate-button-status" role="status">Signed - current estimate</small>}
+              {repPage && data.signature_status === 'signed' && data.signature_changed && <p className="cm-signature-changed" role="status">Changes were made after this estimate was signed.</p>}
               {billOfLadingOpen && <BillOfLadingViewer changedElsewhere={billOfLadingChanged} base={base} headers={headers} customerName={data.name || ''} filename={pdfName('Bill of Lading')}
                 onSigned={() => setData(previous => previous ? {...previous, bill_of_lading: {signed: true}} : previous)} onSpotSigned={showBillOfLadingSignature} onClose={() => setBillOfLadingOpen(false)} />}
               {repPage && data.signature_status === 'signed' && data.work_order_available && <button type="button" className="cm-secondary-btn" disabled={workOrderBusy} onClick={() => void openWorkOrder()}>Work order</button>}
@@ -1681,7 +1684,9 @@ export default function CustomerMovePage() {
               const result = await call('/inventory/actions', {request_id:requestId, revision, report_id:reportId, ...edits}, 'PATCH');
               setCalculationError(''); setReportState('idle');
               // Saving the list does not reprice; the estimate is only marked as needing an update.
-              setData(previous => previous ? {...previous, estimate_needs_update: true, signature_status: undefined} : previous);
+              // A signed estimate stays signed: only a note that changes were made.
+              setData(previous => previous ? {...previous, estimate_needs_update: true,
+                ...(previous.signature_status === 'signed' ? {signature_changed: true} : {})} : previous);
               return result;
             }} onDone={finishInventory} priced={!!data.estimate} onClose={changed => {
               setShowInventoryList(false);

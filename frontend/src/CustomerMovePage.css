@@ -353,3 +353,5 @@
 .cm-discount-choice select{min-height:36px;padding:4px 8px;border:1px solid var(--cm-border);border-radius:6px;font:inherit;color:var(--cm-text);background:#fff}
 /* Locks the answers inside without changing the layout. */
 .cm-read-only{display:contents}
+/* Rep pages: changes were made after the estimate was signed (it stays signed). */
+.cm-signature-changed{margin:0 0 12px;padding:10px 14px;border:1px solid #eed69a;border-radius:8px;background:#fff8e6;color:#715311;font-size:13px}
