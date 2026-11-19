@@ -6,10 +6,17 @@ from sqlalchemy import func
 from models import LeadJobCharge, PublicMoveAccess
 
 
+BOOKED_STATUSES = {'booked', 'scheduled', 'completed'}
+
+
+def is_booked(status):
+    """Booked, scheduled or completed. Only these leads and their jobs have a booked date."""
+    return (status or '').strip().lower() in BOOKED_STATUSES
+
+
 def price_is_locked(lead, job):
-    """A booked job's price: booked, scheduled or completed, or with a booked date. Lost and cancelled are not locked."""
-    return bool(lead.booked_move_date or job.booked_move_date or
-                (lead.status or '').lower() in {'booked', 'scheduled', 'completed'})
+    """A booked job's price: the lead's status is booked, scheduled or completed. Lost and cancelled are not locked."""
+    return is_booked(lead.status)
 
 
 def utc_naive(value):

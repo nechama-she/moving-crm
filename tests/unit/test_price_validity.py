@@ -101,12 +101,13 @@ def test_other_statuses_do_not_lock_the_price(status):
     assert not price_is_locked(SimpleNamespace(status=status, booked_move_date=None), SimpleNamespace(booked_move_date=None))
 
 
-def test_booking_date_also_locks_price(quote):
-    db,lead,job,plan,pricing,now = quote
-    job.booked_move_date = now.date()
-    db.commit()
-    assert not refresh_expired_price(lead,job,db,now)
-    pricing.calculate_and_save_lead_job_price.assert_not_called()
+def test_booked_date_left_after_status_change_does_not_lock():
+    from datetime import date
+    from types import SimpleNamespace
+    from price_validity import price_is_locked
+    booked = date(2026, 11, 1)
+    assert not price_is_locked(SimpleNamespace(status='new', booked_move_date=booked), SimpleNamespace(booked_move_date=booked))
+    assert price_is_locked(SimpleNamespace(status='Booked', booked_move_date=booked), SimpleNamespace(booked_move_date=booked))
 
 
 def test_failed_refresh_rolls_back_and_does_not_extend_validity(quote):

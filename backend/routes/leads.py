@@ -32,6 +32,7 @@ from company_colors import resolve_company_color
 from config import get_config
 from database import get_db
 from lead_audit import record_lead_update_log
+from price_validity import is_booked
 from libs.common.phone import normalize_digits
 from libs.common.ssm import get_ssm_cached
 from libs.smartmoving.client import (
@@ -2736,6 +2737,16 @@ class SaveJobPriceBody(LeadJobChargesBody):
     price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
 
 
+def _drop_booked_dates_unless_booked(lead: Lead, db: Session) -> None:
+    """A lead that is not booked (or scheduled or completed) has no booked date, on itself or its jobs. The earlier
+    date stays in the lead's update log."""
+    if is_booked(lead.status):
+        return
+    lead.booked_move_date = None
+    db.query(LeadJob).filter(LeadJob.lead_id == lead.id, LeadJob.booked_move_date.isnot(None)).update(
+        {LeadJob.booked_move_date: None}, synchronize_session="fetch")
+
+
 @router.put("/leads/{lead_id}/jobs/{job_id}/price")
 def save_lead_job_price(
     lead_id: str,
@@ -2905,7 +2916,9 @@ def update_lead_job(
             booked = _parse_booked_move_date(booked_raw)
             if not booked:
                 raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
-            row.booked_move_date = booked
+            # Only a booked lead's jobs have a booked date.
+            if is_booked(lead.status):
+                row.booked_move_date = booked
 
     if "price" in payload:
         price_raw = payload.get("price")
@@ -4741,6 +4754,7 @@ def _apply_lead_update(
         lead.move_date = current_primary_job.move_date
         lead.booked_move_date = current_primary_job.booked_move_date
 
+    _drop_booked_dates_unless_booked(lead, db)
     from followup_tasks import sync as sync_followup_tasks
     sync_followup_tasks(db, lead, reconcile=True)
     try:
@@ -5310,6 +5324,8 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     parsed_booked_date = _parse_booked_move_date(booked_raw)
     if booked_raw and not parsed_booked_date:
         raise HTTPException(status_code=400, detail="booked_move_date must be a valid date")
+    if not is_booked(raw_status):
+        parsed_booked_date = None  # Only a booked lead has a booked date.
 
     volume_value = None
     if body.volume is not None:
