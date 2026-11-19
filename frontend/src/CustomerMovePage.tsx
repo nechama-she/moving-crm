@@ -71,7 +71,6 @@ type Details = {
   // Changes were made after the estimate was signed. It stays signed: only a person removes a signature.
   signature_changed?: boolean;
   estimate_needs_update?: boolean;
-  price_locked?: boolean;
   new_file_count?: number;
   editable_files?: EditableReportFile[];
   files_changed?: boolean;
@@ -632,8 +631,6 @@ export default function CustomerMovePage() {
     if (failedAnswers.current.size || failedPricing.current.size) {
       throw new Error('Your list is saved. Please retry saving your service answers before calculating the price.');
     }
-    // A booked or closed move keeps its price: the list is saved, and Done only closes.
-    if (data?.price_locked) { await loadSection('inventory', true); return; }
     // An emptied list has nothing to price: the page shows the move as it is now.
     if (!inventorySummary?.items) { await Promise.allSettled([loadSection('inventory', true), loadSection('volume', true), loadSection('pricing', true)]); return; }
     let failure = '';

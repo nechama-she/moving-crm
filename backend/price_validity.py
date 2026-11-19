@@ -1,4 +1,4 @@
-"""Refresh expired estimates without rerunning inventory or changing booked prices."""
+"""Refresh expired estimates without rerunning inventory. A signed job keeps its price sheet (pricing_books.job_keeps_book)."""
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -12,11 +12,6 @@ BOOKED_STATUSES = {'booked', 'scheduled', 'completed'}
 def is_booked(status):
     """Booked, scheduled or completed. Only these leads and their jobs have a booked date."""
     return (status or '').strip().lower() in BOOKED_STATUSES
-
-
-def price_is_locked(lead, job):
-    """A booked job's price: the lead's status is booked, scheduled or completed. Lost and cancelled are not locked."""
-    return is_booked(lead.status)
 
 
 def utc_naive(value):
@@ -49,7 +44,7 @@ def _may_have_expired(lead, job, db, now):
 
 def refresh_expired_price(lead, job, db, now=None):
     now = now or datetime.utcnow()
-    if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
+    if job.price is None or (job.price <= 0 and not job.price_calculated_at):
         return False
     # Every sheet is valid for at least a day. Opening a fresh estimate needs
     # no write locks; retain the locked recheck for possible expired quotes.
@@ -61,7 +56,7 @@ def refresh_expired_price(lead, job, db, now=None):
     # Serialize concurrent page opens and recheck the saved calculation time.
     db.refresh(lead, with_for_update=True)
     db.refresh(job, with_for_update=True)
-    if job.price is None or (job.price <= 0 and not job.price_calculated_at) or price_is_locked(lead, job):
+    if job.price is None or (job.price <= 0 and not job.price_calculated_at):
         return False
     calculated = _calculated_at(job, db)
     # All books have at least one day of validity; fresh quotes need no pricing lookup.

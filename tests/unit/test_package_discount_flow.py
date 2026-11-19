@@ -22,9 +22,7 @@ def test_subtotal_discount_applies_to_all_three_and_removes_from_all_three(monke
     from routes import public_moves
     from charge_updates import ChargeUpdates
     from routes.leads import _refresh_lead_estimated_total
-    import price_validity
     monkeypatch.setattr(public_moves, 'is_rep_request', lambda access, request: True)
-    monkeypatch.setattr(price_validity, 'price_is_locked', lambda lead, job: False)
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
@@ -79,8 +77,6 @@ def test_customer_picks_only_the_price_sheets_discounts_and_never_over_a_reps(mo
     import pytest
     from models import Base, Lead, LeadJob, LeadJobCharge, PublicMoveAccess
     from routes import public_moves, pricing
-    import price_validity
-    monkeypatch.setattr(price_validity, 'price_is_locked', lambda lead, job: False)
     # The price sheet's named discounts.
     sheet = SimpleNamespace(rules=[SimpleNamespace(category='discount_percent', title='Military', description='10'),
                                    SimpleNamespace(category='discount_amount', title='Senior', description='100'),

@@ -43,10 +43,8 @@ def test_booking_in_the_crm_sets_the_booked_date(monkeypatch):
         # Moved back off booked: the lead and its jobs no longer have a booked date, and the price is not locked.
         leads._apply_lead_update('lead', leads.LeadUpdate(status='new'), user, db)
         db.expire_all()
-        from price_validity import price_is_locked
         lead, job = db.get(Lead, 'lead'), db.get(LeadJob, 'job')
         assert lead.booked_move_date is None and job.booked_move_date is None
-        assert not price_is_locked(lead, job)
         # A booked date sent for a lead that is not booked is not kept.
         leads._apply_lead_update('lead', leads.LeadUpdate(booked_move_date='2026-11-20'), user, db)
         db.expire_all()

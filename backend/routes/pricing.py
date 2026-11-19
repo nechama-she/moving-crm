@@ -1727,9 +1727,6 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
 
     if not lead or not job:
         return no_price('The lead or move record could not be found.')
-    from price_validity import price_is_locked
-    if price_is_locked(lead, job):
-        return float(job.price) if job.price is not None else no_price('Pricing is locked for this booked or closed move, and no price is saved.')
     vol = _rounded_cubic_feet(lead.volume)
     if vol <= 0:
         # An empty inventory clears the estimate; it is not a pricing failure.
