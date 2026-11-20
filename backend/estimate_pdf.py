@@ -104,6 +104,10 @@ def _services_total(estimate):
     return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
 
 
+# The most fee rows of one tab kept on one page; a longer tab is split, its title kept with its first row.
+TAB_ROWS_ON_A_PAGE = 20
+
+
 def _services_table(data, p, table, styles, no_charge='No charge'):
     """Additional services and fees: each answer with its charge, then the other service lines, and their total. no_charge:
     what a fee with no charge shows."""
@@ -209,7 +213,7 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
         description = re.sub(r' \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$', '', charge.get('description') or '')
         add(fee_tab(charge.get('name'), data), [service(charge['name'], None), p(description, 'NoteEstimate'), cost], [charge])
     body = [[p('SERVICE'), p('DETAILS'), p('CHARGE', 'RightEstimate')]]
-    titles = []
+    titles, together = [], []
     for tab in [None, *TABS]:
         if tab not in rows:
             continue
@@ -221,13 +225,16 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
             titles.append(len(body))
             body.append([Paragraph(f'<b>{escape(TABS[tab])}</b>', styles['BodyEstimate']), '',
                          p(money(tab_total) + (' + pending' if tab_pending else ''), 'RightEstimate')])
+            # A tab is not split across pages; one too long for a page keeps at least its title with its first row.
+            together.append((len(body) - 1, len(body) - 1 + (len(rows[tab]) if len(rows[tab]) <= TAB_ROWS_ON_A_PAGE else 1)))
         body.extend(row for row, _ in rows[tab])
     body.append([p('TOTAL ADDITIONAL SERVICES AND FEES'), p('Includes charges pending calculation' if pending else '', 'NoteEstimate'),
                  p(money(total), 'RightEstimate')])
     services = table(body, [170, 257, 95], header=True)
     services.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
                                   ('BACKGROUND', (0, len(body) - 1), (-1, len(body) - 1), colors.HexColor('#edf2f5')),
-                                  *[('BACKGROUND', (0, row), (-1, row), colors.HexColor('#f6f8fa')) for row in titles]]))
+                                  *[('BACKGROUND', (0, row), (-1, row), colors.HexColor('#f6f8fa')) for row in titles],
+                                  *[('NOSPLIT', (0, first), (-1, last)) for first, last in together]]))
     return services
 
 

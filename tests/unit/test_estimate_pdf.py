@@ -1,3 +1,4 @@
+import pytest
 import sys
 from pathlib import Path
 
@@ -266,3 +267,29 @@ def test_fee_rows_are_grouped_by_the_customer_page_tabs():
     tabs = fee_tabs(data)
     assert tabs[service_id('mirror')] == 'package:protection' and tabs[service_id('kitchen')] == 'package:boxes'
     assert tabs[service_id('tv')] == 'bulky:' and tabs[service_id('elevator:delivery')] == 'elevator:' and service_id('fee') not in tabs
+
+
+@pytest.mark.parametrize('fillers,boxes', [(n, 3) for n in range(10, 40)] + [(5, 45)])
+def test_a_tab_is_not_split_across_pages(fillers, boxes):
+    """Wherever the page ends, a tab's title and its rows stay on one page; a tab too long for a page still prints."""
+    from io import BytesIO
+    from uuid import uuid5, NAMESPACE_URL
+    from pypdf import PdfReader
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate
+    from estimate_pdf import _kit, _services_table
+    service_id = lambda key: str(uuid5(NAMESPACE_URL, f'customer-packing:job:{key}'))
+    charges = [{'id': service_id(f'fee{i}'), 'name': f'Filler fee {i}', 'description': 'Fee', 'total': 10} for i in range(fillers)]
+    charges += [{'id': service_id(f'box{i}'), 'name': f'Size{i} Packing', 'description': 'Boxes', 'total': 20} for i in range(boxes)]
+    data = dict(job_id='job', packing_package={'box_items': [{'label': f'Size{i}'} for i in range(boxes)]},
+                estimate={'price': '1', 'charges': charges})
+    styles, p, table = _kit(9)
+    out = BytesIO()
+    SimpleDocTemplate(out, pagesize=letter).build([_services_table(data, p, table, styles)])
+    pages = [page.extract_text() for page in PdfReader(BytesIO(out.getvalue())).pages]
+    title = next(i for i, text in enumerate(pages) if 'Packing services - Boxes' in text)
+    on_title_page = sum(f'Size{i} Packing' in pages[title] for i in range(boxes))
+    if boxes <= 20:
+        assert on_title_page == boxes
+    else:
+        assert on_title_page >= 1 and all(any(f'Size{i} Packing' in text for text in pages) for i in range(boxes))
