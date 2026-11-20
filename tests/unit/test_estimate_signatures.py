@@ -246,6 +246,10 @@ def test_removing_a_signature_restarts_the_kept_price_sheet_days(portal, monkeyp
     job.pricing_plan_at = datetime.utcnow() - timedelta(days=30)  # Got the sheet a month ago.
     db.commit()
     sheet = SimpleNamespace(price_valid_days=7)
+    import boto3
+    from unittest.mock import Mock
+    monkeypatch.setenv('ATTACHMENTS_BUCKET', 'bucket')
+    monkeypatch.setattr(boto3, 'client', lambda name: Mock())  # The signed copy is archived before removal.
     mod.clear_estimate_signature(version, access, db)
     db.refresh(job)
     assert job_keeps_book(job, sheet, db)

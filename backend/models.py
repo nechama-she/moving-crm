@@ -75,6 +75,24 @@ class BillOfLadingSignature(Base):
     signed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class SignedPdfArchive(Base):
+    """A copy of every signed PDF, kept in S3 for the record. Written when a PDF is signed (or before its signature is
+    removed) and read only by the staff archive page: nothing on the customer page reads it."""
+    __tablename__ = 'signed_pdf_archive'
+    __table_args__ = (UniqueConstraint('kind', 'signature_id', 'signed_at', name='uq_signed_pdf_archive_signing'),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String(36), ForeignKey('leads.id'), nullable=False, index=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id'), nullable=False, index=True)
+    # 'estimate' or 'bill_of_lading'; signature_id is that signature's row id.
+    kind = Column(String(30), nullable=False)
+    signature_id = Column(String(36), nullable=False)
+    spot = Column(Integer)
+    signer_name = Column(String(200), nullable=False)
+    signed_at = Column(DateTime, nullable=False)
+    s3_key = Column(Text, nullable=False)
+    archived_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class DetachedSmartMovingLead(Base):
     """A SmartMoving opportunity whose lead was signed on the customer page: the lead no longer carries its id, so
     SmartMoving's updates find no lead, and a new lead is never created from it."""
@@ -675,6 +693,7 @@ class LeadJob(Base):
     dispatch_company = relationship("Company", foreign_keys=[dispatch_company_id])
     foreman = relationship("User", foreign_keys=[foreman_id])
     charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
+    section_discounts = relationship("JobSectionDiscount", cascade="all, delete-orphan", passive_deletes=True)
 
     __table_args__ = (
         UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
@@ -812,6 +831,26 @@ class LeadJobCharge(Base):
         }
 
 
+class JobSectionDiscount(Base):
+    """A rep's discount on one tab of a job's fees (fee_tabs: Elevator, Packing services - Item protection...), apart
+    from its lines' own discounts: an amount or a percent off the tab's total, and the amount it takes off now (kept
+    up to date with the job's price, like a line's discount, so every total counts it)."""
+    __tablename__ = 'job_section_discounts'
+    __table_args__ = (UniqueConstraint('job_id', 'tab', name='uq_job_section_discount'),)
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Deleted with its job, however the job is deleted.
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False, index=True)
+    tab = Column(String(40), nullable=False)
+    title = Column(String(120), nullable=False)
+    kind = Column(String(10), nullable=False)  # 'amount' or 'percent'
+    value = Column(Numeric(12, 2), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {'title': self.title, 'type': self.kind, 'value': float(self.value), 'amount': float(self.amount or 0)}
+
+
 # The lead's total, added up from its jobs whenever a lead is read: each job's lines (as its Charges box shows them),
 # or its saved price when it has no lines. Only the tax comes from the saved estimated_total (SmartMoving sends it).
 def _lead_sums():
@@ -821,6 +860,11 @@ def _lead_sums():
              .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
     discounts = (select(func.sum(LeadJobCharge.discount_amount)).join(LeadJob, LeadJob.id == LeadJobCharge.job_id)
                  .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
+    # Section discounts come off the lines' total and count with their discounts.
+    sections = func.coalesce(select(func.sum(JobSectionDiscount.amount)).join(LeadJob, LeadJob.id == JobSectionDiscount.job_id)
+                             .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, JobSectionDiscount).scalar_subquery(), 0)
+    lines = lines - sections
+    discounts = func.coalesce(discounts, 0) + sections
     prices = (select(func.sum(LeadJob.price)).where(LeadJob.lead_id == Lead.id, ~exists().where(LeadJobCharge.job_id == LeadJob.id))
               .correlate_except(LeadJob).scalar_subquery())
     Lead.lines_total = column_property(lines)

@@ -168,3 +168,36 @@ def test_an_earlier_version_is_dropped_when_its_days_end_even_with_nothing_else_
     job.pricing_plan_at = datetime.utcnow() - timedelta(days=8)
     db.commit()
     assert book(db, job).id == version.id
+
+
+def test_the_rep_can_switch_a_job_to_the_current_book(db, monkeypatch):
+    """A job keeps an earlier version; the rep moves it to the current one (say its prices went down), signed or not.
+    Only the rep can switch, and the signed estimate is not touched."""
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from models import LeadJob
+    from routes import public_moves
+    job = db.get(LeadJob, 'job')
+    assert book(db, job).id == 'east'
+    version = edit_fuel(db, 'east', 10)
+    assert book(db, job).id == 'east'  # Within its valid days: the earlier version.
+    access = SimpleNamespace(lead_id='lead', job_id='job')
+    monkeypatch.setattr(public_moves, 'recalculate_current_price', lambda access, db: {'ok': True, 'price': 1})
+    monkeypatch.setattr(public_moves, 'is_rep_request', lambda access, request: False)
+    with pytest.raises(HTTPException) as refused:
+        public_moves.use_current_price_sheet(access, db)
+    assert refused.value.status_code == 403
+    monkeypatch.setattr(public_moves, 'is_rep_request', lambda access, request: True)
+    sign(db)
+    from models import EstimateSignature
+    signed = db.query(EstimateSignature).one()
+    before = (signed.pdf, signed.snapshot, signed.signed_at)
+    result = public_moves.use_current_price_sheet(access, db)
+    job = db.get(LeadJob, 'job')
+    assert job.pricing_plan_id == version.id and book(db, job).id == version.id
+    assert result['price_sheet']['name'] == version.name and result['price_sheet']['current'] is None
+    db.refresh(signed)
+    assert (signed.pdf, signed.snapshot, signed.signed_at) == before
+    # Signed: the job keeps the sheet the rep chose, even after it is edited.
+    edit_fuel(db, version.id, 30)
+    assert book(db, db.get(LeadJob, 'job')).id == version.id

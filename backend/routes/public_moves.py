@@ -8,6 +8,7 @@ from pricing_addresses import with_job_locations
 from report_files import active_report_files, move_files, file_list, remove_report_file, preview_report_file
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -38,6 +39,7 @@ from public_move_sync import queue_files, sync_status
 from routes.leads import LeadContactInput, save_lead_contacts, _get_visible_lead_or_404, _get_user_company_ids, _persist_job_route, _read_job_route, _upload_attachment_bytes_to_s3, _delete_s3_url, _safe_attachment_name
 
 router = APIRouter(tags=['Customer move portal'])
+logger = logging.getLogger('moving-crm')
 
 NOW = datetime.utcnow
 # The one switch: customers can see everything and sign, but change nothing, until changes made at the same time by a
@@ -769,7 +771,11 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
 def customer_price(job):
     """The customer's price: the total of the lines the customer page shows. SmartMoving's lines are not part of it."""
     shown = [c for c in job.charges or [] if c.source != 'smartmoving']
-    return sum((Decimal(str(c.total_cost or 0)) for c in shown), Decimal(0)) if shown else None
+    if not shown:
+        return None
+    # Less the rep's discounts on fee tabs.
+    return (sum((Decimal(str(c.total_cost or 0)) for c in shown), Decimal(0))
+            - sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)))
 
 
 def estimate_charges(job, individual_charges=False):
@@ -875,6 +881,11 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
         packing_items=packing_items, item_questions=item_questions),
         package_saved='mode' in saved_package)
     pricing_data = dict(pricing_error=pricing_error, extra_stops=extra_stops, elevator=elevator, long_carry=long_carry, stairs=stairs, storage=storage, shuttle=shuttle, item_questions=item_questions, packing_package=packing_package, packing_items=packing_items, packing_saved=job.customer_packing is not None, unanswered_questions=required_questions, pricing_required=pricing_required, estimate=estimate)
+    # Each price line's tab, as the page groups them (and the PDFs group their fee rows).
+    from fee_tabs import fee_tabs
+    pricing_data['fee_tabs'] = fee_tabs(pricing_data)
+    # The rep's discount on each tab, with the amount it takes off (kept with the job's price).
+    pricing_data['tab_discounts'] = {d.tab: d.to_dict() for d in job.section_discounts}
     from estimate_signature_history import estimate_signature_status
     from item_selectors import inventory_selectors
     from company_documents import documents_for
@@ -921,7 +932,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
         return dict(pricing_data, payments=payments)
-    return {'payments': payments, 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'payments': payments, 'fee_tabs': pricing_data['fee_tabs'], 'tab_discounts': pricing_data['tab_discounts'], 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -953,7 +964,11 @@ def _price_sheet(lead, job, db):
                                                    EstimateSignature.signed_at.isnot(None)).first() is not None
     since = job.pricing_plan_at or job.price_calculated_at
     until = since + timedelta(days=plan.price_valid_days) if since and not signed else None
+    from routes.pricing import _match_job_move_type
+    _, current = _match_job_move_type(lead, job, db)
     return {'name': plan.name, 'earlier_version': bool(plan.retired_at),
+            # The current sheet that fits the job, when it is not the one the job keeps: the rep may switch to it.
+            'current': {'name': current.name} if current is not None and current.id != plan.id else None,
             'url': f'/pricing?lead_id={lead.id}&job_id={job.id}',
             'signed': signed, 'valid_days': plan.price_valid_days,
             'valid_until': until.replace(tzinfo=timezone.utc).isoformat() if until else None}
@@ -1001,8 +1016,13 @@ def _pricing_delta(access, lead, job, db, kind, individual_charges):
     db.refresh(access)
     options = {part: builders[part](lead, job, db) for part in parts}
     price = customer_price(job)
+    charges = estimate_charges(job, individual_charges)
+    from fee_tabs import fee_tabs
     delta = {'saved': True, 'price': str(price) if price is not None else None,
-             'charges': estimate_charges(job, individual_charges), 'options': options,
+             'charges': charges, 'options': options,
+             # The tabs of this answer's lines (the page keeps the rest), and the tabs' discounts now.
+             'fee_tabs': fee_tabs(dict(options, estimate={'charges': charges})),
+             'tab_discounts': {d.tab: d.to_dict() for d in job.section_discounts},
              'unanswered': unanswered_questions(options, package_saved='mode' in json.loads(job.customer_packing_package or '{}')),
              'unanswered_scope': sorted({prefix for part in parts for prefix in UNANSWERED_SCOPE[part]})}
     return delta
@@ -1023,9 +1043,12 @@ def _item_answer_delta(access, lead, company, db, inventory_changed, individual_
         db.refresh(access)
         price = customer_price(job)
         options = _customer_pricing_options(lead, job, db)
-        delta.update(price=str(price) if price is not None else None, charges=estimate_charges(job, individual_charges),
+        charges = estimate_charges(job, individual_charges)
+        from fee_tabs import fee_tabs
+        delta.update(price=str(price) if price is not None else None, charges=charges,
                      options={key: value for key, value in options.items() if key != 'minimum_cuft'},
-                     cuft=state.get('spark_extracted_cuft'))
+                     cuft=state.get('spark_extracted_cuft'), fee_tabs=fee_tabs(dict(options, estimate={'charges': charges})),
+                     tab_discounts={d.tab: d.to_dict() for d in job.section_discounts})
         package_saved = 'mode' in json.loads(job.customer_packing_package or '{}')
         delta['unanswered'] = unanswered_questions({**options, 'item_questions': item_questions}, package_saved=package_saved)
         delta['unanswered_scope'] = sorted({prefix for scope in UNANSWERED_SCOPE.values() for prefix in scope} | {'items'})
@@ -1212,6 +1235,7 @@ def sign_estimate(signature_id: str, body: SigningInput, access: PublicMoveAcces
     activity_id = log_activity(db, access.lead_id, access.job_id, ESTIMATE_SIGNED, name, is_rep_request(access, request))
     db.commit()
     publish_activity(db, access.lead_id, activity_id)
+    _archive_signed_pdf(db, 'estimate', record)
     # The page shows the estimate signed from this answer, without loading its pricing again.
     work_order = is_rep_request(access, request)
     return {'id': record.id, 'name': name, 'signed_at': signed_at.isoformat() + 'Z', 'report_id': record.report_id,
@@ -1398,6 +1422,7 @@ def sign_bill_of_lading(spot: int, revision: str, body: SigningInput, access: Pu
     activity_id = log_activity(db, access.lead_id, access.job_id, BILL_OF_LADING_SIGNED, name, is_rep_request(access, request), spot=spot + 1)
     db.commit()
     publish_activity(db, access.lead_id, activity_id)
+    _archive_signed_pdf(db, 'bill_of_lading', record, spot + 1)
     # estimate_id and spot: the page adds this signature under its estimate in the report history.
     return {'id': record.id, 'name': name, 'signed_at': signature['signed_at'], 'spot': spot + 1, 'estimate_id': estimate.id}
 
@@ -1414,11 +1439,34 @@ def bill_of_lading_signature_pdf(signature_id: str, access: PublicMoveAccess = D
         'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
 
 
+def _archive_signed_pdf(db, kind, record, spot=None):
+    """Copies a just-signed PDF to the archive. A failure does not undo the signing: the signed PDF is still saved on its
+    signature, and removing an estimate signature copies it first."""
+    from signed_pdf_archive import archive
+    try:
+        archive(db, kind, record, spot)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception('Could not archive signed %s %s', kind, record.id)
+
+
 @router.post('/api/public-moves/{access_id}/estimate-signatures/{signature_id}/resign')
-def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+def clear_estimate_signature(signature_id: str, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None,
+                             without_copy: bool = Query(False)):
     from estimate_pdf import build_estimate_pdf
     from estimate_signature_history import estimate_signature_status
     record = _signature_record(signature_id, access, db, lock=True)
+    # The signed PDF is copied to the archive before its signature comes off. When no copy can be saved, the person is
+    # told and removes it only after confirming (without_copy).
+    if record.signed_at:
+        from signed_pdf_archive import archive
+        try:
+            archive(db, 'estimate', record)
+        except Exception:
+            logger.exception('Could not archive signed estimate %s before removing its signature', record.id)
+            if not without_copy:
+                raise HTTPException(409, {'code': 'no_copy', 'message': 'A copy of the signed estimate could not be saved. If you remove the signature, the signed PDF will not be kept. Remove it anyway?'})
     snapshot = json.loads(record.snapshot)
     snapshot['data'].pop('signature', None)
     pdf = build_estimate_pdf(snapshot['data'], snapshot['rows'])
@@ -1645,6 +1693,55 @@ def save_customer_discount(body: CustomerDiscountInput, access: PublicMoveAccess
             'discount_choices': _discount_choices(lead, job, db)}
 
 
+class SectionDiscountInput(BaseModel):
+    tab: str = Field(min_length=1, max_length=40)
+    title: str = Field(default='Discount', min_length=1, max_length=120)
+    type: Literal['amount', 'percent'] = 'amount'
+    value: Decimal = Field(default=0, ge=0, max_digits=12, decimal_places=2)
+    remove: bool = False
+
+
+@router.post('/api/public-moves/{access_id}/section-discounts')
+def save_section_discount(body: SectionDiscountInput, request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """Rep only: one discount on a tab of the job's fees, apart from its lines' own discounts."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from fee_tabs import TABS
+    from models import JobSectionDiscount
+    from routes.leads import _price_job_from_lines, _refresh_lead_estimated_total
+    if body.tab not in TABS:
+        raise HTTPException(422, 'Unknown section.')
+    if body.type == 'percent' and body.value > 100:
+        raise HTTPException(422, 'Percentage cannot exceed 100.')
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not job:
+        raise HTTPException(404, 'Move not found.')
+    discount = next((d for d in job.section_discounts if d.tab == body.tab), None)
+    if body.remove:
+        if discount:
+            job.section_discounts.remove(discount)
+    else:
+        if discount is None:
+            discount = JobSectionDiscount(tab=body.tab)
+            job.section_discounts.append(discount)
+        discount.title, discount.kind, discount.value = body.title.strip() or 'Discount', body.type, body.value
+    db.flush()
+    # Its amount, the job's price and the lead's total, as for any discount (a removed one too).
+    _refresh_lead_estimated_total(access.lead_id, db)
+    _price_job_from_lines(job, db)
+    db.commit()
+    return _discount_response(access, job, db)
+
+
+def _discount_response(access, job, db):
+    """What a discount save sends back: the price, the price lines and the tabs' discounts (no page reload)."""
+    db.refresh(job)
+    db.refresh(access)
+    price = customer_price(job)
+    return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True),
+            'tab_discounts': {d.tab: d.to_dict() for d in job.section_discounts}}
+
+
 class RepDiscountInput(BaseModel):
     charge_id: str
     title: str = Field(default='Discount', min_length=1, max_length=120)
@@ -1702,9 +1799,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
         raise HTTPException(422, 'Percentage cannot exceed 100.')
     if body.charge_id == 'package':
         _save_package_discount(lead, job, db, body.title, body.type, body.value, body.remove)
-        db.refresh(access)
-        price = customer_price(job)
-        return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
+        return _discount_response(access, job, db)
     charge = db.query(LeadJobCharge).filter_by(id=body.charge_id, job_id=job.id).first()
     if not charge:
         raise HTTPException(404, 'Charge not found.')
@@ -1720,10 +1815,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()
     # Only the price lines and total changed; send them back instead of reloading the page.
-    db.refresh(job)
-    db.refresh(access)
-    price = customer_price(job)
-    return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
+    return _discount_response(access, job, db)
 
 
 @router.post('/api/public-moves/{access_id}/recalculate-price')
@@ -1753,6 +1845,29 @@ def recalculate_current_price(access: PublicMoveAccess = Depends(verified), db: 
                 saved.details = json.dumps(details)
     db.commit()
     return {'ok': True, 'price': price}
+
+
+@router.post('/api/public-moves/{access_id}/use-current-price-sheet')
+def use_current_price_sheet(access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db), request: Request = None):
+    """Rep only: the job leaves the price sheet it keeps for the current one that fits it, and is priced on it. On a
+    signed job too: the signed estimate is not touched, and the job keeps the new sheet while it stays signed."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from routes.pricing import _match_job_move_type, _pricing_match_key
+    lead = db.get(Lead, access.lead_id)
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not lead or not job:
+        raise HTTPException(404, 'Move not found.')
+    move_type, current = _match_job_move_type(lead, job, db)
+    if current is None:
+        raise HTTPException(409, 'No current price sheet fits this move.')
+    if current.id != job.pricing_plan_id:
+        job.pricing_match_key, job.pricing_plan_id, job.pricing_move_type = _pricing_match_key(lead, job, db), current.id, move_type
+        job.pricing_plan_at = datetime.utcnow()  # Its valid days count from here.
+        job.minimum_cuft = None
+        db.flush()
+    result = recalculate_current_price(access, db)
+    return {**result, 'price_sheet': _price_sheet(lead, job, db)}
 
 
 @router.post('/api/public-moves/{access_id}/calculate-price')

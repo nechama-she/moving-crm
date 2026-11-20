@@ -99,16 +99,22 @@ def _before_discount(charge):
     return float(charge.get('subtotal') or 0) if charge.get('discount_amount') else float(charge.get('total') or 0)
 
 
-def _services_total(estimate):
+def _services_total(estimate, tab_discounts=None):
+    """The fee lines, their total less the rep's discounts on their tabs, and whether one is pending."""
     lines = [charge for charge in estimate.get('charges') or [] if _is_service(charge)]
-    return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
+    discounts = sum(float(discount.get('amount') or 0) for discount in (tab_discounts or {}).values())
+    return lines, sum(float(charge.get('total') or 0) for charge in lines) - discounts, any(charge.get('pending') for charge in lines)
+
+
+# The most fee rows of one tab kept on one page; a longer tab is split, its title kept with its first row.
+TAB_ROWS_ON_A_PAGE = 20
 
 
 def _services_table(data, p, table, styles, no_charge='No charge'):
     """Additional services and fees: each answer with its charge, then the other service lines, and their total. no_charge:
     what a fee with no charge shows."""
     from routes.pricing import customer_packing_charge_id
-    lines, total, pending = _services_total(data['estimate'])
+    lines, total, pending = _services_total(data['estimate'], data.get('tab_discounts'))
     by_id = {charge.get('id'): charge for charge in lines}
     job_id = data.get('job_id')
     shown = set()
@@ -141,7 +147,15 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
         return money(value) if float(value or 0) else no_charge
     def service(name, terms):
         return [p(name)] + ([p(terms, 'NoteEstimate')] if terms else [])
-    body = [[p('SERVICE'), p('DETAILS'), p('CHARGE', 'RightEstimate')]]
+    from fee_tabs import TABS, fee_tab
+    # The rows by the customer page's tabs (fee_tabs): rows of no tab first, then each tab under its title, as the page
+    # groups its price lines. Each row keeps the price lines it shows, for its tab's total.
+    rows = {}
+    def add(tab, row, charges=()):
+        rows.setdefault(tab, []).append((row, list(charges)))
+    def answered(key):
+        charge = by_id.get(customer_packing_charge_id(job_id, key)) if job_id else None
+        return [charge] if charge else []
     stops = data.get('extra_stops')
     for group in (stops or {}).get('locations', []):
         terms = f"{group['free_miles']:g} miles free; ${group['stop_fee']:.2f} per chargeable stop plus ${group['per_mile']:.2f} per mile beyond the allowance."
@@ -158,39 +172,39 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
             cost = cell_of(found)
         else:
             cost = p(amount(sum(amounts)), 'RightEstimate')
-        body.append([service('Extra ' + group['location'] + ' stops', terms), p(answer, 'NoteEstimate'), cost])
+        add('stops:', [service('Extra ' + group['location'] + ' stops', terms), p(answer, 'NoteEstimate'), cost], found)
     elevator = data.get('elevator')
     for row in (elevator or {}).get('locations', []):
         answer = ('Not sure - pending confirmation' if row.get('unknown') else 'Elevator used' if row['uses_elevator']
                   else 'No elevator' if row['uses_elevator'] is not None else 'Not answered')
-        body.append([service('Elevator - ' + row['location'], elevator['terms']), p(answer, 'NoteEstimate'),
-                     charge_cell('elevator:' + row['location'])])
+        add('elevator:', [service('Elevator - ' + row['location'], elevator['terms']), p(answer, 'NoteEstimate'),
+                          charge_cell('elevator:' + row['location'])], answered('elevator:' + row['location']))
     carry = data.get('long_carry')
     for row in (carry or {}).get('locations', []):
         answer = ('Truck access unknown - pending confirmation' if row.get('unknown')
                   else f"{row['distance_feet']} feet" if row['distance_feet'] is not None else 'Not answered')
         terms = f"First {carry['included_feet']} feet included; ${carry['rate_per_cuft']:.2f} per cu ft per additional {carry['increment_feet']} feet."
-        body.append([service('Long carry - ' + row['location'], terms), p(answer, 'NoteEstimate'),
-                     charge_cell('long_carry:' + row['location'])])
+        add('access:', [service('Long carry - ' + row['location'], terms), p(answer, 'NoteEstimate'),
+                        charge_cell('long_carry:' + row['location'])], answered('long_carry:' + row['location']))
     stairs = data.get('stairs')
     for row in (stairs or {}).get('locations', []):
         answer = ('Not sure - pending confirmation' if row.get('unknown') else 'Not answered' if row['flights'] is None
                   else 'No stairs' if not row['flights'] else f"{row['flights']} flight" + ('' if row['flights'] == 1 else 's'))
         terms = f"Up to {stairs['steps_per_flight']} steps is one flight; {stairs['free_flights']} free per address; ${stairs['rate_per_cuft']:.2f} per cu ft per additional flight."
-        body.append([service('Stairs - ' + row['location'], terms), p(answer, 'NoteEstimate'),
-                     charge_cell('stairs:' + row['location'])])
+        add('stairs:', [service('Stairs - ' + row['location'], terms), p(answer, 'NoteEstimate'),
+                        charge_cell('stairs:' + row['location'])], answered('stairs:' + row['location']))
     storage = data.get('storage')
     if storage:
         answer = (f"Earliest delivery date: {storage.get('available_date') or 'Not answered'}"
                   + (f"\n{storage['paid_periods']} paid period(s)" if storage.get('valid') else ''))
         terms = f"First {storage['free_days']} days free; ${storage['rate_per_cuft']:.2f} per cu ft per additional {storage['period_days']} days or part thereof."
-        body.append([service('Storage', terms), p(answer, 'NoteEstimate'), charge_cell('storage-periods')])
+        add('storage:', [service('Storage', terms), p(answer, 'NoteEstimate'), charge_cell('storage-periods')], answered('storage-periods'))
     shuttle = data.get('shuttle')
     if shuttle:
         answer = ('Shuttle required for this delivery area' if shuttle['automatic']
                   else 'Semi-trailer can park at delivery: Not sure - shuttle charge applies if needed' if shuttle.get('unknown')
                   else {True: 'Semi-trailer can park at delivery: Yes', False: 'Semi-trailer can park at delivery: No - shuttle required'}.get(shuttle.get('answer'), 'Not answered'))
-        body.append([service('Delivery truck access', None), p(answer, 'NoteEstimate'), charge_cell('shuttle')])
+        add('access:', [service('Delivery truck access', None), p(answer, 'NoteEstimate'), charge_cell('shuttle')], answered('shuttle'))
     # Lines with no answer of their own: packing, materials, item services, mileage fees.
     for charge in lines:
         # A fee waived to zero still shows, with its discount.
@@ -199,12 +213,38 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
         cost = p('Pending', 'RightEstimate') if charge.get('pending') else cell_of([charge])
         # The discount shows in the charge cell, not also as the "| <title>: -$X" a rep discount adds to the description.
         description = re.sub(r' \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$', '', charge.get('description') or '')
-        body.append([service(charge['name'], None), p(description, 'NoteEstimate'), cost])
+        add(fee_tab(charge.get('name'), data), [service(charge['name'], None), p(description, 'NoteEstimate'), cost], [charge])
+    body = [[p('SERVICE'), p('DETAILS'), p('CHARGE', 'RightEstimate')]]
+    titles, together = [], []
+    for tab in [None, *TABS]:
+        if tab not in rows:
+            continue
+        if tab is not None:
+            # The tab's title and its total, as the page shows it over its lines.
+            charges = [charge for _, found in rows[tab] for charge in found]
+            tab_total = sum(float(charge.get('total') or 0) for charge in charges if not charge.get('pending'))
+            tab_pending = any(charge.get('pending') for charge in charges)
+            titles.append(len(body))
+            # The rep's discount on the tab: its total crossed out, then less the discount, and the discount's name.
+            discount = (data.get('tab_discounts') or {}).get(tab)
+            amount = float((discount or {}).get('amount') or 0)
+            if amount:
+                cell = [Paragraph(f"<strike>{money(tab_total)}</strike>  <b>{money(tab_total - amount)}</b>"
+                                  + (' + pending' if tab_pending else ''), styles['RightEstimate']),
+                        p(f"{discount['title']}: -{money(amount)}", 'NoteEstimate')]
+            else:
+                cell = p(money(tab_total) + (' + pending' if tab_pending else ''), 'RightEstimate')
+            body.append([Paragraph(f'<b>{escape(TABS[tab])}</b>', styles['BodyEstimate']), '', cell])
+            # A tab is not split across pages; one too long for a page keeps at least its title with its first row.
+            together.append((len(body) - 1, len(body) - 1 + (len(rows[tab]) if len(rows[tab]) <= TAB_ROWS_ON_A_PAGE else 1)))
+        body.extend(row for row, _ in rows[tab])
     body.append([p('TOTAL ADDITIONAL SERVICES AND FEES'), p('Includes charges pending calculation' if pending else '', 'NoteEstimate'),
                  p(money(total), 'RightEstimate')])
     services = table(body, [170, 257, 95], header=True)
     services.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), .4, colors.HexColor('#bdc9d0')),
-                                  ('BACKGROUND', (0, len(body) - 1), (-1, len(body) - 1), colors.HexColor('#edf2f5'))]))
+                                  ('BACKGROUND', (0, len(body) - 1), (-1, len(body) - 1), colors.HexColor('#edf2f5')),
+                                  *[('BACKGROUND', (0, row), (-1, row), colors.HexColor('#f6f8fa')) for row in titles],
+                                  *[('NOSPLIT', (0, first), (-1, last)) for first, last in together]]))
     return services
 
 
@@ -285,7 +325,7 @@ def _price_table(data, styles, p, table, link=True, total_label='TOTAL ESTIMATED
             charges.append([p(package_title), p(f"{discount / package_before * 100:.2f}".rstrip('0').rstrip('.') + '% off', 'NoteEstimate'),
                             p('-' + money(discount), 'RightEstimate')])
             charges.append([p('Subtotal'), '', Paragraph(f"<strike>{money(package_before)}</strike>  <b>{money(package_after)}</b>", styles['RightEstimate'])])
-    service_lines, service_total, service_pending = _services_total(estimate)
+    service_lines, service_total, service_pending = _services_total(estimate, data.get('tab_discounts'))
     if service_lines:
         # A link to the services table further down.
         # Measuring page one builds it alone, without the table to link to; the text takes the same room.

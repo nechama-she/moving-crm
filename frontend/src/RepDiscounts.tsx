@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import type { SectionDiscountRule } from './SectionDiscount';
 type Rule = {title: string; type: 'amount' | 'percent' | 'rate' | 'total'; value: number};
 type Charge = {id: string; name: string; total: number; transportation: boolean; discount?: Rule};
 // What a discount save returns: the estimate's price lines and total after the change.
-export type DiscountResult = {price: string | null; charges: {id?: string; pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number}[]};
+export type DiscountResult = {price: string | null; tab_discounts?: Record<string, SectionDiscountRule>; charges: {id?: string; pending?: boolean; name: string; description: string; total: number; subtotal?: number; discount_amount?: number; discount_percent?: number}[]};
 async function discountResponse(response: Response, fallback: string) {
   const data = await response.json().catch(() => null);
   if (!response.ok || !data) throw new Error(typeof data?.detail === 'string' ? data.detail : fallback);

@@ -21,7 +21,7 @@ from models import AccessAuditLog, Lead, User
 from customer_page_announcements import announce_customer_page_changes
 from access_errors import capture_response_error, exception_message, audit_body
 from routes import auth, leads, system, sms, companies, users, smartmoving, followups, outreach, assignment, tasks, templates, pricing, chats, unanswered_messages, customer_activity, duplication_rules, liveswitch, referral_assignment_rules, communication_associations, stats
-from routes import public_moves, local_pricing, inventory_questions, inventory_catalog, message_templates
+from routes import public_moves, local_pricing, inventory_questions, inventory_catalog, message_templates, signed_pdfs
 from routes.meta import messenger, instagram
 
 logger = logging.getLogger("moving-crm.access")
@@ -107,7 +107,7 @@ async def enforce_authentication(request: Request) -> None:
         return  # CORS preflight - handled by CORSMiddleware
     if request.url.path == "/api/inventory" and request.method == "POST":
         return  # Middleware validates the inventory key before body parsing.
-    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|estimate|pricing)|estimate\.pdf|work-order\.pdf|invoice\.pdf|bill-of-lading\.pdf|bill-of-lading/[0-9]+/[^/]+/sign|bill-of-lading-signatures/[^/]+/pdf|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|no-extra-fees|item-answer|question-images|realtime-token|file-preview/[^/]+|inventory-catalog(?:/search)?|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|rep-discounts|customer-discount|mileage|reports/[^/]+/select|estimate-signatures(?:/[^/]+/(?:pdf|sign|resign|approve))?)", request.url.path):
+    if re.fullmatch(r"/api/public-moves/[0-9a-f-]{36}/(verify-options|send-code|verify|details|summary|sections/(?:move|inventory|media|volume|estimate|pricing)|estimate\.pdf|work-order\.pdf|invoice\.pdf|bill-of-lading\.pdf|bill-of-lading/[0-9]+/[^/]+/sign|bill-of-lading-signatures/[^/]+/pdf|inventory\.pdf|generate-inventory-report|walkthrough|reschedule|availability|files|prepare-upload|finish-upload|packing|no-extra-fees|item-answer|question-images|realtime-token|file-preview/[^/]+|inventory-catalog(?:/search)?|inventory/editor|inventory/actions|files/[^/]+|calculate-price|recalculate-price|use-current-price-sheet|rep-discounts|section-discounts|customer-discount|mileage|reports/[^/]+/select|estimate-signatures(?:/[^/]+/(?:pdf|sign|resign|approve))?)", request.url.path):
         return  # Each endpoint requires a scoped link and, where needed, verified session.
     if request.url.path in PUBLIC_PATHS:
         return
@@ -448,6 +448,7 @@ app.include_router(duplication_rules.router)
 app.include_router(referral_assignment_rules.router)
 app.include_router(liveswitch.router)
 app.include_router(public_moves.router)
+app.include_router(signed_pdfs.router)
 app.include_router(inventory_questions.router)
 app.include_router(inventory_catalog.router)
 # Triggers backend Lambda processing - admin only.
