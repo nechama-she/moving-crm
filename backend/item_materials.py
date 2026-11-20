@@ -196,6 +196,8 @@ def customer_item_materials(plan, inventory, db):
                                        assignment['requirement'], assignment['material_id']])
                 configured = {'id': 'configured:' + str(uuid5(NAMESPACE_URL, identity)),
                                'group_id': group_id,
+                               # The inventory row it is one unit of: the inventory window sets its packing there too.
+                               'inventory_row_id': row.get('inventory_row_id'),
                                'label': str(row.get('name') or 'Item') + (f' ({unit})' if count > 1 else ''),
                                'room': room, 'requirement': assignment['requirement'],
                                'material_name': material_row['name'],

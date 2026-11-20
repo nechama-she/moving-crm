@@ -658,7 +658,7 @@ def _job_spark_inventory_items(job_id: str, db: Session) -> list[dict]:
     report = db.get(LeadLiveSwitch, job.lead_id) if job else None
     if not report or not active_report(json.loads(report.details or '{}')):
         return []
-    return [{'item_id': row['item_id'], 'catalog_item_id': row['catalog_item_id'], 'name_override': row['name_override'],
+    return [{'inventory_row_id': row['inventory_row_id'], 'item_id': row['item_id'], 'catalog_item_id': row['catalog_item_id'], 'name_override': row['name_override'],
              'unit_cuft': row['unit_cuft'], 'name': row['name'], 'quantity': row['amount'], 'room': row['room'] or '',
              'cuft': row['cuft'], 'mover_pack_count': movers_pack_count(row)}
             for row in shipping_rows(job_id, db)]
