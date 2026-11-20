@@ -438,16 +438,15 @@ export default function CustomerMovePage() {
       if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id), materials: nextMaterials.includes(id) });
     }
   }
-  // The inventory window's item packing: the options the packing questions show (required ones, and optional ones once
-  // the customer said they have more items), only while items are packed one by one. Saved as the questions save them.
+  // The inventory window's item packing: the very options the packing questions show (their data, as loaded), for now
+  // the required ones, only while items are packed one by one. Saved as the questions save them.
   const packingItems = data?.packing_package?.items;
   const itemPacking = useMemo(() => {
     if (!packingItems || packageSelection.mode !== 'none') return undefined;
-    const options = packingItems.filter(item => item.available !== false
-      && ((item.requirement || 'required') === 'required' || packageSelection.has_additional_protection === true));
+    const options = packingItems.filter(item => item.available !== false && (item.requirement || 'required') === 'required');
     const materials = packageSelection.material_item_ids ?? packageSelection.item_ids;
     return {
-      options: options.map(item => ({...item, price: (item.labor_price ?? item.price) + (item.material_price || 0)})),
+      options,
       // CP: movers pack with materials, as the questions' CP choice saves it.
       picked: packageSelection.item_ids.filter(id => materials.includes(id)),
       onChange: (changes: {id: string; cp: boolean}[]) => {
