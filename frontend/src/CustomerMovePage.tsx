@@ -28,6 +28,7 @@ import { readCustomerBootstrap } from './customerBootstrap';
 import { useParams } from "react-router-dom";
 import { API_BASE } from "./apiConfig";
 import RepDiscounts, { type DiscountResult } from './RepDiscounts';
+import SectionDiscount, { type SectionDiscountRule } from './SectionDiscount';
 import "./CustomerMovePage.css";
 
 type LinkSms = { sent_at: string; phone_last4: string };
@@ -36,6 +37,9 @@ type Shuttle = { automatic: boolean; answer: boolean | null; unknown?: boolean; 
 // What saving one answer returns: only the data that answer changed.
 type PricingDelta = {
   price?: string | null;
+  // The tabs of the lines this answer touched, and every tab's discount now.
+  fee_tabs?: Record<string, string>;
+  tab_discounts?: Record<string, SectionDiscountRule>;
   charges?: NonNullable<NonNullable<Details['estimate']>['charges']>;
   options: Partial<Details>;
   unanswered: string[];
@@ -47,6 +51,8 @@ type PricingDelta = {
 type Details = {
   // Each price line's tab (by line id), from the server: the page groups its lines by these, as the PDFs do.
   fee_tabs?: Record<string, string>;
+  // The rep's discount on each tab (by tab), with the amount it takes off.
+  tab_discounts?: Record<string, SectionDiscountRule>;
   extra_stops?: ExtraStopsOption | null;
   elevator?: ElevatorOption | null;
   long_carry?: CarryOption | null;
@@ -368,6 +374,8 @@ export default function CustomerMovePage() {
         ...(result.item_questions && answerPending.current <= 1 ? {item_questions: result.item_questions} : {}),
         ...(result.cuft != null && previous.spark ? {spark: {...previous.spark, cuft: result.cuft}} : {}),
         estimate: previous.estimate && result.charges ? {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges} : previous.estimate,
+        ...(result.fee_tabs ? {fee_tabs: {...previous.fee_tabs, ...result.fee_tabs}} : {}),
+        ...(result.tab_discounts ? {tab_discounts: result.tab_discounts} : {}),
         ...(previous.signature_status === 'signed' ? {signature_changed: true} : {})};
     });
   }
@@ -530,7 +538,7 @@ export default function CustomerMovePage() {
   }
   function groupedCharges() {
     type Charge = NonNullable<NonNullable<Details['estimate']>['charges']>[number];
-    type Group = Charge & {children?: (Charge & {heading?: string; displayName?: string})[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>};
+    type Group = Charge & {children?: (Charge & {heading?: string; displayName?: string})[]; target?: NonNullable<ReturnType<typeof chargeQuestion>>; tab?: string};
     const result: Group[] = [];
     const groups = new Map<string, Group>();
     const titles: Record<PricingStep, string> = {stops: 'Additional stops', elevator: 'Elevator', access: 'Truck access', stairs: 'Stairs', storage: 'Storage', bulky: 'Packing & crating', package: 'Packing services', items: 'Moving terms'};
@@ -541,7 +549,7 @@ export default function CustomerMovePage() {
       let group = groups.get(key);
       if (!group) {
         const section = target.section === 'boxes' ? 'Boxes' : target.section === 'protection' ? 'Item protection' : target.section === 'service' ? 'Service' : '';
-        group = {name: titles[target.step] + (section ? ` - ${section}` : ''), description: '', total: 0, children: [], target};
+        group = {name: titles[target.step] + (section ? ` - ${section}` : ''), description: '', total: 0, children: [], target, tab: key};
         groups.set(key, group);
         result.push(group);
       }
@@ -1107,6 +1115,7 @@ export default function CustomerMovePage() {
   function applyDiscount(result: DiscountResult) {
     setData(previous => previous?.estimate ? {...previous,
       estimate: {...previous.estimate, price: result.price ?? previous.estimate.price, charges: result.charges},
+      ...(result.tab_discounts ? {tab_discounts: result.tab_discounts} : {}),
       ...(previous.signature_status === 'signed' ? {signature_changed: true} : {})} : previous);
   }
   async function refreshDetails(background = false, retryPricing = false, initial = false) {
@@ -1602,6 +1611,8 @@ export default function CustomerMovePage() {
                       // and set once, on their subtotal.
                       const inPackage = packageNames.includes(charge.name);
                       const discounted = !charge.children && (charge.discount_amount || 0) > 0;
+                      // The rep's discount on this tab (saved with the amount it takes off).
+                      const tabDiscount = charge.tab ? data.tab_discounts?.[charge.tab] : undefined;
                       const description = inPackage ? charge.description.replace(/ \| [^|]*: -\$[\d,]+\.\d{2}( \(new rate [^)]*\))?$/, '') : charge.description;
                       const choices = !repPage ? data.discount_choices : null;
                       const subtotal = idx === lastPackage && (repPage || packageDiscount > 0 || choices) ? <div className="cm-estimate-charge-row cm-package-subtotal">
@@ -1627,6 +1638,7 @@ export default function CustomerMovePage() {
                         <div>
                           <strong>{charge.name}{target && <button type="button" className="cm-charge-edit" aria-label={`Edit ${charge.name}`} title={`Edit ${charge.name}`} onClick={() => openChargeQuestion(target)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m16 3 5 5L8 21H3v-5L16 3Z M13 6l5 5"/></svg></button>}</strong>
                           {description && <small>{description}</small>}
+                          {tabDiscount && tabDiscount.amount > 0 && <small>{tabDiscount.title}: -{money(tabDiscount.amount)}</small>}
                           {charge.children?.map((child, index) => <div key={index}>
                             {child.heading && <strong className="cm-charge-subheading">{child.heading}</strong>}
                             <div className="cm-stop-charge-detail" style={{paddingLeft: 12}}>
@@ -1644,8 +1656,10 @@ export default function CustomerMovePage() {
                         </div>
                         <div className="cm-line-price">
                           {discounted && !inPackage && <del>{money(charge.subtotal || 0)}</del>}
-                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(discounted && inPackage ? charge.subtotal || 0 : charge.total)}{charge.children && charge.pending && <small> + pending</small>}
+                          {tabDiscount && tabDiscount.amount > 0 && <del>{money(charge.total)}</del>}
+                          {charge.pending && !charge.children ? 'Pending' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(discounted && inPackage ? charge.subtotal || 0 : charge.total - (tabDiscount?.amount || 0))}{charge.children && charge.pending && <small> + pending</small>}
                           {repPage && charge.id && !charge.children && !charge.pending && !inPackage && <RepDiscounts base={base} headers={headers} onSaved={applyDiscount} chargeId={charge.id} chargeName={charge.name} />}
+                          {repPage && charge.tab && <SectionDiscount base={base} headers={headers} onSaved={applyDiscount} tab={charge.tab} tabName={charge.name} current={tabDiscount} />}
                         </div>
                       </div>
                       {subtotal}

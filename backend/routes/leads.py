@@ -2703,6 +2703,32 @@ def replace_lead_job_charges(
     return _serialize_job_with_addresses(row, db)
 
 
+def _price_job_from_lines(job: LeadJob, db: Session) -> None:
+    """After a discount changed: the job's price is its lines less its section discounts, as the customer page shows."""
+    from models import PublicMoveAccess
+    job.price = (sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
+                 - sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)))
+    for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
+        access.published_price = job.price
+
+
+def _refresh_section_discounts(lead: Lead, job: LeadJob, db: Session) -> bool:
+    """Brings each section discount's amount up to date with the job's lines, by the same tabs and lines the customer
+    page shows (fee_tabs). True when one changed. Jobs without section discounts are not looked at."""
+    if not job.section_discounts:
+        return False
+    from fee_tabs import tab_discount_amounts
+    from routes.public_moves import _customer_pricing_options, estimate_charges
+    data = dict(_customer_pricing_options(lead, job, db), estimate={'charges': estimate_charges(job, individual_charges=True)})
+    amounts = tab_discount_amounts(data, job.section_discounts)
+    changed = False
+    for discount in job.section_discounts:
+        if Decimal(str(discount.amount or 0)) != amounts[discount.id]:
+            discount.amount = amounts[discount.id]
+            changed = True
+    return changed
+
+
 def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     """Use all job prices and discounts for the lead summary, retaining existing tax data."""
     db.flush()
@@ -2713,17 +2739,19 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
         db.expire(job, ['charges'])
         from rep_discounts import apply as apply_rep_discounts
-        if apply_rep_discounts(job, job.charges, lead.volume):
-            job.price = sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
-            from models import PublicMoveAccess
-            for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
-                access.published_price = job.price
-        # The job's lines, as its Charges box adds them; the saved price only for a job without lines.
+        lines_changed = apply_rep_discounts(job, job.charges, lead.volume)
+        # Section discounts: what each takes off its tab now, from the tabs the page and PDFs group the fees by.
+        sections_changed = _refresh_section_discounts(lead, job, db)
+        if lines_changed or sections_changed:
+            _price_job_from_lines(job, db)
+        sections = sum((_to_money_decimal(d.amount, 'amount') for d in job.section_discounts), Decimal(0))
+        # The job's lines, as its Charges box adds them, less its section discounts; the saved price only for a job
+        # without lines.
         if job.charges or job.price is None:
-            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0))
+            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0)) - sections
         else:
             final_before_tax += _to_money_decimal(job.price, 'price')
-        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0))
+        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0)) + sections
     tax = _to_money_decimal(existing.get('tax'), 'tax')
     lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
         subtotal=final_before_tax + discounts,

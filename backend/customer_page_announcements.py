@@ -22,7 +22,7 @@ CHANGES = [
     (re.compile(r'packing|no-extra-fees'), 'packing_changed'),
     (re.compile(r'details'), 'details_updated'),
     (re.compile(r'customer-discount'), 'discount_chosen'),
-    (re.compile(r'rep-discounts'), 'discounts_changed'),
+    (re.compile(r'rep-discounts|section-discounts'), 'discounts_changed'),
     (re.compile(r'files|finish-upload'), 'files_uploaded'),
     (re.compile(r'files/[^/]+'), 'file_deleted'),
     (re.compile(r'walkthrough'), 'walkthrough_requested'),

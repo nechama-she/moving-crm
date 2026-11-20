@@ -21,6 +21,13 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
+    # Rep discounts on fee tabs (a new, empty table). Remove after a deploy ran it.
+    from sqlalchemy import inspect
+    from models import JobSectionDiscount
+    with engine.begin() as connection:
+        if not inspect(connection).has_table(JobSectionDiscount.__tablename__):
+            JobSectionDiscount.__table__.create(connection)
+            logger.info('Created table %s', JobSectionDiscount.__tablename__)
     # The archive of signed PDFs (a new, empty table). Remove after a deploy ran it.
     from sqlalchemy import inspect
     from models import SignedPdfArchive

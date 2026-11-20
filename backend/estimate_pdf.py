@@ -99,9 +99,11 @@ def _before_discount(charge):
     return float(charge.get('subtotal') or 0) if charge.get('discount_amount') else float(charge.get('total') or 0)
 
 
-def _services_total(estimate):
+def _services_total(estimate, tab_discounts=None):
+    """The fee lines, their total less the rep's discounts on their tabs, and whether one is pending."""
     lines = [charge for charge in estimate.get('charges') or [] if _is_service(charge)]
-    return lines, sum(float(charge.get('total') or 0) for charge in lines), any(charge.get('pending') for charge in lines)
+    discounts = sum(float(discount.get('amount') or 0) for discount in (tab_discounts or {}).values())
+    return lines, sum(float(charge.get('total') or 0) for charge in lines) - discounts, any(charge.get('pending') for charge in lines)
 
 
 # The most fee rows of one tab kept on one page; a longer tab is split, its title kept with its first row.
@@ -112,7 +114,7 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
     """Additional services and fees: each answer with its charge, then the other service lines, and their total. no_charge:
     what a fee with no charge shows."""
     from routes.pricing import customer_packing_charge_id
-    lines, total, pending = _services_total(data['estimate'])
+    lines, total, pending = _services_total(data['estimate'], data.get('tab_discounts'))
     by_id = {charge.get('id'): charge for charge in lines}
     job_id = data.get('job_id')
     shown = set()
@@ -223,8 +225,16 @@ def _services_table(data, p, table, styles, no_charge='No charge'):
             tab_total = sum(float(charge.get('total') or 0) for charge in charges if not charge.get('pending'))
             tab_pending = any(charge.get('pending') for charge in charges)
             titles.append(len(body))
-            body.append([Paragraph(f'<b>{escape(TABS[tab])}</b>', styles['BodyEstimate']), '',
-                         p(money(tab_total) + (' + pending' if tab_pending else ''), 'RightEstimate')])
+            # The rep's discount on the tab: its total crossed out, then less the discount, and the discount's name.
+            discount = (data.get('tab_discounts') or {}).get(tab)
+            amount = float((discount or {}).get('amount') or 0)
+            if amount:
+                cell = [Paragraph(f"<strike>{money(tab_total)}</strike>  <b>{money(tab_total - amount)}</b>"
+                                  + (' + pending' if tab_pending else ''), styles['RightEstimate']),
+                        p(f"{discount['title']}: -{money(amount)}", 'NoteEstimate')]
+            else:
+                cell = p(money(tab_total) + (' + pending' if tab_pending else ''), 'RightEstimate')
+            body.append([Paragraph(f'<b>{escape(TABS[tab])}</b>', styles['BodyEstimate']), '', cell])
             # A tab is not split across pages; one too long for a page keeps at least its title with its first row.
             together.append((len(body) - 1, len(body) - 1 + (len(rows[tab]) if len(rows[tab]) <= TAB_ROWS_ON_A_PAGE else 1)))
         body.extend(row for row, _ in rows[tab])
@@ -315,7 +325,7 @@ def _price_table(data, styles, p, table, link=True, total_label='TOTAL ESTIMATED
             charges.append([p(package_title), p(f"{discount / package_before * 100:.2f}".rstrip('0').rstrip('.') + '% off', 'NoteEstimate'),
                             p('-' + money(discount), 'RightEstimate')])
             charges.append([p('Subtotal'), '', Paragraph(f"<strike>{money(package_before)}</strike>  <b>{money(package_after)}</b>", styles['RightEstimate'])])
-    service_lines, service_total, service_pending = _services_total(estimate)
+    service_lines, service_total, service_pending = _services_total(estimate, data.get('tab_discounts'))
     if service_lines:
         # A link to the services table further down.
         # Measuring page one builds it alone, without the table to link to; the text takes the same room.

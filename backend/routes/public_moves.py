@@ -771,7 +771,11 @@ def move_section(section: Literal['move', 'inventory', 'media', 'volume', 'estim
 def customer_price(job):
     """The customer's price: the total of the lines the customer page shows. SmartMoving's lines are not part of it."""
     shown = [c for c in job.charges or [] if c.source != 'smartmoving']
-    return sum((Decimal(str(c.total_cost or 0)) for c in shown), Decimal(0)) if shown else None
+    if not shown:
+        return None
+    # Less the rep's discounts on fee tabs.
+    return (sum((Decimal(str(c.total_cost or 0)) for c in shown), Decimal(0))
+            - sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)))
 
 
 def estimate_charges(job, individual_charges=False):
@@ -880,6 +884,8 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
     # Each price line's tab, as the page groups them (and the PDFs group their fee rows).
     from fee_tabs import fee_tabs
     pricing_data['fee_tabs'] = fee_tabs(pricing_data)
+    # The rep's discount on each tab, with the amount it takes off (kept with the job's price).
+    pricing_data['tab_discounts'] = {d.tab: d.to_dict() for d in job.section_discounts}
     from estimate_signature_history import estimate_signature_status
     from item_selectors import inventory_selectors
     from company_documents import documents_for
@@ -926,7 +932,7 @@ def _move_details(access, db, *, refresh_report=True, include_pricing=True, pric
                 for row in sorted(lead.payments, key=lambda row: row.sort_order) if row.source == 'crm']
     if pricing_only:
         return dict(pricing_data, payments=payments)
-    return {'payments': payments, 'fee_tabs': pricing_data['fee_tabs'], 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
+    return {'payments': payments, 'fee_tabs': pricing_data['fee_tabs'], 'tab_discounts': pricing_data['tab_discounts'], 'discount_choices': pricing_data['discount_choices'], 'price_sheet': pricing_data['price_sheet'], 'signature_status': pricing_data['signature_status'], 'work_order_available': pricing_data['work_order_available'], 'estimate_needs_update': pricing_data['estimate_needs_update'], 'signature_requires_resign': pricing_data['signature_requires_resign'], 'signature_changed': pricing_data['signature_changed'], 'pricing_error': pricing_error, 'extra_stops': extra_stops, 'elevator': elevator, 'long_carry': long_carry, 'stairs': stairs, 'storage': storage, 'shuttle': shuttle, 'google_maps_browser_key': setting('GOOGLE_MAPS_BROWSER_KEY'), 'item_questions': item_questions, 'packing_package': packing_package, 'packing_items': packing_items, 'packing_saved': job.customer_packing is not None, 'name': lead.full_name, 'phone': lead.phone or '', 'email': lead.email or '', 'contacts': [row.to_dict() for row in lead.contacts], 'move_date': job.move_date or '',
             'pickup': pickup, 'delivery': delivery, 'stops': _typed_stops(job, stops),
             'unanswered_questions': required_questions,
             'pricing_required': pricing_required,
@@ -1010,8 +1016,13 @@ def _pricing_delta(access, lead, job, db, kind, individual_charges):
     db.refresh(access)
     options = {part: builders[part](lead, job, db) for part in parts}
     price = customer_price(job)
+    charges = estimate_charges(job, individual_charges)
+    from fee_tabs import fee_tabs
     delta = {'saved': True, 'price': str(price) if price is not None else None,
-             'charges': estimate_charges(job, individual_charges), 'options': options,
+             'charges': charges, 'options': options,
+             # The tabs of this answer's lines (the page keeps the rest), and the tabs' discounts now.
+             'fee_tabs': fee_tabs(dict(options, estimate={'charges': charges})),
+             'tab_discounts': {d.tab: d.to_dict() for d in job.section_discounts},
              'unanswered': unanswered_questions(options, package_saved='mode' in json.loads(job.customer_packing_package or '{}')),
              'unanswered_scope': sorted({prefix for part in parts for prefix in UNANSWERED_SCOPE[part]})}
     return delta
@@ -1032,9 +1043,12 @@ def _item_answer_delta(access, lead, company, db, inventory_changed, individual_
         db.refresh(access)
         price = customer_price(job)
         options = _customer_pricing_options(lead, job, db)
-        delta.update(price=str(price) if price is not None else None, charges=estimate_charges(job, individual_charges),
+        charges = estimate_charges(job, individual_charges)
+        from fee_tabs import fee_tabs
+        delta.update(price=str(price) if price is not None else None, charges=charges,
                      options={key: value for key, value in options.items() if key != 'minimum_cuft'},
-                     cuft=state.get('spark_extracted_cuft'))
+                     cuft=state.get('spark_extracted_cuft'), fee_tabs=fee_tabs(dict(options, estimate={'charges': charges})),
+                     tab_discounts={d.tab: d.to_dict() for d in job.section_discounts})
         package_saved = 'mode' in json.loads(job.customer_packing_package or '{}')
         delta['unanswered'] = unanswered_questions({**options, 'item_questions': item_questions}, package_saved=package_saved)
         delta['unanswered_scope'] = sorted({prefix for scope in UNANSWERED_SCOPE.values() for prefix in scope} | {'items'})
@@ -1679,6 +1693,55 @@ def save_customer_discount(body: CustomerDiscountInput, access: PublicMoveAccess
             'discount_choices': _discount_choices(lead, job, db)}
 
 
+class SectionDiscountInput(BaseModel):
+    tab: str = Field(min_length=1, max_length=40)
+    title: str = Field(default='Discount', min_length=1, max_length=120)
+    type: Literal['amount', 'percent'] = 'amount'
+    value: Decimal = Field(default=0, ge=0, max_digits=12, decimal_places=2)
+    remove: bool = False
+
+
+@router.post('/api/public-moves/{access_id}/section-discounts')
+def save_section_discount(body: SectionDiscountInput, request: Request, access: PublicMoveAccess = Depends(verified), db: Session = Depends(get_db)):
+    """Rep only: one discount on a tab of the job's fees, apart from its lines' own discounts."""
+    if not is_rep_request(access, request):
+        raise HTTPException(403, 'Rep access required.')
+    from fee_tabs import TABS
+    from models import JobSectionDiscount
+    from routes.leads import _price_job_from_lines, _refresh_lead_estimated_total
+    if body.tab not in TABS:
+        raise HTTPException(422, 'Unknown section.')
+    if body.type == 'percent' and body.value > 100:
+        raise HTTPException(422, 'Percentage cannot exceed 100.')
+    job = db.query(LeadJob).filter_by(id=access.job_id, lead_id=access.lead_id).with_for_update().first()
+    if not job:
+        raise HTTPException(404, 'Move not found.')
+    discount = next((d for d in job.section_discounts if d.tab == body.tab), None)
+    if body.remove:
+        if discount:
+            job.section_discounts.remove(discount)
+    else:
+        if discount is None:
+            discount = JobSectionDiscount(tab=body.tab)
+            job.section_discounts.append(discount)
+        discount.title, discount.kind, discount.value = body.title.strip() or 'Discount', body.type, body.value
+    db.flush()
+    # Its amount, the job's price and the lead's total, as for any discount (a removed one too).
+    _refresh_lead_estimated_total(access.lead_id, db)
+    _price_job_from_lines(job, db)
+    db.commit()
+    return _discount_response(access, job, db)
+
+
+def _discount_response(access, job, db):
+    """What a discount save sends back: the price, the price lines and the tabs' discounts (no page reload)."""
+    db.refresh(job)
+    db.refresh(access)
+    price = customer_price(job)
+    return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True),
+            'tab_discounts': {d.tab: d.to_dict() for d in job.section_discounts}}
+
+
 class RepDiscountInput(BaseModel):
     charge_id: str
     title: str = Field(default='Discount', min_length=1, max_length=120)
@@ -1736,9 +1799,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
         raise HTTPException(422, 'Percentage cannot exceed 100.')
     if body.charge_id == 'package':
         _save_package_discount(lead, job, db, body.title, body.type, body.value, body.remove)
-        db.refresh(access)
-        price = customer_price(job)
-        return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
+        return _discount_response(access, job, db)
     charge = db.query(LeadJobCharge).filter_by(id=body.charge_id, job_id=job.id).first()
     if not charge:
         raise HTTPException(404, 'Charge not found.')
@@ -1754,10 +1815,7 @@ def save_rep_discount(body: RepDiscountInput, request: Request, access: PublicMo
     _refresh_lead_estimated_total(lead.id, db)
     db.commit()
     # Only the price lines and total changed; send them back instead of reloading the page.
-    db.refresh(job)
-    db.refresh(access)
-    price = customer_price(job)
-    return {'saved': True, 'price': str(price) if price is not None else None, 'charges': estimate_charges(job, individual_charges=True)}
+    return _discount_response(access, job, db)
 
 
 @router.post('/api/public-moves/{access_id}/recalculate-price')

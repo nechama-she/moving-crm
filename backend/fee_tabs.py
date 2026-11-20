@@ -41,3 +41,22 @@ def fee_tabs(data):
     """Each price line's tab, by the line's id (lines on their own left out)."""
     charges = (data.get('estimate') or {}).get('charges') or []
     return {charge['id']: tab for charge in charges if charge.get('id') and (tab := fee_tab(charge.get('name'), data))}
+
+
+def tab_discount_amounts(data, discounts):
+    """What each section discount takes off its tab now: its amount, or its percent of the tab's lines as they show
+    (after their own discounts), never more than the tab's total. By discount."""
+    from decimal import Decimal
+    tabs = fee_tabs(data)
+    totals = {}
+    for charge in (data.get('estimate') or {}).get('charges') or []:
+        tab = tabs.get(charge.get('id'))
+        if tab and not charge.get('pending'):
+            totals[tab] = totals.get(tab, Decimal(0)) + Decimal(str(charge.get('total') or 0))
+    result = {}
+    for discount in discounts:
+        total = totals.get(discount.tab, Decimal(0))
+        value = Decimal(str(discount.value))
+        amount = value if discount.kind == 'amount' else total * value / 100
+        result[discount.id] = min(total, max(Decimal(0), amount)).quantize(Decimal('.01'))
+    return result
