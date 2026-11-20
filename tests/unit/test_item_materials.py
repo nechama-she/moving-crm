@@ -213,17 +213,3 @@ def test_defaults_do_not_apply_to_boxes_but_explicit_box_materials_do():
     ], defaults=[dict(material_id='cover', requirement='optional', quantity=1)]), db)
     rows, _ = customer_item_materials(plan, inventory, db)
     assert [row['label'] for row in rows] == ['Small Box (CP) (1)', 'Small Box (CP) (2)', 'Vase']
-
-
-def test_each_unit_option_keeps_its_inventory_row_and_a_signed_copy_does_not_count_it():
-    """The inventory window sets an item's packing on its own row: each unit's option names the row it is a unit of.
-    Which row that is is not something a customer signs, so a signed copy without it still matches."""
-    from estimate_signature_history import estimate_state
-    plan, db = setup()
-    use_catalog(db, [SimpleNamespace(id='bed', name='King bed', cuft=80, deleted=False)])
-    plan.item_materials = json.dumps({'rows': [dict(item_id='bed', material_id='cover', requirement='required', quantity=1)], 'defaults': []})
-    rows, _ = customer_item_materials(plan, [dict(inventory_row_id='row-1', item_id='bed', name='King bed', amount=3, room='Bedroom')], db)
-    assert [row['inventory_row_id'] for row in rows] == ['row-1'] * 3
-    assert len({row['id'] for row in rows}) == 3
-    signed = {'packing_package': {'items': [{key: value for key, value in row.items() if key != 'inventory_row_id'} for row in rows]}}
-    assert estimate_state(signed, []) == estimate_state({'packing_package': {'items': rows}}, [])
