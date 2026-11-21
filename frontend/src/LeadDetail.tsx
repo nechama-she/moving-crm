@@ -1,4 +1,5 @@
 import LeadMeasurements from "./LeadMeasurements";
+import { setPageTitle } from "./pageTitle";
 import "./LeadHeader.css";
 import { forgetRecentLead, rememberRecentLead } from "./recentLeads";
 import LeadSidePanel, { type LeadSideAction } from './LeadSidePanel';
@@ -396,6 +397,9 @@ export default function LeadDetail() {
   const location = useLocation();
   const { token, user } = useAuth();
   const [lead, setLead] = useState<Lead | null>(null);
+  // The tab's title: the client's name once the lead is loaded.
+  const leadName = String(lead?.full_name || "").trim();
+  useEffect(() => { if (leadName) setPageTitle(leadName); }, [leadName]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"conversations" | "activity" | "logs">(() => location.hash === '#tasks' ? 'activity' : 'conversations');

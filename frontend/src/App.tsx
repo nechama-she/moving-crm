@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, NavLink } from "react-router-dom";
 import { lazy, Suspense, useEffect, useState } from "react";
 import MainNavigation from "./MainNavigation";
+import { pageName, setPageTitle } from "./pageTitle";
 import { AuthProvider, useAuth } from "./AuthContext";
 import ErrorBoundary from "./ErrorBoundary";
 import GlobalLeadSearch from "./GlobalLeadSearch";
@@ -66,6 +67,8 @@ function ProtectedRoutes() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
+  // The tab's title: the page's name (a lead's page then names its client).
+  useEffect(() => setPageTitle(pageName(location.pathname)), [location.pathname]);
   const [uiMode, setUiModeState] = useState(getUiMode);
   useEffect(() => onUiModeChange(setUiModeState), []);
   const aurora = uiMode === "aurora";
