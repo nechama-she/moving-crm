@@ -438,6 +438,13 @@ export default function CustomerMovePage() {
       if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id), materials: nextMaterials.includes(id) });
     }
   }
+  // The saved packing choice, as loaded or returned by a save: what the inventory window shows before the questions are
+  // ever opened. While the questions are open they keep their own copy; a save still on its way keeps the local choice.
+  const savedPackingSelection = data?.packing_package?.selection;
+  useEffect(() => {
+    if (!savedPackingSelection || showQuestions || answerPending.current) return;
+    setPackageSelection(savedPackingSelection);
+  }, [savedPackingSelection, showQuestions]);
   // The inventory window's item packing: the very options the packing questions show (their data, as loaded): the
   // required ones, and the optional ones once the customer said they have more items, as the questions show them; only
   // while items are packed one by one. Saved as the questions save them.
