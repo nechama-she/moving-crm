@@ -148,10 +148,14 @@ def lead_templates(lead_id: str, user: User = Depends(get_current_user), db: Ses
     route = _read_job_route(db, job) if job else ("", [], "")
     company = db.get(Company, lead.company_id) if lead.company_id else None
     rep = db.get(User, lead.assigned_to) if lead.assigned_to else None
-    values = field_values(lead, job, route, company, rep, customer_links(db, lead))
     overrides = {}
     if lead.company_id:
         overrides = {row.template_id: row.body for row in db.query(MessageTemplateOverride).filter_by(company_id=lead.company_id)}
     templates = db.query(MessageTemplate).order_by(MessageTemplate.sort_order, MessageTemplate.name).all()
-    return {"items": [{"id": template.id, "name": template.name,
-                       "text": fill(overrides.get(template.id, template.body), values)} for template in templates]}
+    bodies = [(template, overrides.get(template.id, template.body)) for template in templates]
+    # The customer page link is made only when a template uses it.
+    uses_link = any("CustomerLink" in _TOKEN.findall(body) for _, body in bodies)
+    values = field_values(lead, job, route, company, rep, customer_links(db, lead, customer_page=uses_link))
+    if uses_link:
+        db.commit()
+    return {"items": [{"id": template.id, "name": template.name, "text": fill(body, values)} for template, body in bodies]}

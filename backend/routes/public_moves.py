@@ -2693,24 +2693,25 @@ def generate_customer_page(lead_id: str, user: User = Depends(get_current_user),
     if user.role == 'sales_rep' and lead.assigned_to != user.id:
         raise HTTPException(403, 'Only the assigned rep can manage this move')
 
+    access = lead_customer_page(db, lead)
+    if access is None:
+        raise HTTPException(400, 'Create a job for this lead before generating a customer page')
+    db.commit()
+    return {'url': public_url(access), 'lead_id': lead.id, 'job_id': access.job_id}
+
+
+def lead_customer_page(db, lead):
+    """The lead's customer page: the one it has, or a new one on its first job. None when the lead has no job. Does not
+    commit."""
     db.query(Lead).filter(Lead.id == lead.id).with_for_update().one()
     access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).with_for_update().first()
     if access:
-        return {'url': public_url(access), 'lead_id': lead.id, 'job_id': access.job_id}
-
+        return access
     job = db.query(LeadJob).filter_by(lead_id=lead.id).order_by(LeadJob.job_order.asc()).first()
     if not job:
-        raise HTTPException(400, 'Create a job for this lead before generating a customer page')
-
-    access = create_customer_page_access(
-        db,
-        lead,
-        job,
-        secret_digest(f'generated:{lead.id}:{job.id}'),
-        digest(f'generated:{lead.id}:{job.id}'),
-    )
-    db.commit()
-    return {'url': public_url(access), 'lead_id': lead.id, 'job_id': job.id}
+        return None
+    return create_customer_page_access(db, lead, job, secret_digest(f'generated:{lead.id}:{job.id}'),
+                                       digest(f'generated:{lead.id}:{job.id}'))
 
 
 @router.post('/api/leads/{lead_id}/customer-page/sms')

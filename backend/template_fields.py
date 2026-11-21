@@ -199,20 +199,29 @@ def offered(db):
     return [field for field in fields() if field[0] in enabled]
 
 
-def customer_links(db, lead):
-    """The links a customer may be sent: their customer page, only while it opens (not revoked, not expired), and
-    their LiveSwitch video call link, as the CRM sends it. The rep's and host's links are never offered."""
+def customer_page_link(db, lead):
+    """The lead's customer page link, made when the lead has none yet (as the Estimate button makes it); empty while it
+    does not open (revoked or expired), without a job, or without a customer website. Does not commit."""
+    from fastapi import HTTPException
+    from routes.public_moves import lead_customer_page, public_url
+    access = lead_customer_page(db, lead)
+    if access is None or access.revoked or access.expires_at <= datetime.utcnow():
+        return ""
+    try:
+        return public_url(access)
+    except HTTPException:  # The customer website is not configured: no link rather than a broken one.
+        return ""
+
+
+def customer_links(db, lead, customer_page=True):
+    """The links a customer may be sent: their customer page (customer_page_link; left out when customer_page is
+    False, so none is made for a text that does not use it), and their LiveSwitch video call link, as the CRM sends it.
+    The rep's and host's links are never offered."""
     import json
-    from models import LeadLiveSwitch, PublicMoveAccess
+    from models import LeadLiveSwitch
     links = {}
-    access = db.query(PublicMoveAccess).filter_by(lead_id=lead.id).first()
-    if access is not None and not access.revoked and access.expires_at > datetime.utcnow():
-        from fastapi import HTTPException
-        from routes.public_moves import public_url
-        try:
-            links["customer"] = public_url(access)
-        except HTTPException:  # The customer website is not configured: no link rather than a broken one.
-            pass
+    if customer_page and (link := customer_page_link(db, lead)):
+        links["customer"] = link
     conversation = db.get(LeadLiveSwitch, lead.id)
     if conversation is not None:
         try:

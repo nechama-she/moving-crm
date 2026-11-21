@@ -1232,6 +1232,10 @@ input, select, textarea, button {
 .job-charge-heading:not(:disabled) { color: #0176d3; cursor: pointer; }
 .job-charge-heading:disabled { opacity: 1; }
 .job-charge-heading span { color: #0f172a; font-weight: 700; }
+/* A long charge name wraps (buttons do not, by default), so it never widens the job past the page; its amount stays whole. */
+.job-charge-heading { white-space: normal; min-width: 0; }
+.job-charge-heading > strong { min-width: 0; overflow-wrap: anywhere; }
+.job-charge-heading > span { flex: none; white-space: nowrap; }
 .job-materials-list { margin: 6px -8px -8px; border-top: 1px solid #e2e8f0; }
 .job-material-row { min-height: 42px; padding: 7px 9px; display: grid; grid-template-columns: minmax(150px, 1fr) 60px 80px 90px; align-items: center; gap: 8px; border-bottom: 1px solid #eef2f7; color: #334155; font-size: 11px; }
 .job-material-row:last-child { border-bottom: 0; }

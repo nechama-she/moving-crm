@@ -6,7 +6,8 @@ import { inventoryActions, hasInventoryEdits, catalogInventoryId, type Inventory
 import { catalogQuantity, setCatalogQuantity } from './inventoryCatalogQuantities';
 import { piecesPerItem } from './inventoryPieces';
 import QuestionReferenceImages from './QuestionReferenceImages';
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import ItemPackingChoice, { type ItemPackingMaterial } from './ItemPackingChoice';
 import './ManualInventoryModal.css';
 import type { CatalogSet } from './CatalogSets';
 type CatalogItem = { id: string; name: string; description: string; cuft: number; weight: number; selectors?: ItemSelector[] };
@@ -101,11 +102,12 @@ function ServiceChoice({selector, value, quantity, name, disabled, open, setOpen
     </span>}
   </span>;
 }
-function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, moverPackCount = 0, packingLocked = false, serviceBusy, serviceRowId, openService, setOpenService, selectors = [], selections = {}, onSelectionChange, onSave, onRemove }: {
+function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoingChange, onMoverPackChange, moverPackCount = 0, packingLocked = false, serviceBusy, serviceRowId, openService, setOpenService, selectors = [], selections = {}, onSelectionChange, itemPacking, onSave, onRemove }: {
   name: string; cuft: number; quantity: number; busy: boolean; photo?: ReactNode; going?: boolean; onGoingChange: (going: boolean) => void;
   onMoverPackChange?: (count: number) => void; moverPackCount?: number; packingLocked?: boolean;
   serviceBusy:boolean; serviceRowId:string; openService:string; setOpenService:(id:string)=>void;
   selectors?: ItemSelector[]; selections?: Record<string,ServiceSelection>; onSelectionChange?: (id: string, value: ServiceSelection) => void;
+  itemPacking?: RowItemPacking;
   onSave: (value: { name: string; cuft: number; quantity: number }) => void; onRemove: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -126,7 +128,7 @@ function InventoryRow({ name, cuft, quantity, busy, photo, going = true, onGoing
       <span aria-label="Total volume in cubic feet"><span className="mi-mobile-label">Total volume</span>{totalVolumeLabel}<span className="mi-mobile-unit"> cu ft</span></span>
       <label><span className="mi-mobile-label">Quantity</span><input aria-label="Quantity" type="number" min="1" max="999" step="1" value={draft.quantity} disabled={busy} onChange={e => setDraft({ ...draft, quantity: e.target.value })} /></label>
     </> : <>
-      <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '')} quantity={quantity} count={moverPackCount} disabled={busy || packingLocked || !going} open={openService === `${serviceRowId}:packing`} setOpen={open => setOpenService(open ? `${serviceRowId}:packing` : '')} onChange={onMoverPackChange}/>}</span>
+      <div className={`mi-inventory-name${selectors.length ? ' mi-name-with-services' : ''}`}><span className="mi-item-name-label"><strong>{onMoverPackChange ? name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '') : name}</strong>{onMoverPackChange && <PackingChoice name={name.replace(/\s*\((?:CP|PBO)\)\s*$/i, '')} quantity={quantity} count={moverPackCount} disabled={busy || packingLocked || !going} open={openService === `${serviceRowId}:packing`} setOpen={open => setOpenService(open ? `${serviceRowId}:packing` : '')} onChange={onMoverPackChange}/>}{itemPacking && <ItemPackingChoice name={name} materials={itemPacking.materials} picked={itemPacking.picked} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:item-packing`} setOpen={open => setOpenService(open ? `${serviceRowId}:item-packing` : '')} onChange={itemPacking.onChange}/>}</span>
         {!!selectors.length && <span className="mi-item-services">{selectors.map(selector => <ServiceChoice key={selector.id} selector={selector} name={name} value={selections[selector.id]} quantity={quantity} disabled={serviceBusy || !going} open={openService === `${serviceRowId}:${selector.id}`} setOpen={open => setOpenService(open ? `${serviceRowId}:${selector.id}` : '')} onChange={value => onSelectionChange?.(selector.id, value)}/>)}</span>}
         {Object.entries(selections).filter(([id]) => !selectors.some(selector => selector.id === id)).map(([id, value]) => <span key={id} className="mi-item-services">{typeof value === 'string' ? value : Object.entries(value).filter(([, count]) => count > 0).map(([option, count]) => `${option} (${count})`).join(', ')}</span>)}
       </div>
@@ -174,7 +176,14 @@ function RoomCard({ room, selected, busy, locked = false, summary, onSelect, onR
   </article>;
 }
 export type InventoryTotals = { items: number; pieces: number; boxes: number; cuft: number };
-export default function ManualInventoryModal({ searchCatalog, submitActions, downloadPdf, onDone, onClose, onTotals, draftKey, loadInventory, packing, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true, reload=0 }: {
+// A unit's packing option from the packing questions, with the inventory row it is a unit of.
+export type ItemPackingOption = { id: string; group_id?: string; inventory_row_id?: string | null; material_name?: string; price: number };
+type RowItemPacking = { materials: ItemPackingMaterial[]; picked: ReadonlySet<string>; onChange: (changes: { id: string; cp: boolean }[]) => void };
+
+export default function ManualInventoryModal({ searchCatalog, submitActions, downloadPdf, onDone, onClose, onTotals, draftKey, loadInventory, packing, itemPacking, imageEndpoint, linkKey='', session='', visible=true, readOnly=false, priced=true, reload=0 }: {
+  // The packing questions' item packing options (each a unit of an inventory row) and which the movers pack: each row
+  // shows and sets its own, saved as the questions save them.
+  itemPacking?: { options: ItemPackingOption[]; picked: string[]; onChange: (changes: { id: string; cp: boolean }[]) => void };
   visible?: boolean;
   // The totals this window shows in its header, for the page to show them too.
   onTotals?: (totals: InventoryTotals) => void;
@@ -276,6 +285,25 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
   const [saveRunning, setSaveRunning] = useState(false);
   const busy = closingBusy || saveRunning;
   const [openService, setOpenService] = useState('');
+  // Each row's item packing: its units' options by material (in unit order), grouped once when the options change.
+  const rowPacking = useMemo(() => {
+    const result = new Map<string, RowItemPacking>();
+    if (!itemPacking) return result;
+    const picked = new Set(itemPacking.picked);
+    const byRow = new Map<string, Map<string, ItemPackingMaterial>>();
+    for (const option of itemPacking.options) {
+      if (!option.inventory_row_id) continue;
+      const materials = byRow.get(option.inventory_row_id) ?? new Map<string, ItemPackingMaterial>();
+      byRow.set(option.inventory_row_id, materials);
+      const name = option.material_name || 'Packing';
+      const material = materials.get(name) ?? { name, price: option.price, ids: [], groups: [] };
+      materials.set(name, material);
+      material.ids.push(option.id);
+      material.groups.push(option.group_id || option.id);
+    }
+    for (const [rowId, materials] of byRow) result.set(rowId, { materials: [...materials.values()], picked, onChange: itemPacking.onChange });
+    return result;
+  }, [itemPacking]);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState('');
   const [finishing, setFinishing] = useState(false);
@@ -676,6 +704,7 @@ export default function ManualInventoryModal({ searchCatalog, submitActions, dow
                 if (choice) selections[selectorId] = choice; else delete selections[selectorId];
                 return {...entry, selections};
               })} : value))}
+              itemPacking={rowPacking.get(item.id)}
               going={item.going} onGoingChange={going => setRooms(current => current.map(value => value.id === r.id ? { ...value, custom_items: value.custom_items?.map(entry => entry.id === item.id ? { ...entry, going } : entry) } : value))}
               packingLocked={packing?.full}
               moverPackCount={moverPackCount(item)}

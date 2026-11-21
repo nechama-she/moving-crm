@@ -20,7 +20,7 @@ def estimate_state(data, rows):
     def normalize(value):
         if isinstance(value, dict):
             return {key: normalize(item) for key, item in sorted(value.items())
-                    if key not in {'revision', '_inventory_record_id', 'request_id'}}
+                    if key not in {'revision', '_inventory_record_id', 'request_id', 'inventory_row_id'}}
         if isinstance(value, (list, tuple)):
             return [normalize(item) for item in value]
         if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):

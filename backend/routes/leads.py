@@ -900,7 +900,8 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
     if not rep:
         return _default_sync_result("no_rep")
     if not lead.smartmoving_id:
-        return _default_sync_result("lead_missing_smartmoving_id")
+        # A lead without a SmartMoving id is a standalone CRM lead: there is nothing to sync, and that is not a failure.
+        return {"ok": True, "skipped": "standalone_lead", "status": "n/a", "body": "Standalone lead: nothing to sync to SmartMoving"}
     if not rep.smartmoving_rep_id:
         return _default_sync_result("rep_missing_smartmoving_rep_id")
 
@@ -1740,6 +1741,51 @@ class CopyLeadRequest(BaseModel):
     assigned_to: str = ""
 
 
+class NewCrmLead(BaseModel):
+    company_id: str
+    full_name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(default="", max_length=40)
+    email: str = Field(default="", max_length=255)
+    pickup_zip: str = Field(default="", max_length=500)
+    delivery_zip: str = Field(default="", max_length=500)
+    move_date: str = Field(default="", max_length=40)
+    move_size: str = Field(default="", max_length=120)
+    referral_source: str = Field(default="", max_length=255)
+    assigned_to: str = ""
+    notes: str = Field(default="", max_length=5000)
+
+
+@router.post("/leads/new")
+def create_crm_lead(body: NewCrmLead, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A lead added by hand in the CRM: a standalone lead (no SmartMoving), created as any new lead is, with the rep
+    picked for it."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can add leads")
+    if not body.full_name.strip():
+        raise HTTPException(status_code=422, detail="Enter the customer's name")
+    if body.company_id not in _get_user_company_ids(user, db):
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+    company = db.get(Company, body.company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+    # A new lead finds its company by name.
+    if db.query(func.count(Company.id)).filter(Company.name == company.name).scalar() != 1:
+        raise HTTPException(status_code=409, detail=f"Company name '{company.name}' is not unique. The lead was not created.")
+    assigned_to = _clean_optional_text(body.assigned_to) or None
+    if assigned_to and not db.get(User, assigned_to):
+        raise HTTPException(status_code=404, detail="Selected rep not found")
+    api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
+    result = _create_lead(NewLead(
+        full_name=body.full_name.strip(), email=_clean_optional_text(body.email) or None,
+        phone_number=_clean_optional_text(body.phone) or None, pickup_zip=_clean_optional_text(body.pickup_zip),
+        delivery_zip=_clean_optional_text(body.delivery_zip), move_size=_clean_optional_text(body.move_size),
+        move_date=_clean_optional_text(body.move_date), notes=_clean_optional_text(body.notes) or None,
+        referral_source=_clean_optional_text(body.referral_source) or None, assigned_to=assigned_to,
+        service_type="Moving", status="new", company_name=company.name, source="CRM",
+    ), api_secret, db)
+    return {"ok": True, "lead_id": result["lead_id"], "assigned_to": result.get("assigned_to", "")}
+
+
 @router.get("/leads/{lead_id}/copy-conflicts")
 def copy_lead_conflicts(
     lead_id: str,
@@ -2565,7 +2611,11 @@ def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
 
 
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
+    from price_source import counted_charges, job_price_source
     payload = job.to_dict()
+    lead = db.get(Lead, job.lead_id)
+    payload["price_source"] = job_price_source(lead, job)
+    payload["charges"] = [charge.to_dict() for charge in counted_charges(lead, job)]
     # Internal CRM only; keep dispatch details out of shared/customer serializers.
     payload["dispatch_company_id"] = job.dispatch_company_id or ""
     payload["dispatch_company_name"] = job.dispatch_company.name if job.dispatch_company else ""
@@ -2703,11 +2753,15 @@ def replace_lead_job_charges(
     return _serialize_job_with_addresses(row, db)
 
 
-def _price_job_from_lines(job: LeadJob, db: Session) -> None:
-    """After a discount changed: the job's price is its lines less its section discounts, as the customer page shows."""
+def _price_job_from_lines(job: LeadJob, db: Session, lead: Lead | None = None) -> None:
+    """After a discount changed: the job's price is the lines of its price (price_source) less its section discounts
+    (ours only)."""
     from models import PublicMoveAccess
-    job.price = (sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
-                 - sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)))
+    from price_source import counted_charges, job_price_source
+    lead = lead or db.get(Lead, job.lead_id)
+    ours = job_price_source(lead, job) == 'crm'
+    job.price = (sum((Decimal(str(charge.total_cost or 0)) for charge in counted_charges(lead, job)), Decimal(0))
+                 - (sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)) if ours else Decimal(0)))
     for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         access.published_price = job.price
 
@@ -2736,6 +2790,7 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     existing = _deserialize_estimated_total(lead.estimated_total) or {}
     final_before_tax = Decimal(0)
     discounts = Decimal(0)
+    from price_source import counted_charges, job_price_source
     for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
         db.expire(job, ['charges'])
         from rep_discounts import apply as apply_rep_discounts
@@ -2743,15 +2798,17 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
         # Section discounts: what each takes off its tab now, from the tabs the page and PDFs group the fees by.
         sections_changed = _refresh_section_discounts(lead, job, db)
         if lines_changed or sections_changed:
-            _price_job_from_lines(job, db)
-        sections = sum((_to_money_decimal(d.amount, 'amount') for d in job.section_discounts), Decimal(0))
-        # The job's lines, as its Charges box adds them, less its section discounts; the saved price only for a job
-        # without lines.
+            _price_job_from_lines(job, db, lead)
+        # The lines of the job's price (ours or SmartMoving's, price_source), as its Charges box adds them, less its
+        # section discounts (ours only); the saved price only for a job without lines.
+        lines = counted_charges(lead, job)
+        ours = job_price_source(lead, job) == 'crm'
+        sections = sum((_to_money_decimal(d.amount, 'amount') for d in job.section_discounts), Decimal(0)) if ours else Decimal(0)
         if job.charges or job.price is None:
-            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0)) - sections
+            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in lines), Decimal(0)) - sections
         else:
             final_before_tax += _to_money_decimal(job.price, 'price')
-        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0)) + sections
+        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in lines), Decimal(0)) + sections
     tax = _to_money_decimal(existing.get('tax'), 'tax')
     lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
         subtotal=final_before_tax + discounts,
@@ -5005,6 +5062,17 @@ def sync_smartmoving_documents_by_smartmoving_id(
     return _sync_smartmoving_documents_for_lead(lead, user, db)
 
 
+def _customer_link_value(template: str, lead: Lead, db: Session) -> dict:
+    """{customer_link} for a text that uses it: the lead's customer page link, made if it has none yet (saved at
+    once, before the text goes out)."""
+    if "{customer_link}" not in template:
+        return {}
+    from template_fields import customer_page_link
+    link = customer_page_link(db, lead)
+    db.commit()
+    return {"customer_link": link}
+
+
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
     logger.info(
         "ENTER _send_rep_assignment_sms: lead_id=%s assigned_to=%s REP_ASSIGNMENT_SMS_DRY_RUN=%r",
@@ -5030,6 +5098,7 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
         company_phone=company.phone or "",
         smartmoving_id=lead.smartmoving_id or "",
         rep_name=rep.name or "",
+        **_customer_link_value(template, lead, db),
     )
 
     dry_run = os.getenv("REP_ASSIGNMENT_SMS_DRY_RUN", "true").strip().lower() == "true"
@@ -5503,6 +5572,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
             smartmoving_id=lead.smartmoving_id,
             company_phone=company.phone or "",
             rep_name="",
+            **_customer_link_value(template, lead, db),
         )
 
         if new_lead_sms_dry_run:

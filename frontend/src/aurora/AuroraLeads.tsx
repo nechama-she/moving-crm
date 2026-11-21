@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { API_BASE } from "../apiConfig";
 import { authHeaders, useAuth } from "../AuthContext";
 import type { Lead } from "../leadUtils";
@@ -9,6 +9,7 @@ import { SmartSummary, StageStepper } from "./LeadBits";
 import { useCountUp } from "./motion";
 import { greeting } from "./greeting";
 import { Attention, PipelineFunnel } from "./LeadsOverview";
+import NewLeadSheet from "./NewLeadSheet";
 
 type Totals = { new_today: number; new_month: number; quotes: number; quote_value: number; booked_value: number };
 // `previous` (same period one month earlier; new_today = same weekday last week) and `trend` (daily
@@ -126,6 +127,9 @@ export default function AuroraLeads() {
   const [companies, setCompanies] = useState<Option[]>([]);
   const [reps, setReps] = useState<Option[]>([]);
   const [selected, setSelected] = useState<Lead | null>(null);
+  // Admins add a lead by hand; saved, it opens.
+  const [addingLead, setAddingLead] = useState(false);
+  const navigate = useNavigate();
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const active = useRef<AbortController | null>(null);
   const version = useRef(0);
@@ -296,6 +300,7 @@ export default function AuroraLeads() {
               </select>
             )}
             <button type="button" className="aur-btn is-ghost" onClick={clearFilters}>Clear</button>
+            {user?.role === "admin" && <button type="button" className="aur-btn is-primary" onClick={() => setAddingLead(true)}>+ New lead</button>}
           </div>
 
           {loading && !leads.length ? <div className="aur-empty">Loading leads…</div> : !leads.length ? <div className="aur-empty">No leads match these filters.</div> : (
@@ -356,6 +361,7 @@ export default function AuroraLeads() {
 
         {selected && <LeadPanel lead={selected} onClose={() => setSelected(null)} />}
       </div>
+      {addingLead && <NewLeadSheet token={token} companies={companies} reps={reps} onClose={() => setAddingLead(false)} onCreated={leadId => navigate(`/leads/${encodeURIComponent(leadId)}`)} />}
     </div>
   );
 }

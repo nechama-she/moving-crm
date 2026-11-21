@@ -196,7 +196,8 @@ def upsert_sales_rep_commission_setting(
 
 @router.get("/mine-reps")
 def list_my_reps(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Return sales reps accessible to the current user (same companies)."""
+    """The people leads can be assigned to, in the current user's companies: sales reps and admins (an admin with no
+    companies of their own works with every company)."""
     if user.role == "admin":
         admin_rows = db.query(UserCompany.company_id).filter(UserCompany.user_id == user.id).all()
         if admin_rows:
@@ -211,9 +212,11 @@ def list_my_reps(user: User = Depends(get_current_user), db: Session = Depends(g
         .distinct()
         .subquery()
     )
+    from sqlalchemy import and_, exists, or_
+    all_company_admin = and_(User.role == "admin", ~exists().where(UserCompany.user_id == User.id))
     reps = (
         db.query(User)
-        .filter(User.id.in_(rep_ids), User.role == "sales_rep")
+        .filter(or_(and_(User.id.in_(rep_ids), User.role.in_(("sales_rep", "admin"))), all_company_admin))
         .order_by(User.name)
         .all()
     )

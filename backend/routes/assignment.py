@@ -304,8 +304,9 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
     if not rep:
         return {"ok": False, "error": "no_rep"}
     if not lead.smartmoving_id:
-        logger.info("Assignment sync skipped: lead %s has no smartmoving_id", lead.id)
-        return {"ok": False, "error": "lead_missing_smartmoving_id"}
+        # A lead without a SmartMoving id is a standalone CRM lead: there is nothing to sync, and that is not a failure.
+        logger.info("Assignment sync skipped: lead %s is a standalone lead (no smartmoving_id)", lead.id)
+        return {"ok": True, "skipped": "standalone_lead", "status": "n/a", "body": "Standalone lead: nothing to sync to SmartMoving"}
     if not rep.smartmoving_rep_id:
         logger.info("Assignment sync skipped: rep %s has no smartmoving_rep_id", rep.id)
         return {"ok": False, "error": "rep_missing_smartmoving_rep_id"}

@@ -13,7 +13,11 @@ import { isActive, navSections } from "./navItems";
 import { useTheme } from "./theme";
 import { setUiMode } from "./uiMode";
 
+import { useMediaQuery } from "./useMediaQuery";
 const COLLAPSE_KEY = "crm-aurora-collapsed";
+// Below this width the menu beside the page leaves too little room for it (the lead page's two columns). On a phone
+// (900px and less) the menu slides out instead, as before.
+const NARROW = "(min-width: 901px) and (max-width: 1440px)";
 // Pages whose tables become one card per row on phones (aurora.css), instead of scrolling sideways.
 const CARD_TABLE_PAGES = new Set(["sales-work-queue"]);
 
@@ -26,7 +30,12 @@ export default function AuroraShell({ children, banner }: { children: ReactNode;
   const [theme, setTheme] = useTheme();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } });
+  const [savedCollapsed, setSavedCollapsed] = useState(() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } });
+  // Without room for the menu beside the page, it collapses by itself; opening it there lasts until the window changes.
+  const narrow = useMediaQuery(NARROW);
+  const [openedWhileNarrow, setOpenedWhileNarrow] = useState(false);
+  useEffect(() => setOpenedWhileNarrow(false), [narrow]);
+  const collapsed = narrow ? !openedWhileNarrow : savedCollapsed;
   const navRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLSpanElement>(null);
   const placedPath = useRef("");
@@ -85,7 +94,9 @@ export default function AuroraShell({ children, banner }: { children: ReactNode;
   }, []);
 
   function toggleCollapsed() {
-    setCollapsed(c => { const next = !c; try { localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0"); } catch { /* ignore */ } return next; });
+    // Narrow: open or close it for now; wide: the saved choice.
+    if (narrow) { setOpenedWhileNarrow(open => !open); return; }
+    setSavedCollapsed(c => { const next = !c; try { localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0"); } catch { /* ignore */ } return next; });
   }
 
   const current = pages.find(p => isActive(pathname, p.to));

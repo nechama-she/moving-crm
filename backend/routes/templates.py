@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/companies", tags=["Message Templates"])
 #   {company_phone}   company phone
 #   {smartmoving_id}  SmartMoving opportunity id
 #   {rep_name}        sales rep name (rep_assignment_sms only)
+#   {customer_link}   the lead's customer page link, made if it has none yet
 # ---------------------------------------------------------------------------
 DEFAULT_WELCOME_SMS = (
     "Hi {first_name},\n"

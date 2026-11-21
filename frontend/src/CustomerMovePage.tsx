@@ -438,6 +438,44 @@ export default function CustomerMovePage() {
       if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id), materials: nextMaterials.includes(id) });
     }
   }
+  // The saved packing choice, as loaded or returned by a save. Taken as the page's choice unless a save is still on its
+  // way: then the page's choice is newer (the inventory window or the questions just changed it), and the save brings
+  // the saved one back when it is done.
+  const savedPackingSelection = data?.packing_package?.selection;
+  function takeSavedPackageSelection(saved = savedPackingSelection) {
+    if (answerPending.current) return;
+    setPackageSelection(saved || { mode: 'none', unpacking: false, item_ids: [] });
+  }
+  // What the inventory window shows before the questions are ever opened; while they are open they keep their copy.
+  useEffect(() => {
+    if (savedPackingSelection && !showQuestions) takeSavedPackageSelection();
+  }, [savedPackingSelection, showQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The inventory window's item packing: the very options the packing questions show (their data, as loaded): the
+  // required ones, and the optional ones once the customer said they have more items, as the questions show them; only
+  // while items are packed one by one. Saved as the questions save them.
+  const packingItems = data?.packing_package?.items;
+  const itemPacking = useMemo(() => {
+    if (!packingItems || packageSelection.mode !== 'none') return undefined;
+    const options = packingItems.filter(item => item.available !== false
+      && ((item.requirement || 'required') === 'required' || packageSelection.has_additional_protection === true));
+    const materials = packageSelection.material_item_ids ?? packageSelection.item_ids;
+    return {
+      options,
+      // CP: movers pack with materials, as the questions' CP choice saves it.
+      picked: packageSelection.item_ids.filter(id => materials.includes(id)),
+      onChange: (changes: {id: string; cp: boolean}[]) => {
+        setPackageSelection(previous => {
+          const ids = new Set(previous.item_ids);
+          const withMaterials = new Set(previous.material_item_ids ?? previous.item_ids);
+          for (const {id, cp} of changes) {
+            if (cp) { ids.add(id); withMaterials.add(id); } else { ids.delete(id); withMaterials.delete(id); }
+          }
+          return {...previous, item_ids: [...ids], material_item_ids: [...withMaterials]};
+        });
+        for (const {id, cp} of changes) savePricingChange({kind: 'box', item_id: id, enabled: cp, materials: cp});
+      },
+    };
+  }, [packingItems, packageSelection]); // eslint-disable-line react-hooks/exhaustive-deps
   type PricingStep = typeof packingStep;
   const pricingSteps: PricingStep[] = [
     ...(data?.extra_stops ? ['stops'] as PricingStep[] : []),
@@ -520,7 +558,7 @@ export default function CustomerMovePage() {
     const data = source;
     if(!data)return;
     setPackingSelection(Object.fromEntries(data.packing_items.filter(item=>item.selected).map(item=>[item.id,item.selected_service || ''])));
-    setPackageSelection(data.packing_package?.selection || {mode:'none',unpacking:false,item_ids:[]});
+    takeSavedPackageSelection(data.packing_package?.selection);
     setStorageDate(data.storage?.available_date || '');
     setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null);
     const target = requiredQuestionTarget(missing, groupTerms(data.item_questions));
@@ -1556,7 +1594,7 @@ export default function CustomerMovePage() {
                       setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
                       setPackingSection('service');
-                      setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
+                      takeSavedPackageSelection(data.packing_package?.selection);
                       setPackingError('');
                       setTermsStep(0);
                       setTermsValidationAttempt(0);
@@ -1697,7 +1735,7 @@ export default function CustomerMovePage() {
               {!showQuestions && (packingError || termsError) && <p role="alert">{packingError || termsError} <button type="button" className="cm-secondary-btn" onClick={() => setShowQuestions(true)}>Review answers</button></p>}
             </div>
 
-            {<ManualInventoryModal onTotals={setInventorySummary} readOnly={readOnly} visible={showInventoryList} reload={inventoryReload} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
+            {<ManualInventoryModal onTotals={setInventorySummary} readOnly={readOnly} visible={showInventoryList} reload={inventoryReload} key={`${accessId}:${data.spark?.id || 'draft'}:${inventoryVersion}`} loadInventory={() => call('/inventory/editor')} packing={data.packing_package ? { full: data.packing_package.selection.mode === 'full' } : undefined} itemPacking={readOnly ? undefined : itemPacking} imageEndpoint={`${base}/question-images`} linkKey={key} session={session} draftKey={`cm_inventory_${accessId}_${data.spark?.id||'draft'}`} searchCatalog={(text, ids = []) => call('/inventory-catalog/search?' + new URLSearchParams([['q', text], ...ids.map(id => ['ids', id])]).toString())} downloadPdf={async body => {
               const response = await fetch(base + '/inventory.pdf', {
                 method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
                 body: JSON.stringify(body), cache: 'no-store',
