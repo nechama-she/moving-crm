@@ -430,6 +430,15 @@
 .aur-rail-panel { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 14px; overflow-wrap: anywhere; }
 .aur-rail-panel :is(input, select, textarea) { min-width: 0; max-width: 100%; }
 .aur-rail-panel :is(img, video) { max-width: 100%; }
+/* Without room for the column beside the page: a strip of icons, opening the column over the page. */
+.aurora .aur-lead-layout:has(> .aur-lead-rail.is-collapsed) { grid-template-columns: minmax(0, 1fr) 44px; }
+.aur-lead-rail.is-collapsed { height: auto; min-height: 0; gap: 8px; align-items: center; }
+.aur-rail-strip-gap { height: 8px; }
+.aur-lead-rail.is-collapsed .aur-icon-btn.is-active { border-color: var(--aur-accent-line); background: var(--aur-accent-soft); color: var(--aur-accent-ink); }
+.aur-rail-drawer-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(14, 21, 48, 0.25); }
+.aur-rail-drawer { position: relative; width: min(460px, 100%); height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; padding: 16px; background: var(--aur-bg); box-shadow: -20px 0 50px rgba(14, 21, 48, 0.18); animation: aur-sheet-in 0.2s ease-out; }
+.aur-rail-drawer .aur-rail-tools { flex: 1; min-height: 0; }
+.aur-rail-drawer-close { position: absolute; top: 20px; right: 20px; z-index: 1; }
 @media (max-width: 1180px) {
   .aurora .aur-lead-layout { grid-template-columns: minmax(0, 1fr); }
   .aur-lead-rail { position: static; height: auto; min-height: 0; }
