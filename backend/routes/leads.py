@@ -900,7 +900,8 @@ def _sync_assignment_to_smartmoving(lead: Lead, rep: User | None) -> dict:
     if not rep:
         return _default_sync_result("no_rep")
     if not lead.smartmoving_id:
-        return _default_sync_result("lead_missing_smartmoving_id")
+        # A lead without a SmartMoving id is a standalone CRM lead: there is nothing to sync, and that is not a failure.
+        return {"ok": True, "skipped": "standalone_lead", "status": "n/a", "body": "Standalone lead: nothing to sync to SmartMoving"}
     if not rep.smartmoving_rep_id:
         return _default_sync_result("rep_missing_smartmoving_rep_id")
 
