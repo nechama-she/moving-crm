@@ -2611,7 +2611,12 @@ def _validate_job_route_has_one_side(pickup: str, delivery: str) -> None:
 
 
 def _serialize_job_with_addresses(job: LeadJob, db: Session) -> dict:
+    from price_source import counted_charges, job_price_source, signed_job_ids
     payload = job.to_dict()
+    lead = db.get(Lead, job.lead_id)
+    signed = job.id in signed_job_ids(db, [job.id])
+    payload["price_source"] = job_price_source(lead, job, signed)
+    payload["charges"] = [charge.to_dict() for charge in counted_charges(lead, job, signed)]
     # Internal CRM only; keep dispatch details out of shared/customer serializers.
     payload["dispatch_company_id"] = job.dispatch_company_id or ""
     payload["dispatch_company_name"] = job.dispatch_company.name if job.dispatch_company else ""
@@ -2749,11 +2754,16 @@ def replace_lead_job_charges(
     return _serialize_job_with_addresses(row, db)
 
 
-def _price_job_from_lines(job: LeadJob, db: Session) -> None:
-    """After a discount changed: the job's price is its lines less its section discounts, as the customer page shows."""
+def _price_job_from_lines(job: LeadJob, db: Session, lead: Lead | None = None, signed: bool | None = None) -> None:
+    """After a discount changed: the job's price is the lines of its price (price_source) less its section discounts
+    (ours only)."""
     from models import PublicMoveAccess
-    job.price = (sum((Decimal(str(charge.total_cost or 0)) for charge in job.charges), Decimal(0))
-                 - sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)))
+    from price_source import counted_charges, job_price_source, signed_job_ids
+    lead = lead or db.get(Lead, job.lead_id)
+    signed = job.id in signed_job_ids(db, [job.id]) if signed is None else signed
+    ours = job_price_source(lead, job, signed) == 'crm'
+    job.price = (sum((Decimal(str(charge.total_cost or 0)) for charge in counted_charges(lead, job, signed)), Decimal(0))
+                 - (sum((Decimal(str(d.amount or 0)) for d in job.section_discounts), Decimal(0)) if ours else Decimal(0)))
     for access in db.query(PublicMoveAccess).filter_by(job_id=job.id).all():
         access.published_price = job.price
 
@@ -2782,22 +2792,27 @@ def _refresh_lead_estimated_total(lead_id: str, db: Session) -> None:
     existing = _deserialize_estimated_total(lead.estimated_total) or {}
     final_before_tax = Decimal(0)
     discounts = Decimal(0)
-    for job in db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all():
+    from price_source import counted_charges, job_price_source, signed_job_ids
+    jobs = db.query(LeadJob).filter(LeadJob.lead_id == lead_id).all()
+    signed = signed_job_ids(db, [job.id for job in jobs])
+    for job in jobs:
         db.expire(job, ['charges'])
         from rep_discounts import apply as apply_rep_discounts
         lines_changed = apply_rep_discounts(job, job.charges, lead.volume)
         # Section discounts: what each takes off its tab now, from the tabs the page and PDFs group the fees by.
         sections_changed = _refresh_section_discounts(lead, job, db)
         if lines_changed or sections_changed:
-            _price_job_from_lines(job, db)
-        sections = sum((_to_money_decimal(d.amount, 'amount') for d in job.section_discounts), Decimal(0))
-        # The job's lines, as its Charges box adds them, less its section discounts; the saved price only for a job
-        # without lines.
+            _price_job_from_lines(job, db, lead, job.id in signed)
+        # The lines of the job's price (ours or SmartMoving's, price_source), as its Charges box adds them, less its
+        # section discounts (ours only); the saved price only for a job without lines.
+        lines = counted_charges(lead, job, job.id in signed)
+        ours = job_price_source(lead, job, job.id in signed) == 'crm'
+        sections = sum((_to_money_decimal(d.amount, 'amount') for d in job.section_discounts), Decimal(0)) if ours else Decimal(0)
         if job.charges or job.price is None:
-            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in job.charges), Decimal(0)) - sections
+            final_before_tax += sum((_to_money_decimal(charge.total_cost, 'total_cost') for charge in lines), Decimal(0)) - sections
         else:
             final_before_tax += _to_money_decimal(job.price, 'price')
-        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in job.charges), Decimal(0)) + sections
+        discounts += sum((_to_money_decimal(charge.discount_amount, 'discount_amount') for charge in lines), Decimal(0)) + sections
     tax = _to_money_decimal(existing.get('tax'), 'tax')
     lead.estimated_total = _serialize_estimated_total(EstimatedTotalPayload(
         subtotal=final_before_tax + discounts,

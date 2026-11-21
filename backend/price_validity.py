@@ -42,9 +42,17 @@ def _may_have_expired(lead, job, db, now):
     return not plan or now >= utc_naive(calculated) + timedelta(days=plan.price_valid_days)
 
 
+def _priced_by_us(lead, job, db):
+    """Only our price is ever refreshed: a job whose price is SmartMoving's (price_source) never gets one of ours."""
+    from price_source import job_price_source, signed_job_ids
+    return job_price_source(lead, job, job.id in signed_job_ids(db, [job.id])) == 'crm'
+
+
 def refresh_expired_price(lead, job, db, now=None):
     now = now or datetime.utcnow()
     if job.price is None or (job.price <= 0 and not job.price_calculated_at):
+        return False
+    if not _priced_by_us(lead, job, db):
         return False
     # Every sheet is valid for at least a day. Opening a fresh estimate needs
     # no write locks; retain the locked recheck for possible expired quotes.
@@ -56,7 +64,7 @@ def refresh_expired_price(lead, job, db, now=None):
     # Serialize concurrent page opens and recheck the saved calculation time.
     db.refresh(lead, with_for_update=True)
     db.refresh(job, with_for_update=True)
-    if job.price is None or (job.price <= 0 and not job.price_calculated_at):
+    if job.price is None or (job.price <= 0 and not job.price_calculated_at) or not _priced_by_us(lead, job, db):
         return False
     calculated = _calculated_at(job, db)
     # All books have at least one day of validity; fresh quotes need no pricing lookup.

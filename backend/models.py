@@ -854,15 +854,25 @@ class JobSectionDiscount(Base):
 # The lead's total, added up from its jobs whenever a lead is read: each job's lines (as its Charges box shows them),
 # or its saved price when it has no lines. Only the tax comes from the saved estimated_total (SmartMoving sends it).
 def _lead_sums():
-    from sqlalchemy import exists, func, select
-    from sqlalchemy.orm import column_property
+    from sqlalchemy import and_, exists, func, not_, or_, select
+    from sqlalchemy.orm import aliased, column_property
+    # Each job's price is ours or SmartMoving's (price_source.job_price_source); only that price's lines count.
+    other = aliased(LeadJobCharge)
+    def has_lines(ours):
+        line_is_ours = func.coalesce(other.source, '') != 'smartmoving'
+        return exists().where(other.job_id == LeadJob.id, line_is_ours if ours else not_(line_is_ours))
+    signed = exists().where(EstimateSignature.job_id == LeadJob.id, EstimateSignature.signed_at.isnot(None))
+    booked = func.lower(func.trim(func.coalesce(Lead.status, ''))).in_(('booked', 'scheduled', 'completed'))
+    job_is_ours = or_(signed, and_(booked, not_(has_lines(False))), and_(not_(booked), has_lines(True)))
+    line_is_ours = func.coalesce(LeadJobCharge.source, '') != 'smartmoving'
+    counted = or_(and_(line_is_ours, job_is_ours), and_(not_(line_is_ours), not_(job_is_ours)))
     lines = (select(func.sum(LeadJobCharge.total_cost)).join(LeadJob, LeadJob.id == LeadJobCharge.job_id)
-             .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
+             .where(LeadJob.lead_id == Lead.id, counted).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
     discounts = (select(func.sum(LeadJobCharge.discount_amount)).join(LeadJob, LeadJob.id == LeadJobCharge.job_id)
-                 .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
-    # Section discounts come off the lines' total and count with their discounts.
+                 .where(LeadJob.lead_id == Lead.id, counted).correlate_except(LeadJob, LeadJobCharge).scalar_subquery())
+    # Section discounts (ours) come off an ours price's total and count with its discounts.
     sections = func.coalesce(select(func.sum(JobSectionDiscount.amount)).join(LeadJob, LeadJob.id == JobSectionDiscount.job_id)
-                             .where(LeadJob.lead_id == Lead.id).correlate_except(LeadJob, JobSectionDiscount).scalar_subquery(), 0)
+                             .where(LeadJob.lead_id == Lead.id, job_is_ours).correlate_except(LeadJob, JobSectionDiscount).scalar_subquery(), 0)
     lines = lines - sections
     discounts = func.coalesce(discounts, 0) + sections
     prices = (select(func.sum(LeadJob.price)).where(LeadJob.lead_id == Lead.id, ~exists().where(LeadJobCharge.job_id == LeadJob.id))
