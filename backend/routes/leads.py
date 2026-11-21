@@ -1741,6 +1741,51 @@ class CopyLeadRequest(BaseModel):
     assigned_to: str = ""
 
 
+class NewCrmLead(BaseModel):
+    company_id: str
+    full_name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(default="", max_length=40)
+    email: str = Field(default="", max_length=255)
+    pickup_zip: str = Field(default="", max_length=500)
+    delivery_zip: str = Field(default="", max_length=500)
+    move_date: str = Field(default="", max_length=40)
+    move_size: str = Field(default="", max_length=120)
+    referral_source: str = Field(default="", max_length=255)
+    assigned_to: str = ""
+    notes: str = Field(default="", max_length=5000)
+
+
+@router.post("/leads/new")
+def create_crm_lead(body: NewCrmLead, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A lead added by hand in the CRM: a standalone lead (no SmartMoving), created as any new lead is, with the rep
+    picked for it."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can add leads")
+    if not body.full_name.strip():
+        raise HTTPException(status_code=422, detail="Enter the customer's name")
+    if body.company_id not in _get_user_company_ids(user, db):
+        raise HTTPException(status_code=403, detail="You do not have access to the selected company")
+    company = db.get(Company, body.company_id)
+    if not company:
+        raise HTTPException(status_code=404, detail="Selected company not found")
+    # A new lead finds its company by name.
+    if db.query(func.count(Company.id)).filter(Company.name == company.name).scalar() != 1:
+        raise HTTPException(status_code=409, detail=f"Company name '{company.name}' is not unique. The lead was not created.")
+    assigned_to = _clean_optional_text(body.assigned_to) or None
+    if assigned_to and not db.get(User, assigned_to):
+        raise HTTPException(status_code=404, detail="Selected rep not found")
+    api_secret = get_config().get("API_SECRET", os.getenv("API_SECRET", ""))
+    result = _create_lead(NewLead(
+        full_name=body.full_name.strip(), email=_clean_optional_text(body.email) or None,
+        phone_number=_clean_optional_text(body.phone) or None, pickup_zip=_clean_optional_text(body.pickup_zip),
+        delivery_zip=_clean_optional_text(body.delivery_zip), move_size=_clean_optional_text(body.move_size),
+        move_date=_clean_optional_text(body.move_date), notes=_clean_optional_text(body.notes) or None,
+        referral_source=_clean_optional_text(body.referral_source) or None, assigned_to=assigned_to,
+        service_type="Moving", status="new", company_name=company.name, source="CRM",
+    ), api_secret, db)
+    return {"ok": True, "lead_id": result["lead_id"], "assigned_to": result.get("assigned_to", "")}
+
+
 @router.get("/leads/{lead_id}/copy-conflicts")
 def copy_lead_conflicts(
     lead_id: str,

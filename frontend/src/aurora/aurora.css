@@ -283,6 +283,15 @@
 .aur-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
 .aur-field input { height: 46px; padding: 0 14px; border: 1px solid var(--aur-line); border-radius: 12px; background: var(--aur-surface); font-size: 15px; color: var(--aur-ink); }
 .aur-field input:focus { outline: none; border-color: var(--aur-accent-line-strong); box-shadow: 0 0 0 3px rgba(75, 77, 247, 0.14); }
+.aur-field select, .aur-field textarea { padding: 0 14px; border: 1px solid var(--aur-line); border-radius: 12px; background: var(--aur-surface); font: inherit; font-size: 15px; font-weight: 400; color: var(--aur-ink); }
+.aur-field select { height: 46px; }
+.aur-field textarea { padding: 10px 14px; resize: vertical; }
+.aur-field select:focus, .aur-field textarea:focus { outline: none; border-color: var(--aur-accent-line-strong); box-shadow: 0 0 0 3px rgba(75, 77, 247, 0.14); }
+/* New lead: the form in its side sheet. */
+.aur-new-lead { display: flex; flex-direction: column; gap: 14px; padding: 20px; overflow-y: auto; }
+.aur-new-lead-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.aur-new-lead-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
+@media (max-width: 560px) { .aur-new-lead-row { grid-template-columns: 1fr; } }
 .aur-login-submit { height: 48px; font-size: 15px; margin-top: 6px; }
 @media (max-width: 860px) { .aur-login { grid-template-columns: minmax(0, 1fr); } .aur-login-brand { display: none; } }
 
