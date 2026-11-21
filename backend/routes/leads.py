@@ -5005,6 +5005,17 @@ def sync_smartmoving_documents_by_smartmoving_id(
     return _sync_smartmoving_documents_for_lead(lead, user, db)
 
 
+def _customer_link_value(template: str, lead: Lead, db: Session) -> dict:
+    """{customer_link} for a text that uses it: the lead's customer page link, made if it has none yet (saved at
+    once, before the text goes out)."""
+    if "{customer_link}" not in template:
+        return {}
+    from template_fields import customer_page_link
+    link = customer_page_link(db, lead)
+    db.commit()
+    return {"customer_link": link}
+
+
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
     logger.info(
         "ENTER _send_rep_assignment_sms: lead_id=%s assigned_to=%s REP_ASSIGNMENT_SMS_DRY_RUN=%r",
@@ -5030,6 +5041,7 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
         company_phone=company.phone or "",
         smartmoving_id=lead.smartmoving_id or "",
         rep_name=rep.name or "",
+        **_customer_link_value(template, lead, db),
     )
 
     dry_run = os.getenv("REP_ASSIGNMENT_SMS_DRY_RUN", "true").strip().lower() == "true"
@@ -5503,6 +5515,7 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
             smartmoving_id=lead.smartmoving_id,
             company_phone=company.phone or "",
             rep_name="",
+            **_customer_link_value(template, lead, db),
         )
 
         if new_lead_sms_dry_run:

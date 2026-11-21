@@ -164,22 +164,45 @@ def test_customer_links_only_when_they_open(setup, monkeypatch):
     monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://moves.example.com')
     templates.create_template(templates.TemplateInput(name='Links', body='Page: @CustomerLink | Video: @ParticipantLink'), admin, db)
     text = lambda: templates.lead_templates('a', admin, db)['items'][0]['text']
-    # No customer page and no video call yet: nothing is sent rather than a broken link.
-    assert text() == 'Page:  | Video: '
-    access = PublicMoveAccess(id='11111111-1111-1111-1111-111111111111', lead_id='a', job_id='j', key_hash='k', request_hash='r',
-                              token_hash='t', expires_at=datetime.utcnow() + timedelta(days=30))
-    db.add(access)
+    # No customer page yet: a template using the link makes it, as the Estimate button does; no video call, no link.
+    first = text()
+    access = db.query(PublicMoveAccess).filter_by(lead_id='a').one()
+    from routes.public_moves import public_url
+    assert first == f'Page: {public_url(access)} | Video: '
+    assert public_url(access).startswith(f'https://moves.example.com/move/{access.id}#key=')
+    # The same page every time after.
+    assert text() == first and db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1
     db.add(LeadLiveSwitch(lead_id='a', details=json.dumps({'participantJoinUrl': 'https://api.production.liveswitch.com/contact/s/3cjkh9py',
                                                             'hostJoinUrl': 'https://host.example/never-sent'})))
     db.commit()
-    from routes.public_moves import public_url
     assert text() == f'Page: {public_url(access)} | Video: https://api.production.liveswitch.com/contact/s/3cjkh9py'
-    assert public_url(access).startswith('https://moves.example.com/move/11111111-1111-1111-1111-111111111111#key=')
-    # Revoked or expired: the page would refuse it, so it is not sent.
+    # Revoked or expired: the page would refuse it, so it is not sent, and no other page is made.
     access.revoked = True
     db.commit()
     assert text().startswith('Page:  | Video: https://api.production.liveswitch.com/')
     access.revoked, access.expires_at = False, datetime.utcnow() - timedelta(minutes=1)
     db.commit()
     assert text().startswith('Page:  | Video:')
+    assert db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1
     assert 'host.example' not in text()
+
+
+def test_automatic_texts_get_the_customer_link_only_when_they_use_it(setup, monkeypatch):
+    """{customer_link} in the welcome and rep assignment texts: the lead's customer page link, made when it has none;
+    a text without it makes no page."""
+    from models import Lead, PublicMoveAccess
+    from routes.leads import _customer_link_value
+    from routes.public_moves import public_url
+    from routes.templates import render_template
+    templates, db, admin = setup
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://moves.example.com')
+    lead = db.get(Lead, 'a')
+    assert _customer_link_value('Hi {first_name}', lead, db) == {}
+    assert db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 0
+    template = 'Hi {first_name}, start here: {customer_link}'
+    text = render_template(template, first_name='Pat', **_customer_link_value(template, lead, db))
+    access = db.query(PublicMoveAccess).filter_by(lead_id='a').one()
+    assert text == f'Hi Pat, start here: {public_url(access)}'
+    # Sent again: the same page.
+    assert _customer_link_value(template, lead, db) == {'customer_link': public_url(access)}
+    assert db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1

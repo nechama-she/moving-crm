@@ -28,13 +28,13 @@ const FIELDS: { key: TemplateKey; label: string; description: string; placeholde
     key: "welcome_sms",
     label: "Welcome SMS",
     description: "Sent automatically when a new lead is created.",
-    placeholders: "{first_name}, {company_name}, {company_phone}, {smartmoving_id}",
+    placeholders: "{first_name}, {company_name}, {company_phone}, {smartmoving_id}, {customer_link}",
   },
   {
     key: "rep_assignment_sms",
     label: "Rep Assignment SMS",
     description: "Sent when a lead is assigned to a sales rep.",
-    placeholders: "{first_name}, {rep_name}, {company_name}, {company_phone}",
+    placeholders: "{first_name}, {rep_name}, {company_name}, {company_phone}, {customer_link}",
   },
   {
     key: "day2_followup_sms",
