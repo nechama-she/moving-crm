@@ -438,13 +438,18 @@ export default function CustomerMovePage() {
       if (id) savePricingChange({ kind: 'box', item_id: id, enabled: next.item_ids.includes(id), materials: nextMaterials.includes(id) });
     }
   }
-  // The saved packing choice, as loaded or returned by a save: what the inventory window shows before the questions are
-  // ever opened. While the questions are open they keep their own copy; a save still on its way keeps the local choice.
+  // The saved packing choice, as loaded or returned by a save. Taken as the page's choice unless a save is still on its
+  // way: then the page's choice is newer (the inventory window or the questions just changed it), and the save brings
+  // the saved one back when it is done.
   const savedPackingSelection = data?.packing_package?.selection;
+  function takeSavedPackageSelection(saved = savedPackingSelection) {
+    if (answerPending.current) return;
+    setPackageSelection(saved || { mode: 'none', unpacking: false, item_ids: [] });
+  }
+  // What the inventory window shows before the questions are ever opened; while they are open they keep their copy.
   useEffect(() => {
-    if (!savedPackingSelection || showQuestions || answerPending.current) return;
-    setPackageSelection(savedPackingSelection);
-  }, [savedPackingSelection, showQuestions]);
+    if (savedPackingSelection && !showQuestions) takeSavedPackageSelection();
+  }, [savedPackingSelection, showQuestions]); // eslint-disable-line react-hooks/exhaustive-deps
   // The inventory window's item packing: the very options the packing questions show (their data, as loaded): the
   // required ones, and the optional ones once the customer said they have more items, as the questions show them; only
   // while items are packed one by one. Saved as the questions save them.
@@ -553,7 +558,7 @@ export default function CustomerMovePage() {
     const data = source;
     if(!data)return;
     setPackingSelection(Object.fromEntries(data.packing_items.filter(item=>item.selected).map(item=>[item.id,item.selected_service || ''])));
-    setPackageSelection(data.packing_package?.selection || {mode:'none',unpacking:false,item_ids:[]});
+    takeSavedPackageSelection(data.packing_package?.selection);
     setStorageDate(data.storage?.available_date || '');
     setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null);
     const target = requiredQuestionTarget(missing, groupTerms(data.item_questions));
@@ -1589,7 +1594,7 @@ export default function CustomerMovePage() {
                       setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
                       setPackingStep(pricingSteps[0] || 'items');
                       setPackingSection('service');
-                      setPackageSelection(data.packing_package?.selection || { mode: 'none', unpacking: false, item_ids: [] });
+                      takeSavedPackageSelection(data.packing_package?.selection);
                       setPackingError('');
                       setTermsStep(0);
                       setTermsValidationAttempt(0);
