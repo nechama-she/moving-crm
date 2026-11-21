@@ -3,8 +3,8 @@ import json
 import re
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, text
-from sqlalchemy.orm import declarative_base, relationship, validates
+from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, exists, text
+from sqlalchemy.orm import column_property, declarative_base, relationship, validates
 
 from company_colors import resolve_company_color
 
@@ -694,6 +694,8 @@ class LeadJob(Base):
     foreman = relationship("User", foreign_keys=[foreman_id])
     charges = relationship("LeadJobCharge", back_populates="job", cascade="all, delete-orphan", order_by="LeadJobCharge.sort_order.asc(), LeadJobCharge.created_at.asc()")
     section_discounts = relationship("JobSectionDiscount", cascade="all, delete-orphan", passive_deletes=True)
+    # Whether the job has a signed estimate with us: part of the job's own query (no query of its own).
+    has_signed_estimate = column_property(exists().where(EstimateSignature.job_id == id, EstimateSignature.signed_at.isnot(None)))
 
     __table_args__ = (
         UniqueConstraint("lead_id", "job_order", name="uq_lead_jobs_lead_order"),
@@ -861,7 +863,7 @@ def _lead_sums():
     def has_lines(ours):
         line_is_ours = func.coalesce(other.source, '') != 'smartmoving'
         return exists().where(other.job_id == LeadJob.id, line_is_ours if ours else not_(line_is_ours))
-    signed = exists().where(EstimateSignature.job_id == LeadJob.id, EstimateSignature.signed_at.isnot(None))
+    signed = LeadJob.has_signed_estimate.expression
     booked = func.lower(func.trim(func.coalesce(Lead.status, ''))).in_(('booked', 'scheduled', 'completed'))
     job_is_ours = or_(signed, and_(booked, not_(has_lines(False))), and_(not_(booked), has_lines(True)))
     line_is_ours = func.coalesce(LeadJobCharge.source, '') != 'smartmoving'

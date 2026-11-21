@@ -60,8 +60,8 @@ def test_every_total_counts_only_the_jobs_price(db, status, ours, theirs, signed
     from price_source import counted_charges, job_price_source
     from routes.leads import _refresh_lead_estimated_total, _serialize_job_with_addresses
     lead, job = lead_with(db, status, ours, theirs, signed)
-    assert job_price_source(lead, job, signed) == source
-    assert str(sum(c.total_cost for c in counted_charges(lead, job, signed))) == total
+    assert job_price_source(lead, job) == source
+    assert str(sum(c.total_cost for c in counted_charges(lead, job))) == total
     # The lead page's Charges box gets only those lines, and the lead's totals add up only them.
     page = _serialize_job_with_addresses(job, db)
     assert page['price_source'] == source and f"{sum(Decimal(str(c['total_cost'])) for c in page['charges']):.2f}" == total
@@ -83,3 +83,24 @@ def test_the_refresh_never_prices_a_job_priced_by_smartmoving(db, monkeypatch, s
     called = []
     monkeypatch.setattr(pricing, 'calculate_and_save_lead_job_price', lambda *args: called.append(args))
     assert refresh_expired_price(lead, job, db) is False and called == []
+
+
+def test_a_jobs_price_needs_no_query_of_its_own(db):
+    """Whether a job is signed comes with the job, in its own query: the rule asks the database nothing more."""
+    from sqlalchemy import event
+    from models import LeadJob
+    from price_source import counted_charges, job_price_source
+    lead, _ = lead_with(db, 'booked', OURS, THEIRS, signed=True)
+    db.expire_all()
+    job = db.query(LeadJob).filter_by(id='lead-job').one()
+    lead.status  # The lead and the job's lines, as every caller has them.
+    job.charges
+    statements = []
+    listener = lambda conn, cursor, statement, *args: statements.append(statement)
+    event.listen(db.get_bind(), 'before_cursor_execute', listener)
+    try:
+        assert job.has_signed_estimate is True
+        assert job_price_source(lead, job) == 'crm' and len(counted_charges(lead, job)) == 2
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', listener)
+    assert statements == []

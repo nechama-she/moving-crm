@@ -44,8 +44,8 @@ def _may_have_expired(lead, job, db, now):
 
 def _priced_by_us(lead, job, db):
     """Only our price is ever refreshed: a job whose price is SmartMoving's (price_source) never gets one of ours."""
-    from price_source import job_price_source, signed_job_ids
-    return job_price_source(lead, job, job.id in signed_job_ids(db, [job.id])) == 'crm'
+    from price_source import job_price_source
+    return job_price_source(lead, job) == 'crm'
 
 
 def refresh_expired_price(lead, job, db, now=None):

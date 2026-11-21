@@ -13,25 +13,16 @@ def is_ours(charge):
     return (charge.source or '') != 'smartmoving'
 
 
-def job_price_source(lead, job, signed):
-    """'crm' or 'smartmoving' for this job; signed: whether the job has a signed estimate with us."""
-    if signed:
+def job_price_source(lead, job):
+    """'crm' or 'smartmoving' for this job."""
+    if job.has_signed_estimate:
         return 'crm'
     if is_booked(lead.status):
         return 'smartmoving' if any(not is_ours(charge) for charge in job.charges) else 'crm'
     return 'crm' if any(is_ours(charge) for charge in job.charges) else 'smartmoving'
 
 
-def counted_charges(lead, job, signed):
+def counted_charges(lead, job):
     """The job's lines of its price (job_price_source)."""
-    ours = job_price_source(lead, job, signed) == 'crm'
+    ours = job_price_source(lead, job) == 'crm'
     return [charge for charge in job.charges if is_ours(charge) == ours]
-
-
-def signed_job_ids(db, job_ids):
-    """Which of these jobs have a signed estimate with us, in one query."""
-    from models import EstimateSignature
-    if not job_ids:
-        return set()
-    return {row[0] for row in db.query(EstimateSignature.job_id).filter(
-        EstimateSignature.job_id.in_(list(job_ids)), EstimateSignature.signed_at.isnot(None)).distinct()}
