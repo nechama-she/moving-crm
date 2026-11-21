@@ -23,10 +23,19 @@ export default function ItemPackingChoice({ name, materials, picked, disabled, o
   // A unit is CP when the movers pack it with any of its materials.
   const packed = new Set(materials.flatMap(material => material.ids.flatMap((id, index) => picked.has(id) ? [material.groups[index]] : []))).size;
   const summary = packed === 0 ? 'PBO' : packed === units ? 'CP' : `CP (${packed}), PBO (${units - packed})`;
-  // n units of a material packed by the movers: its first n units, the rest not.
+  // Whether a unit (by its group) is packed by the movers with a material other than this one.
+  const packedWithOther = (material: ItemPackingMaterial, group: string) => materials.some(other => other !== material
+    && other.ids.some((id, index) => other.groups[index] === group && picked.has(id)));
+  // n units of a material packed by the movers. Raising it uses units no other material packs first, so the counts add
+  // up to different items (1 wrapped and 2 crated is 3 items); lowering it takes the material off its last units.
   const setCount = (material: ItemPackingMaterial, count: number) => {
     const next = Math.max(0, Math.min(material.ids.length, Math.floor(count)));
-    const changes = material.ids.map((id, index) => ({ id, cp: index < next })).filter(change => picked.has(change.id) !== change.cp);
+    const units = material.ids.map((id, index) => ({ id, index, packed: picked.has(id), other: packedWithOther(material, material.groups[index]) }));
+    const current = units.filter(unit => unit.packed);
+    const changes = next > current.length
+      ? units.filter(unit => !unit.packed).sort((a, b) => Number(a.other) - Number(b.other) || a.index - b.index)
+        .slice(0, next - current.length).map(unit => ({ id: unit.id, cp: true }))
+      : current.slice(next).map(unit => ({ id: unit.id, cp: false }));
     if (changes.length) onChange(changes);
   };
   return <span ref={container} className="mi-packing-choice mi-service-choice" onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }} onKeyDown={event => {
