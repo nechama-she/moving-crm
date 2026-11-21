@@ -975,6 +975,20 @@ html.aur-dark .activity-notice-close:hover,
 html.aur-dark .activity-notice-open:hover strong { color: var(--aur-accent, var(--aur-accent-ink)); }
 html.aur-dark .queue-activity-marked td { background-color: var(--aur-amber-bg); }
 
+/* moveAssistant/MoveAssistant.css */
+html.aur-dark .ma-panel { background-color: var(--aur-surface); }
+html.aur-dark .ma-avatar img { background-color: var(--aur-surface); }
+html.aur-dark .ma-step { background-color: var(--aur-surface); }
+html.aur-dark .ma-log { background-color: var(--aur-subtle); }
+html.aur-dark .ma-row.is-assistant .ma-bubble { background-color: var(--aur-surface); }
+html.aur-dark .ma-bubble.is-failed { background-color: var(--aur-red-bg); border-color: var(--aur-amber-line); color: var(--aur-red-fg); }
+html.aur-dark .ma-retry { border: 1px solid var(--aur-amber-line); background-color: var(--aur-surface); color: var(--aur-red-fg); }
+html.aur-dark .ma-suggest { background-color: var(--aur-subtle); }
+html.aur-dark .ma-suggest button { background-color: var(--aur-surface); }
+html.aur-dark .ma-compose { background-color: var(--aur-surface); }
+html.aur-dark .ma-compose textarea { background-color: var(--aur-surface); }
+html.aur-dark .ma-foot { background-color: var(--aur-surface); }
+
 /* Inline styles */
 html.aur-dark :is(
   [style*="border-color:"][style*="rgb(125, 211, 252)"],

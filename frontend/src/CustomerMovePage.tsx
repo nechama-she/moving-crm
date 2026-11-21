@@ -30,6 +30,9 @@ import { API_BASE } from "./apiConfig";
 import RepDiscounts, { type DiscountResult } from './RepDiscounts';
 import SectionDiscount, { type SectionDiscountRule } from './SectionDiscount';
 import "./CustomerMovePage.css";
+import MoveAssistant from './moveAssistant/MoveAssistant';
+import { assistantConfig } from './moveAssistant/assistantClient';
+import type { AssistantStep, BotAction, PageScreen } from './moveAssistant/assistantTypes';
 
 type LinkSms = { sent_at: string; phone_last4: string };
 type LinkEmail = { sent_at: string; email_hint: string };
@@ -206,6 +209,8 @@ export default function CustomerMovePage() {
   // The picked option: its channel and, for an extra phone or email, its id.
   const optionKey=(option:{channel:string;contact_id?:string})=>option.channel+':'+(option.contact_id||'');
   const [code,setCode]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  // Counts verifications asked for again with new contacts (the assistant changed the main phone or email): the options load again.
+  const [verifyRound,setVerifyRound]=useState(0);
   const [data,setData]=useState<Details | undefined>(() => ({...emptyDetails(), ...bootstrap?.move})),[files,setFiles]=useState<Pending[]>([]),[availability,setAvailability]=useState(''),[requested,setRequested]=useState(false),[rescheduling,setRescheduling]=useState(false);
   const uploadLock = useRef(false);
   const filePicker = useRef<HTMLInputElement>(null);
@@ -842,9 +847,11 @@ export default function CustomerMovePage() {
       } while (sync.again);
     } finally { sync.running = false; }
   }
-  async function openEstimate(current = false) {
+  // `signatureId`: the estimate the assistant prepared when the customer asked to sign in the chat. It sends one only
+  // after the estimate is approved for signing; the server still checks that when the customer signs.
+  async function openEstimate(current = false, signatureId = '') {
     setPdfError('');
-    if(data?.unanswered_questions?.length) {
+    if(!signatureId && data?.unanswered_questions?.length) {
       openRequiredQuestions(data.unanswered_questions);
       return;
     }
@@ -863,7 +870,8 @@ export default function CustomerMovePage() {
     setPreparedApproved(false);
     try {
       // Signed: open the signed copy as saved. Otherwise a new estimate from what the page shows.
-      const prepared = data?.signature_status === 'signed' && !current
+      const prepared = signatureId ? {id: signatureId, approved: true}
+        : data?.signature_status === 'signed' && !current
         ? {id: (await call('/estimate-signatures')).items[0]?.id as string, signed: true}
         : await call('/estimate-signatures', {});
       if (!prepared.id) throw new Error('Could not find the signed estimate. Please try again.');
@@ -954,7 +962,7 @@ export default function CustomerMovePage() {
     const urls=previews.current;
     return ()=>{referrer.remove();urls.forEach(URL.revokeObjectURL);};
   },[]);
-  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);if(value.company?.name)setVerifyCompany(value.company);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key]);
+  useEffect(()=>{const abort=new AbortController();fetch(base+'/verify-options',{headers:{'x-public-link':key},cache:'no-store',signal:abort.signal}).then(async r=>{const value=await r.json();if(!r.ok)throw new Error(value.detail||'This link is unavailable.');setRepPage(value.audience === 'rep');setCustomerCanEdit(value.customer_can_edit === true);setOptions(value.options);setLinkSms(value.link_sms || null);setLinkEmail(value.link_email || null);setChannel(value.options[0]?optionKey(value.options[0]):'');if(value.company?.color)setThemeColor(value.company.color);if(value.company?.name)setVerifyCompany(value.company);}).catch(e=>{if(!abort.signal.aborted)setError(e.message);});return ()=>abort.abort();},[base,key,verifyRound]);
   useEffect(()=>{if(!sent)return;const t=setInterval(()=>setClock(Date.now()),1000);return ()=>clearInterval(t);},[sent]);
   async function send(){setBusy(true);setError('');try{const [picked,contactId]=channel.split(':');await call('/send-code',{channel:picked,...(contactId?{contact_id:contactId}:{})});setSent(true);setResendAt(Date.now()+60000);setClock(Date.now());}catch(e){setError((e as Error).message);}finally{setBusy(false);}}
   async function verify(){
@@ -1255,6 +1263,68 @@ export default function CustomerMovePage() {
     } as React.CSSProperties;
   }, [themeColor]);
 
+  // The estimate's steps: one source for the page's step list and for the assistant.
+  const flow = (() => {
+    const hasInventory = !!inventorySummary?.items;
+    const servicesDone = !!inventorySummary?.items && data?.unanswered_questions?.length === 0;
+    const signed = data?.signature_status === 'signed';
+    // The Bill of Lading step, when the company has one: signed after the estimate.
+    const billOfLading = data?.bill_of_lading;
+    const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : billOfLading && !billOfLading.signed ? 4 : 0;
+    const sparkBusy = !!data?.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
+    const servicesUnavailable = pricingLoading || !!pricingLoadError || !sectionReady('pricing') || !(data?.extra_stops || data?.elevator || data?.long_carry || data?.stairs || data?.storage || data?.shuttle || data?.packing_items?.length || data?.packing_package || data?.item_questions?.length);
+    const estimateUnavailable = !data?.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError;
+    const estimateBusy = pdfBusy ? 'Preparing PDF...' : sparkBusy ? 'Analyzing inventory...' : calculatingPrice ? 'Updating price...' : answersSaving ? 'Saving...' : pricingLoading || busy ? 'Loading...' : '';
+    return { hasInventory, servicesDone, signed, billOfLading, nextStep, servicesUnavailable, estimateUnavailable, estimateBusy };
+  })();
+  function openServices() {
+    if (!data) return;
+    setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
+    setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null); setShuttleMissing(false);
+    setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
+    setStopsIncomplete({});setStopsMissing(false);
+    setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
+    setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
+    setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
+    setPackingStep(pricingSteps[0] || 'items');
+    setPackingSection('service');
+    takeSavedPackageSelection(data.packing_package?.selection);
+    setPackingError('');
+    setTermsStep(0);
+    setTermsValidationAttempt(0);
+    setShowQuestions(true);
+  }
+  // The assistant (BoxBot), on customer and rep pages, when api-config.js turns it on (see moveAssistant/assistantClient.ts).
+  const [assistant] = useState(assistantConfig);
+  const assistantSteps: AssistantStep[] = (() => {
+    const state = (step: number, done: boolean): AssistantStep['state'] => done ? 'done' : flow.nextStep === step ? 'current' : 'todo';
+    const status = (step: number, done: boolean, pending = 'Action required') => done ? 'Completed' : flow.nextStep === step ? pending : 'Not started';
+    return [
+      { id: 'inventory', label: 'Inventory', state: state(1, flow.hasInventory), status: status(1, flow.hasInventory), available: sectionReady('inventory') },
+      { id: 'services', label: 'Extra services', state: state(2, flow.servicesDone), status: status(2, flow.servicesDone), available: !flow.servicesUnavailable },
+      { id: 'estimate', label: 'Estimate', state: state(3, flow.signed), status: status(3, flow.signed, data?.signature_status === 'changed' ? 'Changed - sign again' : 'Action required'),
+        available: !flow.estimateUnavailable, busy: flow.estimateBusy || undefined },
+      ...(flow.billOfLading ? [{ id: 'bill_of_lading' as const, label: 'Bill of Lading', state: state(4, flow.billOfLading.signed), status: status(4, flow.billOfLading.signed), available: flow.signed }] : []),
+    ];
+  })();
+  function assistantScreen(type: PageScreen) {
+    if (type === 'open_inventory') setShowInventoryList(true);
+    else if (type === 'open_services') openServices();
+    else if (type === 'open_estimate') void openEstimate();
+    else if (type === 'open_bill_of_lading') setBillOfLadingOpen(true);
+    else if (type === 'upload_files') filePicker.current?.click();
+  }
+  // BoxBot opens the page's own signing windows; the customer signs there.
+  function assistantBotAction(action: BotAction) {
+    if (action.type === 'open_signing') void openEstimate(false, action.signatureId);
+    else if (action.type === 'open_bol_signing') setBillOfLadingOpen(true);
+  }
+  // The main phone or email changed in the chat, which ended the page's sessions: verify again, with the new contacts.
+  function assistantReverify() {
+    expireCustomerSession(session);
+    setVerifyRound(round => round + 1);
+    setError('Your contact details changed. Please verify with your new phone or email.');
+  }
 
   return (
     <div className="customer-move" style={paletteStyle}>
@@ -1308,6 +1378,17 @@ export default function CustomerMovePage() {
         ) : (
           <>
             <CompanyHeader details={data.company_details} fallbackName={data.company} />
+            {assistant && sections.move.ready && (
+              <MoveAssistant key={session} config={assistant} audience={repPage ? 'rep' : 'customer'} headers={headers} steps={assistantSteps}
+                hidden={showInventoryList || showQuestions || estimateViewerOpen || billOfLadingOpen}
+                onScreen={assistantScreen} onBotAction={assistantBotAction} onReplied={() => { if (updatesUnavailable) void refreshDetails(true); }}
+                onSessionEnded={() => expireCustomerSession(session)} onReverify={assistantReverify}
+                move={{
+                  accessId: accessId || '',
+                  company: { name: data.company_details?.name || data.company || 'Your moving team', phone: data.company_details?.phone || '', logo: data.company_details?.logo },
+                  readOnly,
+                }} />
+            )}
 
             <section className="cm-two-col cm-intro">
               <div>
@@ -1560,13 +1641,8 @@ export default function CustomerMovePage() {
               {calculationError && <p role="alert">{calculationError}</p>}
               </div>
               {(() => {
-                const hasInventory = !!inventorySummary?.items;
-                const servicesDone = !!inventorySummary?.items && data.unanswered_questions?.length === 0;
-                const signed = data.signature_status === 'signed';
+                const { hasInventory, servicesDone, signed, billOfLading, nextStep } = flow;
                 // Only the first unfinished step gets the big call-to-action; the others show a small text action.
-                // The Bill of Lading step, when the company has one: signed after the estimate.
-                const billOfLading = data.bill_of_lading;
-                const nextStep = !hasInventory ? 1 : !servicesDone ? 2 : !signed ? 3 : billOfLading && !billOfLading.signed ? 4 : 0;
                 const status = (step: number, done: boolean, pending = 'Action required') => <small className="cm-flow-status">{done ? 'Completed' : nextStep === step ? pending : 'Not started'}</small>;
                 // A busy label replaces the action and shows a spinner instead of the arrow.
                 const action = (step: number, label: string, ctaLabel: string, busyLabel = '') => {
@@ -1576,38 +1652,22 @@ export default function CustomerMovePage() {
                     : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{current ? <path d="M5 12h14M13 6l6 6-6 6"/> : <path d="m9 6 6 6-6 6"/>}</svg>;
                   return <span className={`${current ? 'cm-flow-action' : 'cm-flow-link'}${busyLabel ? ' is-busy' : ''}`} aria-live="polite">{busyLabel || (current ? ctaLabel : label)}{icon}</span>;
                 };
-                const sparkBusy = !!data.spark && data.spark.status !== 'completed' && data.spark.status !== 'failed';
                 return <ol className={`cm-estimate-flow${billOfLading ? ' has-four' : ''}`} aria-label="Complete your estimate">
                 <li><button type="button" className={`cm-flow-step${nextStep === 1 ? ' is-current' : ''}`} disabled={!sectionReady('inventory')} onClick={() => setShowInventoryList(true)}><span className="cm-flow-head"><span className="cm-flow-number">1</span><span className="cm-flow-label">Inventory{status(1, hasInventory)}</span>{sectionReady('inventory') && <CompletionIcon complete={hasInventory} label={hasInventory ? 'Inventory added' : 'Inventory missing'}/>}</span>{action(1, readOnly ? 'View' : hasInventory ? 'Edit' : 'Add', readOnly ? 'View' : 'Add', !sectionReady('inventory') ? 'Loading...' : '')}</button></li>
                 <li>
                   <button
                     type="button"
                     className={`cm-flow-step${nextStep === 2 ? ' is-current' : ''}`}
-                    disabled={pricingLoading || !!pricingLoadError || !sectionReady('pricing') || !(data.extra_stops || data.elevator || data.long_carry || data.stairs || data.storage || data.shuttle || data.packing_items?.length || data.packing_package || data.item_questions?.length)}
-                    onClick={() => {
-                      setPackingSelection(Object.fromEntries(data.packing_items.filter(item => item.selected).map(item => [item.id, item.selected_service || ''])));
-                      setShuttleAnswer(data.shuttle?.unknown ? 'unknown' : data.shuttle?.answer ?? null); setShuttleMissing(false);
-                      setStorageDate(data.storage?.available_date || ''); setStorageMissing(false);
-                      setStopsIncomplete({});setStopsMissing(false);
-                      setElevatorAnswers(Object.fromEntries((data.elevator?.locations || []).map(row => [row.location,row.unknown ? 'unknown' : row.uses_elevator]))); setElevatorMissing(false);
-                      setCarryAnswers(Object.fromEntries((data.long_carry?.locations || []).map(row => [row.location,row.unknown && row.acknowledged ? 'unknown' : row.distance_feet]))); setCarryMissing(false);
-                      setStairsAnswers(Object.fromEntries((data.stairs?.locations || []).map(row => [row.location, row.unknown ? 'unknown' : row.flights]))); setStairsMissing(false);
-                      setPackingStep(pricingSteps[0] || 'items');
-                      setPackingSection('service');
-                      takeSavedPackageSelection(data.packing_package?.selection);
-                      setPackingError('');
-                      setTermsStep(0);
-                      setTermsValidationAttempt(0);
-                      setShowQuestions(true);
-                    }}
+                    disabled={flow.servicesUnavailable}
+                    onClick={openServices}
                   >
                     <span className="cm-flow-head"><span className="cm-flow-number">2</span><span className="cm-flow-label">Extra services{status(2, servicesDone)}</span>
                     {sectionReady('pricing') && <CompletionIcon complete={servicesDone} label={servicesDone ? 'All required service answers complete' : answersSaving ? 'Saving service answers' : 'Required service answers missing'}/>}</span>
                     {action(2, readOnly ? 'View' : servicesDone ? 'Edit' : 'Add', readOnly ? 'View' : 'Add', answersSaving ? 'Saving...' : pricingLoading || !sectionReady('pricing') ? 'Loading...' : '')}
                   </button>
                 </li>
-                <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={!data.estimate || data.spark?.status !== 'completed' || pdfBusy || answersSaving || calculatingPrice || busy || pricingLoading || !!pricingLoadError} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign' : 'Sign',
-                  pdfBusy ? 'Preparing PDF...' : sparkBusy ? 'Analyzing inventory...' : calculatingPrice ? 'Updating price...' : answersSaving ? 'Saving...' : pricingLoading || busy ? 'Loading...' : '')}</button></li>
+                <li><button type="button" className={`cm-flow-step${nextStep === 3 ? ' is-current' : ''}`} disabled={flow.estimateUnavailable} onClick={() => void openEstimate()}><span className="cm-flow-head"><span className="cm-flow-number">3</span><span className="cm-flow-label">Estimate{status(3, signed, data.signature_status === 'changed' ? 'Changed - sign again' : 'Action required')}</span>{sectionReady('pricing') && <CompletionIcon complete={signed} label={signed ? 'Current estimate signed' : 'Signature required'}/>}</span>{action(3, signed ? 'View' : data.signature_status === 'changed' ? 'Re-sign' : 'Sign', data.signature_status === 'changed' ? 'Re-sign' : 'Sign',
+                  flow.estimateBusy)}</button></li>
                 {billOfLading && <li><button type="button" className={`cm-flow-step${nextStep === 4 ? ' is-current' : ''}`} disabled={!signed} onClick={() => setBillOfLadingOpen(true)}><span className="cm-flow-head"><span className="cm-flow-number">4</span><span className="cm-flow-label">Bill of Lading{status(4, billOfLading.signed)}</span>{signed && <CompletionIcon complete={billOfLading.signed} label={billOfLading.signed ? 'Bill of Lading signed' : 'Signature required'}/>}</span>{action(4, billOfLading.signed ? 'View' : 'Sign', 'Sign')}</button></li>}
               </ol>;
               })()}
