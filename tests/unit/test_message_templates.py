@@ -167,15 +167,15 @@ def test_customer_links_only_when_they_open(setup, monkeypatch):
     # No customer page yet: a template using the link makes it, as the Estimate button does; no video call, no link.
     first = text()
     access = db.query(PublicMoveAccess).filter_by(lead_id='a').one()
-    from routes.public_moves import public_url
-    assert first == f'Page: {public_url(access)} | Video: '
-    assert public_url(access).startswith(f'https://moves.example.com/move/{access.id}#key=')
+    # The short link (/move/s/<code>), which opens the full one.
+    short = f'https://moves.example.com/move/s/{access.short_code}'
+    assert len(access.short_code) == 10 and first == f'Page: {short} | Video: '
     # The same page every time after.
     assert text() == first and db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1
     db.add(LeadLiveSwitch(lead_id='a', details=json.dumps({'participantJoinUrl': 'https://api.production.liveswitch.com/contact/s/3cjkh9py',
                                                             'hostJoinUrl': 'https://host.example/never-sent'})))
     db.commit()
-    assert text() == f'Page: {public_url(access)} | Video: https://api.production.liveswitch.com/contact/s/3cjkh9py'
+    assert text() == f'Page: {short} | Video: https://api.production.liveswitch.com/contact/s/3cjkh9py'
     # Revoked or expired: the page would refuse it, so it is not sent, and no other page is made.
     access.revoked = True
     db.commit()
@@ -192,7 +192,6 @@ def test_automatic_texts_get_the_customer_link_only_when_they_use_it(setup, monk
     a text without it makes no page."""
     from models import Lead, PublicMoveAccess
     from routes.leads import _customer_link_value
-    from routes.public_moves import public_url
     from routes.templates import render_template
     templates, db, admin = setup
     monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://moves.example.com')
@@ -202,9 +201,10 @@ def test_automatic_texts_get_the_customer_link_only_when_they_use_it(setup, monk
     template = 'Hi {first_name}, start here: {customer_link}'
     text = render_template(template, first_name='Pat', **_customer_link_value(template, lead, db))
     access = db.query(PublicMoveAccess).filter_by(lead_id='a').one()
-    assert text == f'Hi Pat, start here: {public_url(access)}'
-    # Sent again: the same page.
-    assert _customer_link_value(template, lead, db) == {'customer_link': public_url(access)}
+    short = f'https://moves.example.com/move/s/{access.short_code}'
+    assert text == f'Hi Pat, start here: {short}'
+    # Sent again: the same page and the same short link.
+    assert _customer_link_value(template, lead, db) == {'customer_link': short}
     assert db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1
 
 
@@ -219,3 +219,27 @@ def test_an_automatic_text_is_sent_only_complete():
     # ...and no text that does, or any text with a value missing.
     assert complete_message('Inventory: https://portal.smartmoving.com/home/inventory/{smartmoving_id}/welcome', smartmoving_id='') == (None, ['smartmoving_id'])
     assert complete_message(template, first_name='', customer_link='', company_name='Gorilla') == (None, ['customer_link', 'first_name'])
+
+
+
+def test_the_short_link_opens_the_full_link_while_the_page_opens(setup, monkeypatch):
+    from datetime import datetime, timedelta
+    from models import Lead, PublicMoveAccess
+    from routes.public_moves import open_short_link, public_url
+    from template_fields import customer_page_link
+    templates, db, admin = setup
+    monkeypatch.setenv('PUBLIC_MOVE_ORIGIN', 'https://moves.example.com')
+    link = customer_page_link(db, db.get(Lead, 'a'))
+    db.commit()
+    access = db.query(PublicMoveAccess).filter_by(lead_id='a').one()
+    assert link == f'https://moves.example.com/move/s/{access.short_code}'
+    response = open_short_link(access.short_code, db)
+    assert response.status_code == 302 and response.headers['location'] == public_url(access)
+    # Revoked, expired, unknown or malformed: no page.
+    access.revoked = True
+    db.commit()
+    assert open_short_link(access.short_code, db).status_code == 404
+    access.revoked, access.expires_at = False, datetime.utcnow() - timedelta(minutes=1)
+    db.commit()
+    assert open_short_link(access.short_code, db).status_code == 404
+    assert open_short_link('AAAAAAAAAA', db).status_code == 404 and open_short_link("x' or 1=1", db).status_code == 404

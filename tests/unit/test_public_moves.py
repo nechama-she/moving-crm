@@ -2585,7 +2585,7 @@ def test_send_customer_link_dry_run_and_both_channels(portal, monkeypatch):
     monkeypatch.setattr(mod, 'setting', lambda key: {'PUBLIC_MOVE_LINK_DRY_RUN': 'false', 'PUBLIC_MOVE_ORIGIN': 'https://move.example.test', 'AWS_REGION': 'us-east-1'}.get(key, ''))
     result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=True), object(), db)
     assert result['dry_run'] and len(result['deliveries']) == 2
-    assert mod.public_url(access) in result['message']
+    assert mod.short_customer_url(access) in result['message']  # The short link, saved, so it opens.
     sms.assert_not_called()
     ses.send_email.assert_not_called()
     result = mod.send_customer_page_link(lead.id, mod.SendCustomerLinkRequest(dry_run=False), object(), db)
@@ -3258,7 +3258,8 @@ def test_link_email_uses_company_sender_and_same_customer_url(portal, monkeypatc
     payload = client.send_email.call_args.kwargs
     assert payload['FromEmailAddress'] == 'Movers <moves@example.com>'
     assert payload['Destination']['ToAddresses'] == [lead.email]
-    assert mod.public_url(access) in payload['Content']['Simple']['Body']['Text']['Data']
+    # The customer gets the short link, which opens this page.
+    assert mod.short_customer_url(access) in payload['Content']['Simple']['Body']['Text']['Data']
     assert db.get(models.PublicMoveAccess, access.id).link_email_sent_at
     lead.email = None
     client.reset_mock()

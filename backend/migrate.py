@@ -21,8 +21,10 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # Nothing pending: a deploy does not touch the database.
-    return
+    # Short customer page links (a new, empty column). Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'public_move_access', 'short_code', 'VARCHAR(16)')
+        connection.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_public_move_access_short_code ON public_move_access (short_code)'))
 
 
 if __name__ == "__main__":

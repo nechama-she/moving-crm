@@ -135,6 +135,17 @@ def set_move_page_cookie(response, access, token, expires_at, rep=False):
                             path=f'/move/{access.id}', secure=True, httponly=True, samesite='lax')
 
 
+@router.get('/move/s/{code}', include_in_schema=False)
+def open_short_link(code: str, db: Session = Depends(get_db)):
+    """A short customer page link: on to the page's full link, while it opens."""
+    from fastapi.responses import HTMLResponse, RedirectResponse
+    access = db.query(PublicMoveAccess).filter_by(short_code=code).first() if re.fullmatch(r'[A-Za-z0-9]{10}', code) else None
+    if access is None or access.revoked or access.expires_at <= NOW():
+        return HTMLResponse('<!doctype html><meta charset="utf-8"><title>Link not active</title><p>This link is no longer active. '
+                            'Please contact your moving company for a new one.</p>', status_code=404, headers={'Cache-Control': 'no-store'})
+    return RedirectResponse(public_url(access), status_code=302, headers={'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer'})
+
+
 @router.get('/move/{access_id}', include_in_schema=False)
 def initial_move_page(access_id: str, request: Request, db: Session = Depends(get_db)):
     from pathlib import Path
@@ -223,6 +234,23 @@ class Intake(BaseModel):
 
 
 def public_url(row, rep=False):
+    origin = _public_origin()
+    return f'{origin}/move/{row.id}' + ('?audience=rep' if rep else '') + f'#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
+
+
+SHORT_CODE_CHARACTERS = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # No 0/O, 1/l/I.
+
+
+def short_customer_url(access):
+    """The customer page's short link (/move/s/<code>): opens the same page as public_url. Its code is made the first
+    time, on the row (no query); saved with the row."""
+    if not access.short_code:
+        # 56^10 codes: a repeat is not a real possibility, and the column's unique index refuses one anyway.
+        access.short_code = ''.join(secrets.choice(SHORT_CODE_CHARACTERS) for _ in range(10))
+    return f'{_public_origin()}/move/s/{access.short_code}'
+
+
+def _public_origin():
     # Older deployments supplied the comma-separated CloudFront aliases here.
     # The first configured alias is the canonical customer/rep website.
     origin = setting('PUBLIC_MOVE_ORIGIN').split(',', 1)[0].strip().rstrip('/')
@@ -236,7 +264,7 @@ def public_url(row, rep=False):
         valid = False
     if not valid:
         raise HTTPException(503, 'The customer website origin is not configured')
-    return f'{origin}/move/{row.id}' + ('?audience=rep' if rep else '') + f'#key={rep_link_token(row) if rep else link_token(row.id)}' + ('&audience=rep' if rep else '')
+    return origin
 
 
 def create_customer_page_access(db, lead, job, key_hash, request_hash):
@@ -2679,7 +2707,12 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     job = db.get(LeadJob, access.job_id)
     meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
-    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
+    # The customer link to copy is the short one; its code is saved the first time it is shown.
+    made = not access.short_code
+    url = short_customer_url(access)
+    if made:
+        db.commit()
+    return {'url': url, 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
             'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
@@ -2742,10 +2775,11 @@ def customer_link_email_notice(access):
 
 
 def customer_link_message(access):
-    """The text sent with the customer page's link: what the customer can do there."""
+    """The text sent with the customer page's link (its short link): what the customer can do there."""
+    url = short_customer_url(access)
     if CUSTOMER_CAN_EDIT:
-        return f'View your move, upload files, add an item list, or request a virtual estimate: {public_url(access)}'
-    return f'View your move and your estimate, and sign online: {public_url(access)}'
+        return f'View your move, upload files, add an item list, or request a virtual estimate: {url}'
+    return f'View your move and your estimate, and sign online: {url}'
 
 
 def deliver_customer_link_sms(lead, access, db):
@@ -2787,6 +2821,7 @@ def send_customer_page_link(lead_id: str, body: SendCustomerLinkRequest,
     if access.revoked or access.expires_at < NOW():
         raise HTTPException(400, 'Customer link is inactive')
     message = customer_link_message(access)
+    db.commit()  # The short link's code, so the link in the message opens, previewed or sent.
     deliveries = []
     for channel, recipient in [('sms', lead.phone), ('email', lead.email)]:
         if recipient and recipient.strip():

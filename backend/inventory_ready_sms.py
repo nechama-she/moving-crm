@@ -18,7 +18,7 @@ def notify_inventory_ready(lead_id, report_id, db):
     if not production_sms_enabled():
         return
     from libs.aircall.client import find_number_id, send_sms
-    from routes.public_moves import public_url
+    from routes.public_moves import short_customer_url
 
     saved = db.query(LeadLiveSwitch).filter_by(lead_id=lead_id).populate_existing().with_for_update().first()
     state = json.loads(saved.details or "{}") if saved else {}
@@ -45,7 +45,7 @@ def notify_inventory_ready(lead_id, report_id, db):
         number = find_number_id(company.phone)
     if not number:
         return
-    url = public_url(access)
+    url = short_customer_url(access)
     # Persist a claim before the external call. An ambiguous provider timeout
     # must not lead to a second customer text on a repeated completion callback.
     notices[report_id] = {"status": "attempted", "at": datetime.utcnow().isoformat()}
