@@ -21,6 +21,9 @@ logger = logging.getLogger("moving-crm.message-stream")
 logger.setLevel(logging.INFO)
 _deserialize = TypeDeserializer().deserialize
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
+# BoxBot's chats, stored in conversations by the meta-webhook Lambda: the gorillahaulers.com website bot and the
+# customer move page assistant.
+BOT_PLATFORMS = {"website_gorillah_bot", "customer_page_bot"}
 
 
 def _image(record: dict) -> dict:
@@ -321,9 +324,9 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         return _process_call_record(db, record, item, event_id)
     if str(item.get("record_type") or "message").lower() != "message":
         return False, None
-    # The website chat bot answers its own visitors: its conversations show in the inbox
-    # but never become unanswered messages or first-contact work.
-    if str(item.get("platform") or "").strip().lower() == "website_gorillah_bot":
+    # BoxBot's chats (the website bot and the customer page assistant) answer on their own:
+    # their conversations show in the inbox but never become unanswered messages or first-contact work.
+    if str(item.get("platform") or "").strip().lower() in BOT_PLATFORMS:
         return False, None
 
     message_id = str(item.get("message_id") or "").strip()

@@ -691,7 +691,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     state = json.loads(conversation.details or '{}') if conversation else {}
     if lead and job and _has_inventory_list(state, job.id, db):
         refresh_expired_price(lead, job, db)
-    return _move_details(access, db, individual_charges=is_rep_request(access, request))
+    # lead_id (read only): BoxBot links its customer page conversations in the inbox to this lead.
+    return dict(_move_details(access, db, individual_charges=is_rep_request(access, request)), lead_id=access.lead_id)
 
 
 @router.get('/api/public-moves/{access_id}/summary')

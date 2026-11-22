@@ -18,11 +18,16 @@ const automatedSender = (item: Record<string, unknown>) => {
 };
 // BoxBot's gorillahaulers.com chat: stored with the Meta messages, read-only here.
 const WEBSITE_BOT = "website_gorillah_bot";
-const META_PLATFORMS = ["messenger", "instagram", WEBSITE_BOT];
+// BoxBot's assistant on the customer move page (cp-<access_id>, or cp-rep-<access_id> for a rep), read-only too.
+const CUSTOMER_PAGE_BOT = "customer_page_bot";
+const BOTS = [WEBSITE_BOT, CUSTOMER_PAGE_BOT];
+const META_PLATFORMS = ["messenger", "instagram", ...BOTS];
+const PLATFORM_LABELS: Record<string, string> = { calls: "Calls", sms: "SMS", instagram: "Instagram", messenger: "Messenger", [WEBSITE_BOT]: "Website bot", [CUSTOMER_PAGE_BOT]: "Customer page bot" };
 const messagePreview = (source: Record<string, unknown>, platform: string) => {
-  const channel = platform === "sms" ? "SMS" : platform === "instagram" ? "Instagram" : platform === WEBSITE_BOT ? "Website bot" : "Messenger";
+  const channel = PLATFORM_LABELS[platform] || "Messenger";
+  const rep = platform === CUSTOMER_PAGE_BOT && String(source.message_partition_key || "").startsWith("cp-rep-") ? "Rep · " : "";
   const sender = String(source.sender_label || "");
-  return `${channel} · ${sender ? `${sender}: ` : ""}${String(source.message || attachmentSummary(source.attachments as MessageAttachment[]) || "No preview")}`;
+  return `${channel} · ${rep}${sender ? `${sender}: ` : ""}${String(source.message || attachmentSummary(source.attachments as MessageAttachment[]) || "No preview")}`;
 };
 const companyAndRep = (item: Contact) => {
   const values = [item.company, item.rep].filter((value) => value && value !== "Unassigned");
@@ -53,7 +58,7 @@ const contactReps = (item: Contact) => [...new Set([
 const associationTarget = (item: Contact): CommunicationTarget | null => {
   for (const source of item.sources) {
     const channel = String(source.source_type || "");
-    if (channel === WEBSITE_BOT) continue; // linked to its lead by the chat itself
+    if (BOTS.includes(channel)) continue; // linked to its lead by the chat itself
     const clientIdentifier = String(source.client_identifier || source.message_partition_key || "");
     const companyIdentifier = channel === "sms"
       ? String(source.company_phone_identifier || "")
@@ -194,8 +199,8 @@ export default function UnifiedCommunicationsPage() {
         if (source.company_phone_identifier) requestUrls.add(`/api/chats/calls/history?phone=${encodeURIComponent(partition)}&company_number=${encodeURIComponent(String(source.company_phone_identifier))}`);
       } else if (type === "messenger" || type === "instagram") {
         requestUrls.add(`/api/meta/${type}/${encodeURIComponent(partition)}`);
-      } else if (type === WEBSITE_BOT) {
-        requestUrls.add(`/api/chats/${WEBSITE_BOT}/${encodeURIComponent(partition)}`);
+      } else if (BOTS.includes(type)) {
+        requestUrls.add(`/api/chats/${type}/${encodeURIComponent(partition)}`);
       } else if (type === "calls") {
         const clientPhone = String(source.client_identifier || "");
         requestUrls.add(`/api/chats/calls/history?phone=${encodeURIComponent(clientPhone)}&company_number=${encodeURIComponent(String(source.company_identifier || ""))}`);
@@ -226,7 +231,7 @@ export default function UnifiedCommunicationsPage() {
   const filterOptions = useMemo(() => ({
     reps: [...new Set(["Unassigned", ...directoryReps, ...contacts.flatMap(contactReps)])].sort(),
     companies: [...new Set([...directoryCompanies, ...contacts.flatMap(contactCompanies)])].sort(),
-    platforms: ["calls", "instagram", "messenger", "sms", WEBSITE_BOT],
+    platforms: ["calls", "instagram", "messenger", "sms", ...BOTS],
   }), [contacts, directoryCompanies, directoryReps]);
   function callbackFor(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "inbound" || item.answered) return undefined; return timeline.slice(index + 1).find((next) => next.kind === "call" && next.direction === "outbound"); }
   function missedBefore(index: number) { const item = timeline[index]; if (item.kind !== "call" || item.direction !== "outbound") return undefined; const prior = timeline.slice(0, index).filter((candidate) => candidate.kind === "call" && candidate.direction === "inbound" && !candidate.answered); return [...prior].reverse().find((missed) => !timeline.some((candidate) => candidate.kind === "call" && candidate.direction === "outbound" && candidate.timestamp > missed.timestamp && candidate.timestamp < item.timestamp)); }
@@ -235,7 +240,7 @@ export default function UnifiedCommunicationsPage() {
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
       <select aria-label="Filter communications by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
       <select aria-label="Filter communications by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-      <select aria-label="Filter communications by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value === WEBSITE_BOT ? "Website bot" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select>
+      <select aria-label="Filter communications by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{PLATFORM_LABELS[value] || value}</option>)}</select>
     </div>
     {error ? <p style={{ color: "#ba0517" }}>{error}</p> : null}<div className="communications-workspace">
       <section className="communications-timeline" style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 9, minHeight: 560, overflow: "hidden" }}>
