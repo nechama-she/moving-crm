@@ -595,6 +595,13 @@ def test_public_details_never_returns_host_link_or_internal_notes(portal):
     assert result['estimate'] is None
 
 
+def test_public_details_returns_the_lead_id(portal):
+    # BoxBot links its customer page conversations in the inbox to this lead.
+    mod,db,lead,access=portal
+    mod._move_details=lambda access,db,**kwargs: {'name':'Jane Smith'}
+    assert mod.details(access,db)=={'name':'Jane Smith','lead_id':'lead-1'}
+
+
 def test_upload_magic_and_phone_normalization():
     assert file_type(b'<script>alert(1)</script>') == 'application/octet-stream'
     assert file_type(b'\xff\xd8\xffrest') == 'image/jpeg'

@@ -365,3 +365,82 @@ def test_website_chat_thread_is_admin_only():
     with pytest.raises(HTTPException) as exc:
         chats.get_website_chat_messages("web-abc123", user=SimpleNamespace(id="user-1", role="sales_rep"))
     assert exc.value.status_code == 403
+
+
+def _customer_page_message(text, timestamp, role="user", user_id="cp-access-1", **extra):
+    return {"user_id": user_id, "platform": "customer_page_bot", "page_id": "Gorilla Haulers",
+            "message_id": f"{user_id}-{timestamp}", "text": text, "timestamp": timestamp, "role": role, **extra}
+
+
+def test_customer_page_chats_link_to_their_lead_as_two_conversations(monkeypatch):
+    company = SimpleNamespace(name="Gorilla Haulers", aircall_number_id="")
+    lead = _HashableLead(
+        id="lead-7", company_id="company-1", assigned_to=None, full_name="Dana Demo", phone="2405550188",
+        facebook_user_id=None, company=company, assignee=SimpleNamespace(name="Sam Rep"), contacts=[],
+        created_at=datetime(2026, 11, 1), updated_at=datetime(2026, 11, 1),
+    )
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(chats, "_query_meta_page", lambda start_key, limit: ([
+        _customer_page_message("Your move date is now Dec 3.", 1_777_000_004_000, "assistant", lead_id="lead-7"),
+        _customer_page_message("Move it to Dec 3", 1_777_000_003_000, lead_id="lead-7"),
+        _customer_page_message("Add a piano", 1_777_000_002_000, user_id="cp-rep-access-1", lead_id="lead-7"),
+        _customer_page_message("Hi", 1_777_000_001_000),
+    ], None))
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([lead]),
+    )
+
+    items = {item["message_partition_key"]: item for item in result["items"]}
+    assert set(items) == {"cp-access-1", "cp-rep-access-1"}
+    customer, rep = items["cp-access-1"], items["cp-rep-access-1"]
+    assert customer["conversation_id"] != rep["conversation_id"]
+    for item in (customer, rep):
+        assert item["lead_id"] == "lead-7"
+        assert item["client"] == "Dana Demo"
+        assert item["platform"] == "customer_page_bot"
+        assert item["company"] == "Gorilla Haulers"
+        assert item["rep"] == "Sam Rep"
+        assert item["destination_name"] == "Gorilla Haulers"
+        assert item["company_identifier"] == "Gorilla Haulers"
+    assert customer["message"] == "Your move date is now Dec 3."
+    assert customer["sender_label"] == "AI"
+    assert rep["message"] == "Add a piano"
+
+
+def test_customer_page_chat_without_a_lead_takes_its_company_from_page_id(monkeypatch):
+    monkeypatch.setattr(chats, "_user_company_ids", lambda user, db: ["company-1"])
+    monkeypatch.setattr(chats, "_query_meta_page", lambda start_key, limit: (
+        [_customer_page_message("When is my move?", 1_777_000_001_000)], None))
+
+    result = chats.get_all_chats(
+        cursor="", limit=20, source="meta", user=SimpleNamespace(id="admin-1", role="admin"), db=FakeDb([]),
+    )
+
+    assert len(result["items"]) == 1
+    item = result["items"][0]
+    assert item["lead_id"] == ""
+    assert item["client"] == "Customer page visitor"
+    assert item["company"] == "Gorilla Haulers"
+    assert item["destination_name"] == "Gorilla Haulers"
+    assert item["platform"] == "customer_page_bot"
+
+
+def test_customer_page_chat_thread_reads_only_that_platform(monkeypatch):
+    table = MagicMock()
+    table.query.return_value = {"Items": [_customer_page_message("one", 1), _customer_page_message("two", 2, "assistant")]}
+    monkeypatch.setattr(chats, "conversations_table", table)
+
+    result = chats.get_customer_page_chat_messages("cp-access-1", user=SimpleNamespace(id="admin-1", role="admin"))
+
+    assert [message["text"] for message in result["messages"]] == ["one", "two"]
+    assert table.query.call_args.kwargs["ScanIndexForward"] is True
+    assert table.query.call_args.kwargs["FilterExpression"] == chats.Attr("platform").eq("customer_page_bot")
+
+
+@pytest.mark.parametrize("role", ["sales_rep", "dispatch", "foreman"])
+def test_customer_page_chat_thread_is_for_admins(role):
+    with pytest.raises(HTTPException) as exc:
+        chats.get_customer_page_chat_messages("cp-access-1", user=SimpleNamespace(id="user-1", role=role))
+
+    assert exc.value.status_code == 403

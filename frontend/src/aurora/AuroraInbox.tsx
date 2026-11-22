@@ -17,6 +17,11 @@ type Cursors = { sms: string; meta: string; calls: string };
 // The Gorilla Haulers website chat bot (BoxBot). Read-only here: never waiting, never connected by hand;
 // it links to its lead by itself through lead_id once the visitor sends the request.
 const WEBSITE_BOT = "website_gorillah_bot";
+// BoxBot's assistant on the customer move page, read-only the same way. user_id is cp-<access_id> for the customer
+// and cp-rep-<access_id> for the rep: two conversations on the same lead.
+const CUSTOMER_PAGE_BOT = "customer_page_bot";
+const BOTS = [WEBSITE_BOT, CUSTOMER_PAGE_BOT];
+const isRepChat = (c: Contact) => c.sources.some(s => s.source_type === CUSTOMER_PAGE_BOT && String(s.message_partition_key || "").startsWith("cp-rep-"));
 const stamp = (v: unknown) => { const n = Number(v || 0); return n >= 1e12 ? n / 1000 : n; };
 const digits = (v: unknown) => { const d = String(v || "").replace(/\D/g, ""); return d.length >= 10 ? d.slice(-10) : d; };
 const phone = (v: unknown) => { const d = digits(v); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : String(v || ""); };
@@ -36,6 +41,7 @@ const CHANNEL: Record<string, { label: string; icon: IconName; color: string }> 
   messenger: { label: "Messenger", icon: "message", color: "#1877F2" },
   instagram: { label: "Instagram", icon: "message", color: "#C13584" },
   [WEBSITE_BOT]: { label: "Website bot", icon: "spark", color: "#0F766E" },
+  [CUSTOMER_PAGE_BOT]: { label: "Customer page bot", icon: "spark", color: "#7C3AED" },
 };
 
 function preview(source: Source, platform: string) {
@@ -71,13 +77,13 @@ function destination(item: Contact) {
 }
 function inboundLatest(item: Contact) {
   const latest = [...item.sources].sort((a, b) => stamp(b.timestamp) - stamp(a.timestamp))[0];
-  if (latest?.source_type === WEBSITE_BOT) return false;
+  if (BOTS.includes(String(latest?.source_type || ""))) return false;
   return ["inbound", "received", "user"].includes(String(latest?.direction || "").toLowerCase());
 }
 function associationTarget(item: Contact): CommunicationTarget | null {
   for (const s of item.sources) {
     const channel = String(s.source_type || "");
-    if (channel === WEBSITE_BOT) continue;
+    if (BOTS.includes(channel)) continue;
     const clientIdentifier = String(s.client_identifier || s.message_partition_key || "");
     const companyIdentifier = channel === "sms" ? String(s.company_phone_identifier || "") : String(s.company_identifier || "");
     if (channel && clientIdentifier && companyIdentifier) return { channel, clientIdentifier, companyIdentifier };
@@ -138,7 +144,7 @@ export default function AuroraInbox() {
     if (loadingMoreRef.current || !Object.values(more).some(Boolean)) return;
     loadingMoreRef.current = true; setLoadingMore(true);
     try {
-      const allowed = channel === "calls" ? ["calls"] : channel === "sms" ? ["sms"] : ["messenger", "instagram", WEBSITE_BOT].includes(channel) ? ["meta"] : ["sms", "meta", "calls"];
+      const allowed = channel === "calls" ? ["calls"] : channel === "sms" ? ["sms"] : ["messenger", "instagram", ...BOTS].includes(channel) ? ["meta"] : ["sms", "meta", "calls"];
       const sources = (["sms", "meta", "calls"] as const).filter(s => allowed.includes(s) && more[s]);
       if (!sources.length) return;
       const responses = await Promise.all(sources.map(s => fetch(`${API_BASE}${s === "calls" ? "/api/chats/calls?limit=50" : `/api/chats?source=${s}&limit=20`}&cursor=${encodeURIComponent(cursors[s])}`, { headers: authHeaders(token) })));
@@ -163,8 +169,8 @@ export default function AuroraInbox() {
           if (s.company_phone_identifier) urls.add(`/api/chats/calls/history?phone=${encodeURIComponent(partition)}&company_number=${encodeURIComponent(String(s.company_phone_identifier))}`);
         } else if (type === "messenger" || type === "instagram") {
           urls.add(`/api/meta/${type}/${encodeURIComponent(partition)}`);
-        } else if (type === WEBSITE_BOT) {
-          urls.add(`/api/chats/${WEBSITE_BOT}/${encodeURIComponent(partition)}`);
+        } else if (BOTS.includes(type)) {
+          urls.add(`/api/chats/${type}/${encodeURIComponent(partition)}`);
         } else if (type === "calls") {
           const client = String(s.client_identifier || "");
           urls.add(`/api/chats/calls/history?phone=${encodeURIComponent(client)}&company_number=${encodeURIComponent(String(s.company_identifier || ""))}`);
@@ -228,7 +234,7 @@ export default function AuroraInbox() {
             <input type="search" aria-label="Search conversations" placeholder="Search people or numbers" value={search} onChange={e => setSearch(e.target.value)} />
           </label>
           <div className="aur-chips" role="group" aria-label="Channel">
-            {[["", "All"], ["sms", "SMS"], ["calls", "Calls"], ["messenger", "Messenger"], ["instagram", "Instagram"], [WEBSITE_BOT, "Website bot"]].map(([v, l]) => (
+            {[["", "All"], ["sms", "SMS"], ["calls", "Calls"], ["messenger", "Messenger"], ["instagram", "Instagram"], [WEBSITE_BOT, "Website bot"], [CUSTOMER_PAGE_BOT, "Customer page bot"]].map(([v, l]) => (
               <button key={v} type="button" className={`aur-chip${channel === v ? " is-active" : ""}`} aria-pressed={channel === v} onClick={() => setChannel(v)}>{l}</button>
             ))}
             <button type="button" className={`aur-chip${onlyWaiting ? " is-active" : ""}`} aria-pressed={onlyWaiting} onClick={() => setOnlyWaiting(w => !w)}>Waiting</button>
@@ -255,7 +261,7 @@ export default function AuroraInbox() {
                   <span className="aur-convo-body">
                     <span className="aur-convo-top"><strong className={waiting ? "is-unread" : undefined}>{item.client}</strong><small>{timeLabel(item.timestamp)}</small></span>
                     <span className="aur-convo-preview">{item.last_preview}</span>
-                    <span className="aur-convo-meta">{waiting && <span className="aur-pill tone-danger">Waiting</span>}<small>{[item.company, item.rep].filter(v => v && v !== "Unassigned").join(" · ") || "Unassigned"}</small></span>
+                    <span className="aur-convo-meta">{waiting && <span className="aur-pill tone-danger">Waiting</span>}{isRepChat(item) && <span className="aur-pill tone-info">Rep</span>}<small>{[item.company, item.rep].filter(v => v && v !== "Unassigned").join(" · ") || "Unassigned"}</small></span>
                   </span>
                 </button>
               </li>
@@ -271,6 +277,7 @@ export default function AuroraInbox() {
             <span className="aur-avatar is-square" style={{ background: tint(contact.client)[0], color: tint(contact.client)[1] }}>{initials(contact.client)}</span>
             <div className="aur-thread-title">
               {contact.lead_id ? <Link to={`/leads/${contact.lead_id}`}>{contact.client}</Link> : <strong>{contact.client}</strong>}
+              {isRepChat(contact) && <span className="aur-pill tone-info">Rep</span>}
               <small className="aur-muted">{inboundLatest(contact) ? "Received by" : "Sent from"} {destination(contact)}</small>
             </div>
             {!contact.lead_id && associationTarget(contact) && <button type="button" className="aur-btn" onClick={() => setConnectTarget(associationTarget(contact))}>Connect to lead</button>}
@@ -309,7 +316,8 @@ export default function AuroraInbox() {
           })}
           {!historyLoading && contact && !timeline.length && <p className="aur-empty">No communication history found.</p>}
         </div>
-        <div className="aur-thread-foot aur-muted">{contact?.channel === WEBSITE_BOT ? "Website chat with the Gorilla Haulers bot. Read-only." : "Reply from the lead page or SmartMoving. Sending from the Inbox is a planned next step."}</div>
+        <div className="aur-thread-foot aur-muted">{contact?.channel === WEBSITE_BOT ? "Website chat with the Gorilla Haulers bot. Read-only."
+          : contact?.channel === CUSTOMER_PAGE_BOT ? `${isRepChat(contact) ? "A rep's" : "The customer's"} chat with the assistant on the customer page. Read-only.` : "Reply from the lead page or SmartMoving. Sending from the Inbox is a planned next step."}</div>
       </section>
 
       <LeadContext contact={contact} />
@@ -339,7 +347,8 @@ function LeadContext({ contact }: { contact?: Contact }) {
   return (
     <aside className="aur-context" aria-label="Lead details">
       {!leadId ? (
-        <div className="aur-context-empty"><strong>Not linked to a lead</strong><span className="aur-muted">{contact.channel === WEBSITE_BOT ? "Website visitor, no lead yet. The conversation links to the lead by itself once the visitor sends the request." : "Use Connect to lead to attach this conversation to a customer."}</span></div>
+        <div className="aur-context-empty"><strong>Not linked to a lead</strong><span className="aur-muted">{contact.channel === WEBSITE_BOT ? "Website visitor, no lead yet. The conversation links to the lead by itself once the visitor sends the request."
+          : contact.channel === CUSTOMER_PAGE_BOT ? "Customer page chat, not linked yet. It links to its lead by itself." : "Use Connect to lead to attach this conversation to a customer."}</span></div>
       ) : (
         <>
           <div className="aur-context-head"><span className="aur-eyebrow">Lead</span>{lead && <span className={`aur-stage stage-${String(lead.status || "new").toLowerCase()}`}>{String(lead.status || "new")}</span>}</div>
