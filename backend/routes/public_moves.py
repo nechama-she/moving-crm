@@ -2707,7 +2707,12 @@ def staff_page(lead_id: str, user: User = Depends(get_current_user), db: Session
     job = db.get(LeadJob, access.job_id)
     meetings = db.query(WalkthroughRequest).filter_by(lead_id=lead.id).order_by(WalkthroughRequest.created_at.desc()).all()
     pending = db.query(PublicMoveUpload).filter_by(access_id=access.id, synced_at=None).count()
-    return {'url': public_url(access), 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
+    # The customer link to copy is the short one; its code is saved the first time it is shown.
+    made = not access.short_code
+    url = short_customer_url(access)
+    if made:
+        db.commit()
+    return {'url': url, 'rep_url': public_url(access, rep=True), 'revoked': access.revoked, 'has_email': bool((lead.email or '').strip()),
             'job_id': job.id, 'company_id': lead.company_id or '',
             'price': str(job.price) if job.price is not None else '', 'cuft': str(lead.volume) if lead.volume is not None else '',
             'published': bool(access.published_at), 'pending_uploads': pending, 'requests': [{**meeting_dict(m), 'rep_name': (db.get(User, m.assigned_to).name if m.assigned_to and db.get(User, m.assigned_to) else '')} for m in meetings]}
