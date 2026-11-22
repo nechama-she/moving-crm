@@ -51,7 +51,7 @@ from libs.smartmoving.client import (
 from models import Lead, LeadContact, LeadPayment, contact_key, lead_estimated_total, LeadUpdateLog, User, UserCompany, Company, OutreachEvent, AdminUnavailability, AdminUnavailabilityRep, RepAvailabilityWindow, AutoAssignEvent, LeadAttachment, DispatchCalendarDay, LeadJob, LeadJobCharge, Followup, SentMessage, Task, AppSetting, LeadDuplicationRule, MessageState, MissedCallState, CommunicationAssociation, PublicMoveAccess, job_number
 from realtime import publish_realtime_event
 from referral_assignment_rules import configured_rep_ids_for_referral
-from routes.templates import get_company_template, render_template
+from routes.templates import complete_message, get_company_template
 from zip_state import delivery_location
 
 logger = logging.getLogger("moving-crm")
@@ -5091,7 +5091,7 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
 
     template = get_company_template(db, company.id, "rep_assignment_sms")
     first_name = lead.full_name.split()[0] if (lead.full_name or "").strip() else ""
-    message = render_template(
+    message, missing = complete_message(
         template,
         first_name=first_name,
         company_name=company.name,
@@ -5100,6 +5100,9 @@ def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
         rep_name=rep.name or "",
         **_customer_link_value(template, lead, db),
     )
+    if message is None:
+        logger.info("Rep-assignment SMS not sent for lead %s: no value for %s", lead.id, ", ".join(missing))
+        return
 
     dry_run = os.getenv("REP_ASSIGNMENT_SMS_DRY_RUN", "true").strip().lower() == "true"
     if dry_run:
@@ -5562,20 +5565,24 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
     sms_result = None
     message = ""
     new_lead_sms_dry_run = os.getenv("NEW_LEAD_SMS_DRY_RUN", "true").strip().lower() == "true"
-    if not suppress_new_lead_automation and lead.phone and lead.smartmoving_id:
+    if not suppress_new_lead_automation and lead.phone:
         first_name = lead.full_name.split()[0] if lead.full_name.strip() else ""
         template = get_company_template(db, company.id, "welcome_sms")
-        message = render_template(
-        template,
+        message, missing = complete_message(
+            template,
             first_name=first_name,
             company_name=company.name,
-            smartmoving_id=lead.smartmoving_id,
+            smartmoving_id=lead.smartmoving_id or "",
             company_phone=company.phone or "",
             rep_name="",
             **_customer_link_value(template, lead, db),
         )
 
-        if new_lead_sms_dry_run:
+        if message is None:
+            message = ""
+            sms_result = {"ok": False, "skipped": "missing_values", "missing": missing}
+            logger.info("Welcome SMS not sent for lead %s: no value for %s", lead.id, ", ".join(missing))
+        elif new_lead_sms_dry_run:
             sms_result = {
                 "ok": False,
                 "dry_run": True,

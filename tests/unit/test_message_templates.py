@@ -206,3 +206,16 @@ def test_automatic_texts_get_the_customer_link_only_when_they_use_it(setup, monk
     # Sent again: the same page.
     assert _customer_link_value(template, lead, db) == {'customer_link': public_url(access)}
     assert db.query(PublicMoveAccess).filter_by(lead_id='a').count() == 1
+
+
+def test_an_automatic_text_is_sent_only_complete():
+    """Every {placeholder} filled, or no message: never a partly filled text, and no stand-in value."""
+    from routes.templates import complete_message
+    template = 'Hi {first_name}, start here: {customer_link}. {company_name}'
+    assert complete_message(template, first_name='Pat', customer_link='https://moves.example.com/move/1', company_name='Gorilla') == (
+        'Hi Pat, start here: https://moves.example.com/move/1. Gorilla', [])
+    # A lead without a SmartMoving id gets a text that does not use one...
+    assert complete_message(template, first_name='Pat', customer_link='https://x', company_name='G', smartmoving_id='')[0] is not None
+    # ...and no text that does, or any text with a value missing.
+    assert complete_message('Inventory: https://portal.smartmoving.com/home/inventory/{smartmoving_id}/welcome', smartmoving_id='') == (None, ['smartmoving_id'])
+    assert complete_message(template, first_name='', customer_link='', company_name='Gorilla') == (None, ['customer_link', 'first_name'])
