@@ -114,6 +114,13 @@ def render_template(template: str, **values: str) -> str:
     )
 
 
+def complete_message(template: str, **values: str) -> tuple[str | None, list[str]]:
+    """The message an automatic text sends: the template with every {placeholder} filled, or None (and the names
+    that have no value) when any is missing or empty. A text is never sent partly filled."""
+    missing = sorted({name for name in _PLACEHOLDER_RE.findall(template) if not str(values.get(name) or "").strip()})
+    return (None, missing) if missing else (render_template(template, **values), [])
+
+
 def _resolved_templates(
     row: CompanyMessageTemplate | None,
     company_id: str,
