@@ -13,6 +13,7 @@
 //           (BoxBot also sends `step`; the page shows its own steps, so it is not read.)
 //   401     the page's session is not valid: the page asks for its code again
 //   429/503/504, or no answer in 65 seconds: the "busy" text (the server's `detail` when it sends one)
+//   anything else: the window's own "couldn't answer" text, never the server's
 import type { AssistantMessage, AssistantReply, Audience, BotAction, SlotCard } from './assistantTypes';
 
 declare global {
@@ -68,7 +69,9 @@ export async function callAssistant(call: Call): Promise<AssistantReply> {
   const value = await response.json().catch(() => null);
   if (response.status === 401) throw new AssistantError('Please verify your phone or email to continue.', 'session');
   if ([429, 503, 504].includes(response.status)) throw new AssistantError(typeof value?.detail === 'string' && value.detail ? value.detail : BUSY_TEXT, 'busy');
-  if (!response.ok || !value || typeof value !== 'object') throw new AssistantError(typeof value?.detail === 'string' && value.detail ? value.detail : FAILED_TEXT, 'failed');
+  // Any other failure shows the window's own text: a server error ("Not Found", "Internal Server Error") means
+  // nothing to a customer.
+  if (!response.ok || !value || typeof value !== 'object') throw new AssistantError(FAILED_TEXT, 'failed');
   return readReply(value);
 }
 

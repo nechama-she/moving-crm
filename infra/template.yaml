@@ -98,6 +98,8 @@ Conditions:
   IsProd: !Equals [!Ref Environment, "prod"]
   IsDevEnvironment: !Equals [!Ref Environment, "dev"]
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
+  # The customer page chat path to BoxBot. Dev only until BoxBot has a production service.
+  HasCustomerChat: !Equals [!Ref Environment, "dev"]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
   HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
@@ -691,6 +693,23 @@ Resources:
           return request;
         }
 
+  # The customer page chat: BoxBot reads the customer's IP from x-client-ip (its own rate limit per customer).
+  CustomerChatClientIpFunction:
+    Type: AWS::CloudFront::Function
+    Condition: HasCustomerChat
+    Properties:
+      Name: !Sub moving-crm-chat-client-ip-${Environment}
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Customer page chat - passes the viewer IP to BoxBot as x-client-ip
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          request.headers['x-client-ip'] = { value: event.viewer.ip };
+          return request;
+        }
+
   # The ACM cert is supplied via AcmCertificateArn (created out-of-band so cross-account
   # DNS validation works — the Route 53 zone lives in the management account).
 
@@ -729,6 +748,21 @@ Resources:
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
+          # BoxBot's address and its key for the CRM are kept in Parameter Store, never in this repo. The key goes
+          # with every request from CloudFront to BoxBot, so the browser never holds it.
+          - !If
+            - HasCustomerChat
+            - Id: BoxBotOrigin
+              DomainName: !Sub "{{resolve:ssm:/moving-crm/${Environment}/BOXBOT_ORIGIN}}"
+              OriginCustomHeaders:
+                - HeaderName: X-Api-Key
+                  HeaderValue: !Sub "{{resolve:ssm:/moving-crm/${Environment}/BOXBOT_API_KEY}}"
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols: [TLSv1.2]
+                # A message that saves something can take several seconds.
+                OriginReadTimeout: 60
+            - !Ref AWS::NoValue
         DefaultCacheBehavior:
           ResponseHeadersPolicyId: !Ref CustomerPageResponseHeaders
           TargetOriginId: S3Origin
@@ -742,6 +776,20 @@ Resources:
             - EventType: viewer-request
               FunctionARN: !GetAtt SpaRoutingFunction.FunctionMetadata.FunctionARN
         CacheBehaviors:
+          # Before /api/*: CloudFront uses the first path that matches.
+          - !If
+            - HasCustomerChat
+            - PathPattern: /api/customer-chat/*
+              TargetOriginId: BoxBotOrigin
+              ViewerProtocolPolicy: https-only
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+              # Managed CachingDisabled + AllViewerExceptHostHeader (forwards x-public-link, x-public-session)
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt CustomerChatClientIpFunction.FunctionMetadata.FunctionARN
+            - !Ref AWS::NoValue
           - PathPattern: /move/*
             TargetOriginId: ApiOrigin
             ViewerProtocolPolicy: redirect-to-https
