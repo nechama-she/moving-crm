@@ -5,6 +5,7 @@ import type { Lead } from "../leadUtils";
 import { demoCompanies, demoLeads, demoReps, demoSummary, demoUser } from "./fixtures";
 import * as more from "./moreRoutes";
 import * as pricing from "./pricing";
+import { moveRoute } from "./moveRoutes";
 
 type Handler = (ctx: { url: URL; method: string; body: unknown; params: string[] }) => unknown;
 
@@ -139,6 +140,9 @@ export function installDemoApi() {
     let body: unknown = null;
     if (typeof init?.body === "string") { try { body = JSON.parse(init.body); } catch { body = init.body; } }
     await new Promise(resolve => setTimeout(resolve, 120 + Math.random() * 180));
+    const movePage = await moveRoute(method, path, body);
+    if (movePage?.contentType) return new Response(String(movePage.body), { status: movePage.status || 200, headers: { "Content-Type": movePage.contentType } });
+    if (movePage) return json(movePage.body, movePage.status);
     for (const [m, pattern, handler] of routes) {
       const match = method === m ? path.match(pattern) : null;
       if (match) return json(handler({ url, method, body, params: match.slice(1).map(decodeURIComponent) }));
