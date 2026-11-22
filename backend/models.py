@@ -1662,6 +1662,9 @@ class PublicMoveAccess(Base):
     link_sms_phone_last4 = Column(String(4))
     link_email_sent_at = Column(DateTime)
     link_email_hint = Column(String(255))  # The address it went to, masked: n***@gmail.com
+    # The short link's code (/move/s/<code>), made the first time the link is sent; it opens the page as the full
+    # link does, so it is random and long enough not to be guessed.
+    short_code = Column(String(16), unique=True)
     created_at = Column(DateTime, default=_now)
 
 

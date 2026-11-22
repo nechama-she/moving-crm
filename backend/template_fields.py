@@ -203,12 +203,12 @@ def customer_page_link(db, lead):
     """The lead's customer page link, made when the lead has none yet (as the Estimate button makes it); empty while it
     does not open (revoked or expired), without a job, or without a customer website. Does not commit."""
     from fastapi import HTTPException
-    from routes.public_moves import lead_customer_page, public_url
+    from routes.public_moves import lead_customer_page, short_customer_url
     access = lead_customer_page(db, lead)
     if access is None or access.revoked or access.expires_at <= datetime.utcnow():
         return ""
     try:
-        return public_url(access)
+        return short_customer_url(access)
     except HTTPException:  # The customer website is not configured: no link rather than a broken one.
         return ""
 
