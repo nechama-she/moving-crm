@@ -417,6 +417,7 @@ export default function LeadDetail() {
   const [editingMoveSize, setEditingMoveSize] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [refreshingSmartmoving, setRefreshingSmartmoving] = useState(false);
+  const [changingSmartMovingLink, setChangingSmartMovingLink] = useState(false);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [companiesError, setCompaniesError] = useState("");
@@ -1369,6 +1370,25 @@ export default function LeadDetail() {
     return commissionPercentByUserId.get(assignedTo) ?? defaultCommissionPercent;
   }
 
+  // Disconnect keeps the SmartMoving id aside; Reconnect puts the same id back (not after a signed estimate).
+  async function changeSmartMovingLink(action: "disconnect" | "reconnect") {
+    const question = action === "disconnect"
+      ? "Disconnect this lead from SmartMoving? SmartMoving's updates will no longer change it. Its jobs, prices and files stay as they are, and you can reconnect it later."
+      : `Reconnect this lead to SmartMoving opportunity ${String(lead?.smartmoving_reconnect_id || "")}? SmartMoving's updates will change it again from the next one.`;
+    if (!window.confirm(question)) return;
+    setChangingSmartMovingLink(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/leads/${leadId}/smartmoving/${action}`, { method: "POST", headers: authHeaders(token) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(String(body?.detail || `HTTP ${res.status}`));
+      setLead(body);
+    } catch (e) {
+      alert(`Failed to ${action}: ${e instanceof Error ? e.message : "error"}`);
+    } finally {
+      setChangingSmartMovingLink(false);
+    }
+  }
+
   function renderRow(key: string) {
     // Priority and referral source are in the lead header.
     if (key === "meta_platform" || key === "priority" || key === "referral_source") return null;
@@ -1376,9 +1396,11 @@ export default function LeadDetail() {
     const val = lead![key];
     if (key === "leadgen_id" && lead?.smartmoving_id) return null;
     const isCreationTime = key === "created_time" || key === "created_at";
-    if ((val == null || val === "") && !isCreationTime && !isQuoteNumber) return null;
-    const isInbox = key === "inbox_url";
     const isSmartMovingId = key === "smartmoving_id";
+    // A disconnected lead that can take its SmartMoving id back keeps the row, to reconnect it.
+    const reconnectId = isSmartMovingId && user?.role === "admin" ? String(lead?.smartmoving_reconnect_id || "") : "";
+    if ((val == null || val === "") && !isCreationTime && !isQuoteNumber && !reconnectId) return null;
+    const isInbox = key === "inbox_url";
     if (isInbox && !String(val).trim().startsWith("http")) return null;
     return (
       <tr key={key}>
@@ -1389,9 +1411,16 @@ export default function LeadDetail() {
               Open Inbox
             </a>
           ) : isSmartMovingId ? (
-            <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(String(val))}/sales`} target="_blank" rel="noopener noreferrer" style={{ color: "#0176d3" }}>
-              {String(val)}
-            </a>
+            <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+              {val ? <a href={`https://app.smartmoving.com/opportunities/${encodeURIComponent(String(val))}/sales`} target="_blank" rel="noopener noreferrer" style={{ color: "#0176d3" }}>
+                {String(val)}
+              </a> : <span style={{ color: "#64748b" }}>Disconnected ({reconnectId})</span>}
+              {user?.role === "admin" && (val || reconnectId) ? <button type="button" className="slds-button" disabled={changingSmartMovingLink}
+                onClick={() => void changeSmartMovingLink(val ? "disconnect" : "reconnect")}
+                style={{ padding: "3px 10px", border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: val ? "#b91c1c" : "#0b5cab", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                {changingSmartMovingLink ? (val ? "Disconnecting..." : "Reconnecting...") : val ? "Disconnect" : "Reconnect"}
+              </button> : null}
+            </span>
           ) : (
             (isCreationTime || isQuoteNumber) && (val == null || val === "") ? "—" : formatValue(key, val)
           )}

@@ -1722,6 +1722,7 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
     result = lead.to_dict()
     result['contacts'] = [row.to_dict() for row in lead.contacts]
     result['has_customer_page'] = db.query(PublicMoveAccess.id).filter(PublicMoveAccess.lead_id == lead.id).first() is not None
+    result['smartmoving_reconnect_id'] = _smartmoving_reconnect_id(lead, db)
     channels = {row[0] for row in db.query(CommunicationAssociation.channel).filter(
         CommunicationAssociation.lead_id == lead.id,
         CommunicationAssociation.client_identifier == lead.facebook_user_id,
@@ -1733,6 +1734,54 @@ def get_lead(lead_id: str, user: User = Depends(get_current_user), db: Session =
         source = (lead.source or '').strip().lower()
         result['meta_platform'] = 'instagram' if source == 'instagram' else 'facebook' if source in ('facebook', 'messenger') else ''
     return result
+
+
+def _smartmoving_reconnect_id(lead, db):
+    """The SmartMoving id a disconnected lead can take back (its own, kept in detached_smartmoving_leads), or "": none
+    while it is connected, nor once it has a signed estimate (signing ends the SmartMoving sync for good)."""
+    if _clean_optional_text(lead.smartmoving_id):
+        return ""
+    from sqlalchemy import exists, select
+    from models import DetachedSmartMovingLead, EstimateSignature
+    signed = exists().where(EstimateSignature.lead_id == lead.id, EstimateSignature.signed_at.isnot(None))
+    row = (db.query(DetachedSmartMovingLead.smartmoving_id).filter(DetachedSmartMovingLead.lead_id == lead.id, ~signed)
+           .order_by(DetachedSmartMovingLead.detached_at.desc()).first())
+    return row[0] if row else ""
+
+
+@router.post("/leads/{lead_id}/smartmoving/disconnect")
+def disconnect_from_smartmoving(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The lead leaves SmartMoving: its id is kept aside (Reconnect puts it back), so SmartMoving's updates no longer
+    change the lead and never make a new lead from that opportunity. Its jobs, prices and files stay as they are."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can disconnect a lead from SmartMoving")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    if not _clean_optional_text(lead.smartmoving_id):
+        raise HTTPException(status_code=400, detail="This lead is not connected to SmartMoving")
+    from smartmoving_prices import detach_from_smartmoving
+    detach_from_smartmoving(db, lead)
+    db.commit()
+    return get_lead(lead_id, user, db)
+
+
+@router.post("/leads/{lead_id}/smartmoving/reconnect")
+def reconnect_to_smartmoving(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """A disconnected lead takes back its own SmartMoving id: SmartMoving's updates reach it again from the next one."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can reconnect a lead to SmartMoving")
+    lead = _get_visible_lead_or_404(lead_id, user, db)
+    smartmoving_id = _smartmoving_reconnect_id(lead, db)
+    if not smartmoving_id:
+        raise HTTPException(status_code=409, detail="This lead has no SmartMoving id to reconnect, or it has a signed estimate.")
+    from models import DetachedSmartMovingLead
+    db.query(DetachedSmartMovingLead).filter(DetachedSmartMovingLead.smartmoving_id == smartmoving_id).delete(synchronize_session=False)
+    lead.smartmoving_id = smartmoving_id
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Another lead already has this SmartMoving id.")
+    return get_lead(lead_id, user, db)
 
 
 class CopyLeadRequest(BaseModel):
