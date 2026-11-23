@@ -1,6 +1,6 @@
 // The move page assistant: a chat with BoxBot about this move only. BoxBot saves the customer's changes through
 // the page's own API, and asks the page to open its signing windows; the customer signs there, never the chat.
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AssistantError, callAssistant, displayText, type AssistantConfig } from './assistantClient';
 import type { AssistantMessage, AssistantMove, AssistantReply, AssistantStep, Audience, BotAction, PageScreen, SlotCard } from './assistantTypes';
 import './MoveAssistant.css';
@@ -30,6 +30,32 @@ const storage = {
   write(key: string, value: string) { try { sessionStorage.setItem(key, value); } catch { /* Shown again next time. */ } },
   remove(key: string) { try { sessionStorage.removeItem(key); } catch { /* Nothing kept. */ } },
 };
+// The window's size on a computer. It opens at its smallest and can only grow: up and to the left, by dragging its
+// top-left corner or edges, or with the button in its head. This browser keeps the size for the next visit.
+const SIZE_KEY = 'cm_assistant_size';
+type Size = { width: number; height: number };
+const kept = {
+  read() {
+    try {
+      const value = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null');
+      return value && Number.isFinite(value.width) && Number.isFinite(value.height) ? value as Size : null;
+    } catch { return null; }
+  },
+  write(size: Size | null) {
+    try { if (size) localStorage.setItem(SIZE_KEY, JSON.stringify(size)); else localStorage.removeItem(SIZE_KEY); } catch { /* It opens at its smallest. */ }
+  },
+};
+// The same limits as the CSS: 400 x up to 660 at the least; the screen less its margins at the most.
+const smallest = (): Size => ({ width: 400, height: Math.min(660, window.innerHeight - 128) });
+const largest = (): Size => ({ width: Math.max(400, window.innerWidth - 48), height: Math.max(smallest().height, window.innerHeight - 120) });
+const between = (value: number, low: number, high: number) => Math.round(Math.min(Math.max(value, low), high));
+function fit(size: Size): Size | null {
+  const low = smallest(), high = largest();
+  const next = { width: between(size.width, low.width, high.width), height: between(size.height, low.height, high.height) };
+  return next.width <= low.width + 4 && next.height <= low.height + 4 ? null : next;
+}
+type Edge = 'corner' | 'left' | 'top';
+
 const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 export default function MoveAssistant({ config, audience, move, steps, headers, hidden, onScreen, onBotAction, onReplied, onSessionEnded, onReverify }: Props) {
@@ -56,6 +82,9 @@ export default function MoveAssistant({ config, audience, move, steps, headers, 
   const log = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const launcher = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement>(null);
+  const [size, setSize] = useState<Size | null>(() => kept.read());
+  const [resizing, setResizing] = useState(false);
 
   // Leaving stops the request in flight; a window that comes back (React mounts it again) asks for the greeting again.
   useEffect(() => () => { request.current?.abort(); opened.current = false; }, []);
@@ -99,6 +128,37 @@ export default function MoveAssistant({ config, audience, move, steps, headers, 
     const timer = window.setTimeout(() => setSlow(true), 5000);
     return () => clearTimeout(timer);
   }, [thinking]);
+
+  // Kept once a drag ends, not on every move.
+  useEffect(() => { if (!resizing) kept.write(size); }, [size, resizing]);
+
+  function startResize(event: ReactPointerEvent<HTMLElement>, edge: Edge) {
+    const box = panel.current;
+    if (!box || event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const start = { x: event.clientX, y: event.clientY, width: box.offsetWidth, height: box.offsetHeight };
+    handle.setPointerCapture(event.pointerId);
+    setResizing(true);
+    const move = (moved: PointerEvent) => setSize(fit({
+      width: edge === 'top' ? start.width : start.width + start.x - moved.clientX,
+      height: edge === 'left' ? start.height : start.height + start.y - moved.clientY,
+    }));
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      setResizing(false);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  }
+
+  // Bigger: most of the screen, at a width that still reads well. Smaller: back to how it opens.
+  function toggleSize() {
+    setSize(current => current ? null : fit({ width: Math.min(760, window.innerWidth - 48), height: window.innerHeight - 120 }));
+  }
 
   function close() {
     resume.current = false;
@@ -176,7 +236,15 @@ export default function MoveAssistant({ config, audience, move, steps, headers, 
       </button>
 
       {open && (
-        <section id="move-assistant" className="ma-panel" role="dialog" aria-modal="false" aria-label={`${company.name} assistant`}>
+        <section ref={panel} id="move-assistant" className={`ma-panel${size ? ' is-large' : ''}${resizing ? ' is-resizing' : ''}`} role="dialog" aria-modal="false" aria-label={`${company.name} assistant`}
+          style={size ? { '--ma-w': `${size.width}px`, '--ma-h': `${size.height}px` } as CSSProperties : undefined}>
+          {(['top', 'left', 'corner'] as Edge[]).map(edge => (
+            <div key={edge} className={`ma-resize is-${edge}`} aria-hidden="true" title={edge === 'corner' ? 'Drag to make the window bigger' : undefined}
+              onPointerDown={event => startResize(event, edge)} onDoubleClick={() => setSize(null)}>
+              {edge === 'corner' && <svg className="ma-grip" width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M9 13.5 13.5 9M9 18.5 18.5 9M9 23 23 9" /></svg>}
+            </div>
+          ))}
           <header className="ma-head">
             <span className="ma-avatar" aria-hidden="true">
               {company.logo ? <img src={company.logo} alt="" /> : (company.name || 'M').slice(0, 1)}
@@ -186,6 +254,8 @@ export default function MoveAssistant({ config, audience, move, steps, headers, 
               <small>{company.name}{rep && <span className="ma-pill" title="A separate conversation from the customer's.">Rep view</span>}</small>
             </div>
             {company.phone && <a className="ma-icon-btn" href={`tel:${company.phone}`} aria-label={`Call ${company.name}`} title={`Call ${company.phone}`}><Icon name="phone" size={18} /></a>}
+            <button type="button" className="ma-icon-btn ma-size-btn" aria-label={size ? 'Make the window smaller' : 'Make the window bigger'}
+              title={size ? 'Smaller' : 'Bigger'} onClick={toggleSize}><Icon name={size ? 'shrink' : 'grow'} size={18} /></button>
             <button type="button" className="ma-icon-btn" aria-label="Close assistant" onClick={close}><Icon name="close" size={18} /></button>
           </header>
 
@@ -290,7 +360,7 @@ function bold(line: string): ReactNode {
   return line.split(/(\*\*[^*]+\*\*)/).map((part, i) => part.startsWith('**') && part.endsWith('**') && part.length > 4 ? <strong key={i}>{part.slice(2, -2)}</strong> : part);
 }
 
-function Icon({ name, size }: { name: 'chat' | 'close' | 'phone' | 'clip' | 'send' | 'check'; size: number }) {
+function Icon({ name, size }: { name: 'chat' | 'close' | 'phone' | 'clip' | 'send' | 'check' | 'grow' | 'shrink'; size: number }) {
   const paths: Record<typeof name, ReactNode> = {
     chat: <><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12Z" /><path d="M8.5 11h.01M12 11h.01M15.5 11h.01" strokeWidth="2.6" /></>,
     close: <path d="M6 6l12 12M18 6 6 18" />,
@@ -298,6 +368,8 @@ function Icon({ name, size }: { name: 'chat' | 'close' | 'phone' | 'clip' | 'sen
     clip: <path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3.4 3.4 0 0 1 4.8 4.8l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6" />,
     send: <path d="M5 12h13M12 5l7 7-7 7" />,
     check: <path d="m5 12.5 4.5 4.5L19 7.5" strokeWidth="3" />,
+    grow: <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" />,
+    shrink: <path d="M19 10h-5V5M14 10l6-6M5 14h5v5M10 14l-6 6" />,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
