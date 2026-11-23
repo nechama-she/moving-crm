@@ -2152,6 +2152,26 @@ def _save_packing_change(body, access, db):
         sync_long_carry_charges(lead, job, db, 'delivery')
         db.commit()
         return
+    if body.change and body.change.kind == 'mode':
+        from routes.pricing import infer_job_move_type
+        move_type, plan = infer_job_move_type(lead, job, db)
+        if (move_type or '').lower() == 'local':
+            # A local job's packing choice changes its hours (and travel rate), not one line: save it, price the job once.
+            from routes.local_pricing import load_settings
+            mode = body.change.mode
+            settings = load_settings(plan, db) if plan and mode == 'full' else None
+            if mode not in ('full', 'none') or (mode == 'full' and not (settings and settings.full_pack_hourly)):
+                raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
+            selection = json.loads(job.customer_packing_package or '{}')
+            selection['mode'] = mode
+            if mode == 'full':
+                selection['item_ids'], selection['material_item_ids'] = [], []
+            job.customer_packing_package = json.dumps(selection)
+            from pricing_save import attempt_pricing
+            from routes.pricing import calculate_and_save_lead_job_price
+            attempt_pricing(lead, job, db, lambda: calculate_and_save_lead_job_price(lead, job, db))  # Also the lead's total.
+            db.commit()
+            return
     options = customer_packing_options(lead, job, db)
     change = body.change
     touched = None
@@ -2241,7 +2261,7 @@ def _save_packing_change(body, access, db):
         package = (customer_packing_package(lead, job, db, selection_override=body.package.model_dump(mode='json'))
                    if body.package.additional_items else customer_packing_package(lead, job, db))
         if package is None:
-            raise HTTPException(409, 'Long-distance packing is not available. Refresh your estimate.')
+            raise HTTPException(409, 'Packing is not available. Refresh your estimate.')
         selection = body.package.model_dump(mode='json')
         if selection['material_item_ids'] is None:
             selection['material_item_ids'] = list(selection['item_ids'])

@@ -1168,24 +1168,38 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
     from uuid import NAMESPACE_URL, uuid5
     if plan is None:
         move_type, plan = infer_job_move_type(lead, job, db)
-    if not plan or not move_type or move_type.lower() == 'local':
+    if not plan or not move_type:
         return None
+    local = move_type.lower() == 'local'
     card = plan_packing_card(plan)
-    if card is None:
+    if card is None and not local:
         return None
+    # A local sheet needs only one of them: packing materials, or a full packing rate per hour.
+    materials = card.materials if card else []
     volume = _rounded_cubic_feet(lead.volume)
     if volume <= 0:
         return None
-    delivery_state, delivery_zip = delivery_location(job.delivery_zip or '')
-    destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state or '', delivery_zip or '')
     inventory_volume = volume
-    minimum_volume = _service_billable_volume(plan, destination, 0)
-    volume = max(volume, minimum_volume)
     rates = {}
-    for kind in ('full', 'partial'):
-        rate = getattr(card, kind)
-        if rate is not None:
-            rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
+    if local:
+        # Local full packing is charged by the hour (the local price adds it); there is no partial packing.
+        from routes.local_pricing import load_settings
+        from local_pricing import full_pack_hours
+        settings = load_settings(plan, db)
+        minimum_volume = 0
+        if settings is not None and settings.full_pack_hourly:
+            rates['full'] = {'rate': float(settings.full_pack_hourly), 'per': 'hour', 'hours': float(full_pack_hours(Decimal(volume)))}
+        if card is None and not rates:
+            return None
+    else:
+        delivery_state, delivery_zip = delivery_location(job.delivery_zip or '')
+        destination = _plan_destination_for_delivery(plan, job.delivery_zip or '', delivery_state or '', delivery_zip or '')
+        minimum_volume = _service_billable_volume(plan, destination, 0)
+        volume = max(volume, minimum_volume)
+        for kind in ('full', 'partial'):
+            rate = getattr(card, kind)
+            if rate is not None:
+                rates[kind] = {'rate': float(rate), 'total': float((rate * volume).quantize(Decimal('0.01')))}
     from catalog_names import resolve_catalog_names
     inventory = resolve_catalog_names(job._estimated_materials_data() + _job_spark_inventory_items(job.id, db), db)
     # Bins are already containers; do not offer packing or wrapping for them.
@@ -1201,9 +1215,9 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
             if word not in ignored_box_words:
                 words.append(word)
         return frozenset(words)
-    box_rates = [row for row in card.materials if row.box_capacity_cuft is not None or re.search(r'\bbox(?:es)?\b', row.name, re.IGNORECASE)]
+    box_rates = [row for row in materials if row.box_capacity_cuft is not None or re.search(r'\bbox(?:es)?\b', row.name, re.IGNORECASE)]
     inventory_boxes = {}
-    for row in inventory:
+    for row in inventory if not local else []:  # Local packing is by item: no box section.
         if not isinstance(row, dict) or not re.search(r'\bbox(?:es)?\b|\bdish\s*pack\b', str(row.get('name') or ''), re.IGNORECASE):
             continue
         name = _box_base_name(row.get('name') or 'Boxes')
@@ -1238,12 +1252,18 @@ def customer_packing_package(lead, job, db, plan=None, move_type=None, selection
         selection = {**selection, 'box_quantities': {item['id']: item['movers'] for item in box_items if item['movers'] > 0}}
     # Legacy card.items stays stored, but no longer supplies wizard requirements.
     other_inventory = inventory_material_options([row for row in inventory if isinstance(row, dict) and ' '.join(sorted(re.findall(r'\w+', str(row.get('name') or '').casefold()))) not in configured_names])
-    return {'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': configured_items,
+    material_quotes = customer_material_quotes(materials, selection.get('additional_items', {}), other_inventory)
+    if local:
+        # Local jobs pay the movers by the hour: a packed item is charged for its materials only.
+        configured_items = [{**item, 'labor_price': 0.0, 'price': item['material_price']} for item in configured_items]
+        material_quotes = [{**quote, 'packing_only': Decimal(0), 'packing_and_material': quote['packing_and_material'] - quote['packing_only']}
+                           if quote['packing_only'] is not None else quote for quote in material_quotes]
+    return {'local': local, 'cubic_feet': volume, 'inventory_cubic_feet': inventory_volume, 'minimum_cubic_feet': minimum_volume, 'rates': rates, 'items': configured_items,
             'box_items': box_items,
             'configured_materials': True,
             'other_inventory': other_inventory,
-            'material_rates': [row.model_dump(mode='json') for row in card.materials],
-            'material_quotes': customer_material_quotes(card.materials, selection.get('additional_items', {}), other_inventory),
+            'material_rates': [row.model_dump(mode='json') for row in materials],
+            'material_quotes': material_quotes,
             'selection': {'mode': 'none', 'unpacking': False, 'item_ids': [], **selection}}
 
 
@@ -1296,7 +1316,7 @@ def customer_package_lines(package, selection):
         return []
     lines = []
     mode = selection.get('mode', 'none')
-    for kind in (mode,):
+    for kind in (mode,) if not package.get('local') else ():
         if kind in package['rates']:
             rate = package['rates'][kind]
             name = {'full': 'Full packing', 'partial': 'Partial packing', 'unpacking': 'Unpacking'}[kind]
@@ -1320,7 +1340,7 @@ def customer_package_lines(package, selection):
                     lines.append(pending_line(f"box:{item['id']}", f"{item['label']} Boxing", ValueError('Material pricing needs review.')))
                     continue
                 lines.append({'id': f"box:{item['id']}", 'name': f"{item['label']} Boxing",
-                              'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + ('Packing labor and materials' if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else 'Packing labor only; customer supplies materials'),
+                              'description': ((f"{item['quantity']:g} x " if item.get('quantity') is not None else '') + f"{item['material_name']}. " if item.get('material_name') else '') + (('Materials; packing is in the hourly rate' if package.get('local') else 'Packing labor and materials') if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else ('Customer supplies materials; packing is in the hourly rate' if package.get('local') else 'Packing labor only; customer supplies materials')),
                               'amount': Decimal(str(item.get('labor_price', item['price']))) + (Decimal(str(item.get('material_price', 0))) if item['id'] in selection.get('material_item_ids', selection.get('item_ids', [])) else Decimal(0))})
     if mode != 'full':
         quantities = selection.get('box_quantities', {})
@@ -1778,7 +1798,8 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         from routes.local_pricing import calculate_book_price
         from local_pricing import LocalCalculation
         try:
-            quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol)),
+            full_pack = json.loads(job.customer_packing_package or '{}').get('mode') == 'full'
+            quote = calculate_book_price(matched_plan, LocalCalculation(cubic_feet=Decimal(vol), full_pack=full_pack),
                                          db, pickup_addr, delivery_addr)
         except Exception as error:
             quote = {'total': 0, 'incomplete': True, 'charges': [pending_line('local-moving', 'Local moving', error)]}

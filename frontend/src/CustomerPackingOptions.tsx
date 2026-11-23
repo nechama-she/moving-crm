@@ -8,7 +8,8 @@ export type PackingPackage = {
   cubic_feet: number;
   inventory_cubic_feet?: number;
   minimum_cubic_feet?: number;
-  rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total: number }>>;
+  // A local job's full packing is by the hour (per: 'hour'): its rate per hour and the hours it adds, priced with the move.
+  rates: Partial<Record<'full' | 'partial' | 'unpacking', { rate: number; total?: number; per?: 'hour'; hours?: number }>>;
   configured_materials?:boolean;
   items: { id: string; group_id?:string; inventory_row_id?:string|null; label: string; room?: string; packing_material?:'plastic'|'cardboard'; price: number; labor_price?: number; material_price?: number; requirement?:'required'|'optional'; material_name?:string; materials?:{id:string;name:string;quantity:number}[]; quantity?:number; available?:boolean }[];
   box_items?:{id:string;label:string;room?:string;quantity:number;material_name:string;available:boolean;labor_price:number;material_price:number}[];
@@ -39,6 +40,7 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
   }
   const extraTotal=selection.has_additional_protection === false ? 0 : (config.material_quotes||[]).reduce((sum,quote)=>{const service=selection.additional_items?.[quote.id]?.service;return sum+Number(service==='materials'?quote.packing_and_material||0:service==='packing'?quote.packing_only||0:0);},0);
   const boxTotal=selection.mode==='full'?0:boxes.reduce((sum,item)=>sum+(boxQuantities[item.id]||0)*(item.labor_price+item.material_price),0);
+  const hourlyPacking = selection.mode !== 'none' && config.rates[selection.mode]?.per === 'hour';
   const total = (selection.mode !== 'none' ? config.rates[selection.mode]?.total || 0 : extraTotal + config.items.filter(item => selection.item_ids.includes(item.id)).reduce((sum, item) => sum + (item.labor_price ?? item.price) + (materials.includes(item.id) ? item.material_price || 0 : 0), 0))+boxTotal;
   const setBoxCounts=(counts:Record<string,number>)=>onChange({...selection,box_quantities:counts});
   const materialService=(id:string):PackingMaterialService=>!selection.item_ids.includes(id)?'self':materials.includes(id)?'materials':'packing';
@@ -52,8 +54,8 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     <div className="cm-packing-choices" data-customer-action="packing-service">
       {(['full', 'partial', 'none'] as const).filter(mode => mode === 'none' || config.rates[mode]).map(mode => <label key={mode} className={`cm-packing-choice ${selection.mode === mode ? 'selected' : ''}`}>
         <input type="radio" name="packing-package" disabled={disabled} checked={selection.mode === mode} onChange={() => { setBoxChoice(mode === 'full' ? 'movers' : 'self'); onChange({ ...selection, mode, item_ids: [], material_item_ids: [], box_quantities: {} }); }} />
-        <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total)}</>}</span></strong>
-        <small>{mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
+        <span className="cm-packing-copy"><strong className="cm-packing-title"><span>{mode === 'full' ? 'Full packing' : mode === 'partial' ? 'Partial packing' : 'No packing'}</span><span className="cm-packing-inline-price">&middot; {mode === 'none' ? '$0' : config.rates[mode]!.per === 'hour' ? <>+{money(config.rates[mode]!.rate)} / hour &middot; adds {config.rates[mode]!.hours} hours</> : <>{money(config.rates[mode]!.rate)} / cu ft &middot; {money(config.rates[mode]!.total || 0)}</>}</span></strong>
+        <small>{mode === 'full' && config.rates.full?.per === 'hour' ? 'The movers pack your belongings. Added to the hourly rate for the whole crew, for all the hours of your move.' : mode === 'full' ? 'All belongings, including personal-item boxes. Materials included.' : mode === 'partial' ? 'We box items that require it. Materials included; personal-item boxes excluded.' : (config.items.length ? 'Pack yourself, or choose individual items below.' : 'Pack your belongings yourself.')}</small></span>
       </label>)}
     </div>
     </>}
@@ -107,6 +109,6 @@ export default function CustomerPackingOptions({ config, selection, onChange, di
     {selection.has_additional_protection === true && <CustomerMaterialItems config={config} selection={selection} disabled={disabled} onChange={onChange}/>}
     </>}
     </>}
-    <div className="cm-packing-total" aria-live="polite"><span>Packing total</span><strong>{money(total)}</strong></div>
+    <div className="cm-packing-total" aria-live="polite"><span>Packing total</span><strong>{hourlyPacking ? 'In your hourly price' : money(total)}</strong></div>
   </div>;
 }
