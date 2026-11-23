@@ -4,7 +4,7 @@ or call from the rep, or Ignore, clears it."""
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, literal, select
-from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import load_only
 
 from models import Company, CustomerPageState as Row, Lead, LeadJob, PublicMoveAccess, User, job_number
@@ -27,7 +27,11 @@ def _upsert(db, statement):
 
 
 def _insert(db):
-    return (sqlite if db.get_bind().dialect.name == 'sqlite' else postgresql).insert(Row)
+    # The Lambda packages leave out SQLAlchemy's sqlite dialect (buildspec.yml): it is imported only on sqlite.
+    if db.get_bind().dialect.name == 'sqlite':
+        from sqlalchemy.dialects import sqlite
+        return sqlite.insert(Row)
+    return postgresql.insert(Row)
 
 
 def advance(db, access, state):

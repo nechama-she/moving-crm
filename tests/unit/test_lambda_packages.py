@@ -90,3 +90,23 @@ def test_message_stream_lambda_starts_with_only_its_packaged_files(tmp_path):
     result = subprocess.run([sys.executable, '-I', '-c', 'import sys; sys.path.insert(0, "."); import message_stream_handler'],
                             cwd=tmp_path, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def test_the_api_handlers_load_without_the_dialects_the_package_removes():
+    """The API package deletes SQLAlchemy's mssql, mysql, oracle and sqlite dialects (buildspec.yml): a module that
+    imports one fails to load on the Lambda, and every request fails with it."""
+    removed = re.search(r'rm -rf \./package/boto3\*.*', BUILD).group(0)
+    dialects = re.findall(r'\./package/sqlalchemy/dialects/(\w+)', removed)
+    assert 'sqlite' in dialects
+    script = f'''
+import importlib.abc, sys
+class Removed(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if any(name == 'sqlalchemy.dialects.' + d or name.startswith('sqlalchemy.dialects.' + d + '.') for d in {dialects!r}):
+            raise ImportError('not in the Lambda package: ' + name)
+sys.meta_path.insert(0, Removed())
+import {', '.join(HANDLERS['API backend'] + HANDLERS['message stream'])}
+'''
+    env = {**__import__('os').environ, 'PYTHONPATH': str(ROOT), 'JWT_SECRET': 'test-only-secret-with-at-least-32-characters'}
+    result = subprocess.run([sys.executable, '-c', script], cwd=ROOT / 'backend', env=env, capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stderr[-2000:]
