@@ -21,10 +21,6 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # Short customer page links (a new, empty column). Remove after a deploy ran it.
-    with engine.begin() as connection:
-        add_column(connection, 'public_move_access', 'short_code', 'VARCHAR(16)')
-        connection.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_public_move_access_short_code ON public_move_access (short_code)'))
     # The work queue's Customer page and Customer chat cards (a new, empty table). Remove after a deploy ran it.
     with engine.begin() as connection:
         from models import CustomerPageState
