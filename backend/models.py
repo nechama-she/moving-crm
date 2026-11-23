@@ -142,6 +142,17 @@ class CustomerActivity(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
+class CustomerPageState(Base):
+    """The work queue's Customer page and Customer chat cards: one row per lead, its customer's latest step on the
+    page (customer_page_states: 1 opened, 2 verified, 3 chat) and when. A step only moves it forward; a text or call
+    from the rep, or Ignore, deletes it."""
+    __tablename__ = 'customer_page_states'
+    lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), primary_key=True)
+    job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
+    state = Column(Integer, nullable=False)
+    at = Column(DateTime(timezone=True), nullable=False)
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 

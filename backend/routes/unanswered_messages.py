@@ -21,7 +21,8 @@ from sqlalchemy.orm import Load, Session, joinedload
 from auth import require_admin
 from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
-from models import AppSetting, Company, Lead, MessageState, MissedCallState, User, FirstContactState
+import customer_page_states
+from models import AppSetting, Company, CustomerPageState, Lead, MessageState, MissedCallState, User, FirstContactState
 from realtime import publish_realtime_event
 from ended_chat_retention import visible_message_states
 from work_queue_rules import _digits, _epoch, _smartmoving_created_at
@@ -761,6 +762,23 @@ def ignore_missed_call(
         "call_ids": [call_id],
         "count_delta": -1,
     }
+    publish_realtime_event(realtime_event)
+    return {"ok": True, "event": realtime_event}
+
+
+@router.get("/customer-page")
+def list_customer_page_states(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """The Customer page and Customer chat cards' rows: each lead's customer's latest step on the page, newest first."""
+    return {"items": customer_page_states.items(db)}
+
+
+@router.delete("/customer-page/{lead_id}")
+def ignore_customer_page_state(lead_id: str, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Ignore: the lead's row leaves the card."""
+    if not customer_page_states.clear(db, CustomerPageState.lead_id == lead_id):
+        raise HTTPException(status_code=404, detail="Customer page item not found")
+    db.commit()
+    realtime_event = customer_page_states.cleared_event(db)
     publish_realtime_event(realtime_event)
     return {"ok": True, "event": realtime_event}
 

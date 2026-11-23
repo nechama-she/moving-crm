@@ -2,6 +2,7 @@ import FollowupFilters, { localDate } from './FollowupFilters';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { activityActor, activityLabel, type ActivityRow } from "./customerActivity";
+import { CUSTOMER_PAGE_EVENT, customerPageStateLabel, type CustomerPageRow } from "./customerPageStates";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
 import { RealtimeEvent, useRealtimeUpdates } from "./useRealtimeUpdates";
@@ -23,7 +24,7 @@ function SmartMovingCell({ row }: { row: SmartMovingFields }) {
 const smartMovingHeader = <th style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", background: "#f8fafc" }}>SmartMoving</th>;
 
 type MessageTab = "unanswered" | "ended";
-type QueueTab = "messages" | "calls" | "leads" | "followups" | "signatures" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
+type QueueTab = "messages" | "calls" | "leads" | "followups" | "signatures" | "customer-page" | "customer-chat" | "message-state" | "missed-call-state" | "stale-state" | "contact-history";
 // An estimate or a Bill of Lading spot signed on a customer page.
 type LeadTab = "new" | "overdue";
 type MessageRow = SmartMovingFields & { channel: string; message_id: string; lead_id: string; client_identifier: string; company_identifier: string; client: string; client_number: string; message: string; attachments?: MessageAttachment[]; rep: string; company: string; destination_number: string; destination_name: string; occurred_at: string };
@@ -33,6 +34,13 @@ type FollowupAttempt = { task_id?: string; notes?: string; task_type?: string; n
 type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; next_due: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
+type CustomerPageTab = "all" | "opened" | "verified";
+// How many customer page rows are at each step.
+const countByState = (rows: CustomerPageRow[]) => {
+  const counts = { opened: 0, verified: 0, chat: 0 };
+  rows.forEach((row) => { counts[row.state] += 1; });
+  return counts;
+};
 type NumberMenu = { number: string; x: number; y: number; connectTarget?: CommunicationTarget } | null;
 
 const displayPhone = (value: string) => {
@@ -143,11 +151,14 @@ export default function UnansweredMessagesPage() {
   // A Customer Activity notice opens this page with its event (?activity=): that tab, with the event's row marked.
   const [searchParams] = useSearchParams();
   const markedActivity = searchParams.get("activity") || "";
+  const markedCustomerPage = searchParams.get("customer_page") || "";
+  const markedQueue = searchParams.get("queue") === "customer-chat" ? "customer-chat" : searchParams.get("queue") === "customer-page" ? "customer-page" : null;
   const [queueTab, setQueueTab] = useState<QueueTab>(() => {
     if (searchParams.get("activity")) return "signatures";
+    if (markedQueue) return markedQueue;
     try {
       const saved = sessionStorage.getItem("sales-work-queue.tab");
-      return (["messages", "calls", "leads", "followups", "signatures", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
+      return (["messages", "calls", "leads", "followups", "signatures", "customer-page", "customer-chat", "message-state", "missed-call-state", "stale-state", "contact-history"] as string[]).includes(saved || "") ? saved as QueueTab : "messages";
     } catch { return "messages"; }
   });
   const [tab, setTab] = useState<MessageTab>(() => {
@@ -760,6 +771,42 @@ export default function UnansweredMessagesPage() {
   useEffect(() => { if (markedActivity) setQueueTab("signatures"); }, [markedActivity]);
   useEffect(() => { markedRow.current?.scrollIntoView({ block: "center" }); }, [markedActivity, signatures]);
 
+  // The Customer Page and Customer Chat cards: loaded when the page opens, then changed row by row as events arrive.
+  const [customerPageRows, setCustomerPageRows] = useState<CustomerPageRow[]>([]);
+  const [loadingCustomerPage, setLoadingCustomerPage] = useState(true);
+  const [customerPageError, setCustomerPageError] = useState("");
+  const [customerPageTab, setCustomerPageTab] = useState<CustomerPageTab>("all");
+  const loadCustomerPage = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/unanswered-messages/customer-page`, { headers: authHeaders(token) });
+      if (!response.ok) throw new Error(`Customer page HTTP ${response.status}`);
+      setCustomerPageRows(((await response.json()).items || []) as CustomerPageRow[]);
+      setCustomerPageError("");
+    } catch (reason) { setCustomerPageError(reason instanceof Error ? reason.message : "Could not load customer page activity"); }
+    finally { setLoadingCustomerPage(false); }
+  }, [token]);
+  useEffect(() => { void loadCustomerPage(); }, [loadCustomerPage]);
+  // A notice opened while here switches to its card, on All, and the row comes into view once the list has it.
+  const markedCustomerPageRow = useRef<HTMLTableRowElement>(null);
+  useEffect(() => { if (markedQueue) { setQueueTab(markedQueue); setCustomerPageTab("all"); } }, [markedQueue, markedCustomerPage]);
+  useEffect(() => { markedCustomerPageRow.current?.scrollIntoView({ block: "center" }); }, [markedCustomerPage, customerPageRows]);
+  const applyCustomerPageEvent = useCallback((event: RealtimeEvent) => {
+    if (event.type !== CUSTOMER_PAGE_EVENT) return;
+    const removed = new Set((event.lead_ids || []) as string[]);
+    const row = event.row as CustomerPageRow | null | undefined;
+    setCustomerPageRows((current) => {
+      const next = current.filter((item) => !removed.has(item.lead_id) && item.lead_id !== row?.lead_id);
+      return row ? [row, ...next].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)) : next;
+    });
+  }, []);
+  const ignoreCustomerPageRow = async (row: CustomerPageRow) => {
+    setError("");
+    const response = await fetch(`${API_BASE}/api/unanswered-messages/customer-page/${encodeURIComponent(row.lead_id)}`, { method: "DELETE", headers: authHeaders(token) });
+    if (!response.ok) { setError(`HTTP ${response.status}`); return; }
+    const result = await response.json();
+    if (result.event) applyCustomerPageEvent(result.event as RealtimeEvent);
+  };
+
   useRealtimeUpdates(token, (event) => {
     if (event.type === "customer_activity") {
       void loadSignatures();
@@ -778,6 +825,7 @@ export default function UnansweredMessagesPage() {
     }
     if (event.type === "realtime_connected") {
       scheduleQueueRefresh(true, true);
+      void loadCustomerPage();
       return;
     }
     if (event.type === "sales_work_queue_batch") {
@@ -792,11 +840,13 @@ export default function UnansweredMessagesPage() {
         }
         applyRealtimeEvent(item);
         applyMissedCallEvent(item);
+        applyCustomerPageEvent(item);
       });
       return;
     }
     applyRealtimeEvent(event);
     applyMissedCallEvent(event);
+    applyCustomerPageEvent(event);
   });
 
   useEffect(() => {
@@ -851,13 +901,13 @@ export default function UnansweredMessagesPage() {
   const cell = { padding: "13px 16px", borderBottom: "1px solid #e2e8f0", color: "#334155" } as const;
   const overdueNote = { color: "#b91c1c", fontSize: 12, marginTop: 3 } as const;
   const filterOptions = useMemo(() => {
-    const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : queueTab === "followups" ? followupLeads : [];
+    const rows = queueTab === "messages" ? items : queueTab === "calls" ? missedCalls : queueTab === "leads" ? firstContactLeads : queueTab === "followups" ? followupLeads : queueTab === "customer-page" || queueTab === "customer-chat" ? customerPageRows : [];
     return {
       reps: [...new Set(["Unassigned", ...directoryReps, ...followupFilterOptions.reps, ...rows.map((row) => row.rep).filter(Boolean), repFilter].filter(Boolean))].sort(),
       companies: [...new Set([...directoryCompanies, ...followupFilterOptions.companies, ...rows.map((row) => row.company).filter(Boolean), companyFilter].filter(Boolean))].sort(),
       platforms: queueTab === "messages" ? ["instagram", "messenger", "sms"] : queueTab === "calls" ? ["calls"] : [],
     };
-  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions, directoryReps, directoryCompanies, repFilter, companyFilter]);
+  }, [queueTab, items, missedCalls, firstContactLeads, followupLeads, followupFilterOptions, directoryReps, directoryCompanies, repFilter, companyFilter, customerPageRows]);
   const filteredItems = useMemo(() => items.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter) &&
@@ -869,6 +919,12 @@ export default function UnansweredMessagesPage() {
     (!companyFilter || row.company === companyFilter) &&
     (!platformFilter || platformFilter === "calls")
   ), [missedCalls, repFilter, companyFilter, platformFilter]);
+  const filteredCustomerPageRows = useMemo(() => customerPageRows.filter((row) =>
+    (!repFilter || row.rep === repFilter) && (!companyFilter || row.company === companyFilter)
+  ), [customerPageRows, repFilter, companyFilter]);
+  // All rows for the cards, and those matching the filters for the tabs.
+  const customerPageCounts = useMemo(() => countByState(customerPageRows), [customerPageRows]);
+  const filteredCustomerPageCounts = useMemo(() => countByState(filteredCustomerPageRows), [filteredCustomerPageRows]);
   const filteredFirstContactLeads = useMemo(() => firstContactLeads.filter((row) =>
     (!repFilter || row.rep === repFilter) &&
     (!companyFilter || row.company === companyFilter)
@@ -1031,6 +1087,16 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{loadingSignatures ? "Loading..." : signedToday}</strong>
           <span style={queueCardDescription}>Actions on customer pages today</span>
         </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-page")} style={{ ...queueCard, ...(queueTab === "customer-page" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Customer Page</span>
+          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified}</strong>
+          <span style={queueCardDescription}>Customers who opened their page</span>
+        </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-chat")} style={{ ...queueCard, ...(queueTab === "customer-chat" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Customer Chat</span>
+          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.chat}</strong>
+          <span style={queueCardDescription}>Customers who started the chat on their page</span>
+        </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Message State Table</span>
           <strong style={queueCardCount}>{messageStates.length}</strong>
@@ -1085,7 +1151,7 @@ export default function UnansweredMessagesPage() {
       {queueTab !== "message-state" && queueTab !== "missed-call-state" && queueTab !== "stale-state" && queueTab !== "contact-history" ? <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <select aria-label="Filter work queue by rep" value={repFilter} onChange={(event) => setRepFilter(event.target.value)} style={filterSelect}><option value="">All reps</option>{filterOptions.reps.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select aria-label="Filter work queue by company" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} style={filterSelect}><option value="">All companies</option>{filterOptions.companies.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        {queueTab !== "leads" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
+        {queueTab !== "leads" && queueTab !== "customer-page" && queueTab !== "customer-chat" ? <select aria-label="Filter work queue by platform" value={platformFilter} onChange={(event) => setPlatformFilter(event.target.value)} style={filterSelect}><option value="">All platforms</option>{filterOptions.platforms.map((value) => <option key={value} value={value}>{value === "calls" ? "Calls" : value === "sms" ? "SMS" : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}</select> : null}
         {queueTab === 'followups' && <FollowupFilters datesOnly counts={priorityCounts} loading={loadingFollowups} priority={followupPriority} from={followupFrom} to={followupTo} onPriority={setFollowupPriority} onDates={(from, to) => { setFollowupFrom(from); setFollowupTo(to); }} />}
       </div> : null}
 
@@ -1115,6 +1181,45 @@ export default function UnansweredMessagesPage() {
           </table>
         </div>
       </section> : null}
+
+      {queueTab === "customer-page" || queueTab === "customer-chat" ? (() => {
+        const chat = queueTab === "customer-chat";
+        const rows = filteredCustomerPageRows.filter((row) => chat ? row.state === "chat" : row.state !== "chat" && (customerPageTab === "all" || row.state === customerPageTab));
+        const columns = ["Client", "Phone", "Rep", "Company", "Job", ...(chat ? [] : ["State"]), chat ? "Chat Started" : "When", "Action"];
+        return <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
+          <div style={{ padding: "16px 18px" }}>
+            <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>{chat ? `Customer Chat (${filteredCustomerPageCounts.chat})` : `Customer Page (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.verified})`}</h2>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{chat ? "Customers who started the chat on their customer page." : "Customers who opened their customer page, and whether they verified."} A text or call to the customer, or Ignore, clears the row.</p>
+          </div>
+          {!chat ? <nav aria-label="Customer page views" style={{ display: "flex", gap: 8, padding: "0 18px", borderBottom: "1px solid #d8dde6" }}>
+            {(["all", "opened", "verified"] as const).map((view) => <button key={view} type="button" className="slds-button" aria-current={customerPageTab === view ? "page" : undefined} onClick={() => setCustomerPageTab(view)} style={{ padding: "12px 14px", border: 0, borderBottom: customerPageTab === view ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0, background: "transparent", color: "#032d60", fontWeight: customerPageTab === view ? 700 : 400 }}>
+              {view === "all" ? `All (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.verified})` : view === "opened" ? `Opened, not verified (${filteredCustomerPageCounts.opened})` : `Verified (${filteredCustomerPageCounts.verified})`}
+            </button>)}
+          </nav> : null}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: "#f8fafc", borderTop: "1px solid #d8dde6", borderBottom: "1px solid #d8dde6" }}>{smartMovingHeader}
+                {columns.map((header) => <th key={header} style={{ padding: "13px 16px", color: "#475569", fontSize: 12, textAlign: "left", textTransform: "uppercase" }}>{header}</th>)}
+              </tr></thead>
+              <tbody>
+                {loadingCustomerPage && customerPageRows.length === 0 ? <tr><td colSpan={columns.length + 1} style={{ padding: 32, textAlign: "center" }}>Loading…</td></tr> : null}
+                {customerPageError ? <tr><td colSpan={columns.length + 1} style={{ padding: 32, color: "#ba0517", textAlign: "center" }}>{customerPageError}</td></tr> : null}
+                {!loadingCustomerPage && !customerPageError && rows.length === 0 ? <tr><td colSpan={columns.length + 1} style={{ padding: 32, color: "#64748b", textAlign: "center" }}>{chat ? "No customer chats waiting." : "No customer page visits waiting."}</td></tr> : null}
+                {rows.map((row) => <tr key={row.lead_id} ref={row.lead_id === markedCustomerPage ? markedCustomerPageRow : undefined} className={row.lead_id === markedCustomerPage ? "queue-activity-marked" : undefined} aria-current={row.lead_id === markedCustomerPage ? "true" : undefined}><SmartMovingCell row={row} />
+                  <td style={cell}><Link to={`/leads/${row.lead_id}?job_id=${encodeURIComponent(row.job_id)}`} target="_blank" rel="noopener noreferrer" state={{ backTo: "/sales-work-queue", backLabel: "Back to Sales Work Queue" }} style={{ color: "#0b5cab", fontWeight: 700, textDecoration: "none" }}>{row.client || "Unnamed lead"}</Link></td>
+                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{row.phone ? displayPhone(row.phone) : "—"}</td>
+                  <td style={cell}>{row.rep}</td>
+                  <td style={cell}>{row.company || "—"}</td>
+                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{row.job_number}</td>
+                  {chat ? null : <td style={cell}>{customerPageStateLabel(row)}</td>}
+                  <td style={{ ...cell, whiteSpace: "nowrap" }}>{new Date(row.at).toLocaleString()}</td>
+                  <td style={cell}><button className="slds-button" type="button" onClick={() => void ignoreCustomerPageRow(row)} style={{ border: "1px solid #c9c7c5", borderRadius: 4, background: "#fff", color: "#475569", padding: "6px 11px", fontWeight: 600, cursor: "pointer" }}>Ignore</button></td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </section>;
+      })() : null}
 
       {queueTab === "message-state" ? <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
