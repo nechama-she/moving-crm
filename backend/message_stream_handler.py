@@ -125,9 +125,20 @@ def _lead_has_phone(phone: str):
                Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized == phone)))
 
 
-def _clear_customer_page_by_phone(db, phone: str) -> None:
-    """A text or call between the rep and this number clears its leads' Customer page and Customer chat rows."""
-    customer_page_states.clear(db, CustomerPageState.lead_id.in_(select(Lead.id).where(_lead_has_phone(phone))))
+def _call_lead_id(db, item: dict, client_identifier: str, company_identifier: str) -> str | None:
+    """The one lead a call belongs to: named on it, linked to its numbers, or the only lead they match; else None."""
+    lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
+    if not lead_id:
+        association = find_association(db, "phone", client_identifier, company_identifier)
+        lead_id = association.lead_id if association else None
+    return lead_id or _resolve_sms_lead_id(db, item)
+
+
+def _clear_customer_page(db, lead_id: str | None) -> None:
+    """The rep's text or call clears the Customer page and Customer chat row of the one lead it belongs to; with no
+    single lead, none: other leads with the same phone keep theirs."""
+    if lead_id:
+        customer_page_states.clear(db, CustomerPageState.lead_id == lead_id)
 
 
 def _resolve_sms_lead_id(db, item: dict) -> str | None:
@@ -257,7 +268,7 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         MissedCallState.company_identifier == company_identifier,
     )
     if not is_missed_inbound:
-        _clear_customer_page_by_phone(db, client_identifier)
+        _clear_customer_page(db, _call_lead_id(db, item, client_identifier, company_identifier))
         clear_statement = delete(MissedCallState).where(*state_filter).returning(MissedCallState.call_id)
         _log_sql(db, "clear_missed_calls", clear_statement)
         removed_ids = [row[0] for row in db.execute(clear_statement).all()]
@@ -275,12 +286,7 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
             "count_delta": -1,
         }
 
-    lead_id = _valid_explicit_lead_id(db, item.get("lead_id"))
-    if not lead_id:
-        association = find_association(db, "phone", client_identifier, company_identifier)
-        lead_id = association.lead_id if association else None
-    if not lead_id:
-        lead_id = _resolve_sms_lead_id(db, item)
+    lead_id = _call_lead_id(db, item, client_identifier, company_identifier)
     occurred_at = _occurred_at(timestamp)
     state_already_exists = db.query(MissedCallState.call_id).filter(*state_filter).first() is not None
     statement = insert(MissedCallState).values(
@@ -402,10 +408,9 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
     # An outbound reply resolves the current unanswered inbound message. Outbound
     # messages are events, not durable state rows. Manually ended rows remain.
     if direction == "outbound":
-        if channel == "sms":
-            _clear_customer_page_by_phone(db, client_identifier)
-        elif lead_id:
-            customer_page_states.clear(db, CustomerPageState.lead_id == lead_id)
+        # The customer page's own verification code text is not the rep contacting the customer.
+        if not (channel == "sms" and customer_page_states.is_verification_code_text(item.get("text"))):
+            _clear_customer_page(db, lead_id)
         clear_statement = delete(MessageState).where(
             *conversation_filter,
             MessageState.conversation_ended.is_(False),

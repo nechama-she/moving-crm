@@ -474,7 +474,7 @@ class CodeRequest(BaseModel):
 
 
 def deliver_code(lead, channel, code, db: Session):
-    message = f'Your moving estimate verification code is {code}. It expires in 10 minutes. Do not share this code.'
+    message = customer_page_states.VERIFICATION_CODE_TEXT.format(code=code)
     region = setting('AWS_REGION') or 'us-east-1'
     if channel == 'email':
         sender = setting('PUBLIC_MOVE_EMAIL_FROM')

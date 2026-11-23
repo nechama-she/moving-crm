@@ -11,6 +11,15 @@ from models import Company, CustomerPageState as Row, Lead, LeadJob, PublicMoveA
 from realtime import publish_realtime_event
 
 OPENED, VERIFIED, CHAT = 1, 2, 3
+# The text that sends a customer their verification code (public_moves.deliver_code). It is the page's own text, not
+# the rep contacting the customer, so it clears no row.
+VERIFICATION_CODE_TEXT = 'Your moving estimate verification code is {code}. It expires in 10 minutes. Do not share this code.'
+
+
+def is_verification_code_text(text):
+    prefix, suffix = VERIFICATION_CODE_TEXT.split('{code}')
+    text = str(text or '').strip()
+    return text.startswith(prefix) and text.endswith(suffix) and text[len(prefix):len(text) - len(suffix)].isdigit()
 STATES = {OPENED: 'opened', VERIFIED: 'verified', CHAT: 'chat'}
 EVENT = 'customer_page_state_changed'
 
