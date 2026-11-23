@@ -90,3 +90,34 @@ def test_message_stream_lambda_starts_with_only_its_packaged_files(tmp_path):
     result = subprocess.run([sys.executable, '-I', '-c', 'import sys; sys.path.insert(0, "."); import message_stream_handler'],
                             cwd=tmp_path, capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stderr[-2000:]
+
+
+def module_level_imports(tree):
+    """The modules a file imports when it loads: its imports outside functions."""
+    found, nodes = [], list(tree.body)
+    while nodes:
+        node = nodes.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue  # Runs only when called.
+        if isinstance(node, ast.Import):
+            found += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            found += [node.module] + [f'{node.module}.{alias.name}' for alias in node.names]
+        nodes.extend(ast.iter_child_nodes(node))
+    return found
+
+
+@pytest.mark.parametrize('name', ['API backend'])
+def test_no_packaged_module_loads_a_dialect_the_package_removes(name):
+    """The API package deletes SQLAlchemy's mssql, mysql, oracle and sqlite dialects (buildspec.yml): a module that
+    imports one when it loads fails on the Lambda, and every request failed with it. Inside a function (run only on
+    that database) is fine."""
+    removed = re.search(r'rm -rf \./package/boto3\*.*', BUILD).group(0)
+    dialects = {f'sqlalchemy.dialects.{dialect}' for dialect in re.findall(r'\./package/sqlalchemy/dialects/(\w+)', removed)}
+    assert 'sqlalchemy.dialects.sqlite' in dialects
+    _, files = package_files(name)
+    loading = {f'{path} imports {module}'
+               for path, source in files.items() if path.endswith('.py')
+               for module in module_level_imports(ast.parse(source.read_text(encoding='utf-8-sig')))
+               if any(module == dialect or module.startswith(dialect + '.') for dialect in dialects)}
+    assert loading == set()

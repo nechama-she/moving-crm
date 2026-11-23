@@ -11,7 +11,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import joinedload
 
 from database import SessionLocal
-from models import AppSetting, Company, Lead, LeadContact, MessageState, MissedCallState, User
+from models import AppSetting, Company, CustomerPageState, Lead, LeadContact, MessageState, MissedCallState, User
+import customer_page_states
 from communication_associations import find_association
 from meta_attachment_archiver import archive_meta_attachments
 from realtime import publish_realtime_event
@@ -21,6 +22,9 @@ logger = logging.getLogger("moving-crm.message-stream")
 logger.setLevel(logging.INFO)
 _deserialize = TypeDeserializer().deserialize
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
+# BoxBot's chats, stored in conversations by the meta-webhook Lambda: the gorillahaulers.com website bot and the
+# customer move page assistant.
+BOT_PLATFORMS = {"website_gorillah_bot", "customer_page_bot"}
 
 
 def _image(record: dict) -> dict:
@@ -114,13 +118,24 @@ def _valid_explicit_lead_id(db, value) -> str | None:
     return lead_id if db.query(Lead.id).filter(Lead.id == lead_id).first() else None
 
 
+def _lead_has_phone(phone: str):
+    """The condition for a lead with this phone (10 digits), its main one or an extra one."""
+    normalized_lead_phone = func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10)
+    return or_(normalized_lead_phone == phone,
+               Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized == phone)))
+
+
+def _clear_customer_page_by_phone(db, phone: str) -> None:
+    """A text or call between the rep and this number clears its leads' Customer page and Customer chat rows."""
+    customer_page_states.clear(db, CustomerPageState.lead_id.in_(select(Lead.id).where(_lead_has_phone(phone))))
+
+
 def _resolve_sms_lead_id(db, item: dict) -> str | None:
     client_phone = _digits(item.get("phone_number"))
     destination_phone = _digits(item.get("company_number"))
     if not client_phone or not destination_phone:
         return None
 
-    normalized_lead_phone = func.right(func.regexp_replace(Lead.phone, r"\D", "", "g"), 10)
     normalized_company_phone = func.right(func.regexp_replace(Company.phone, r"\D", "", "g"), 10)
     normalized_rep_phone = func.right(func.regexp_replace(User.phone, r"\D", "", "g"), 10)
     rows = (
@@ -128,8 +143,7 @@ def _resolve_sms_lead_id(db, item: dict) -> str | None:
         .join(Company, Company.id == Lead.company_id)
         .outerjoin(User, User.id == Lead.assigned_to)
         .filter(
-            or_(normalized_lead_phone == client_phone,
-                Lead.id.in_(select(LeadContact.lead_id).where(LeadContact.kind == "phone", LeadContact.normalized == client_phone))),
+            _lead_has_phone(client_phone),
             or_(normalized_company_phone == destination_phone, normalized_rep_phone == destination_phone),
         )
         .limit(2)
@@ -243,6 +257,7 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
         MissedCallState.company_identifier == company_identifier,
     )
     if not is_missed_inbound:
+        _clear_customer_page_by_phone(db, client_identifier)
         clear_statement = delete(MissedCallState).where(*state_filter).returning(MissedCallState.call_id)
         _log_sql(db, "clear_missed_calls", clear_statement)
         removed_ids = [row[0] for row in db.execute(clear_statement).all()]
@@ -310,6 +325,19 @@ def _process_call_record(db, record: dict, item: dict, event_id: str) -> tuple[b
     }
 
 
+def _customer_page_chat(db, record: dict):
+    """The customer's message in the customer page chat: their Customer page row moves on to Chat. Returns the
+    realtime event to send after the commit (None when nothing changed), or False when the record is not one."""
+    if record.get("eventName") not in {"INSERT", "MODIFY"} or ":table/conversations/stream/" not in str(record.get("eventSourceARN") or ""):
+        return False
+    item = _image(record)
+    access_id = customer_page_states.chat_access_id(item)
+    if access_id is None or item.get("timestamp") is None:
+        return False
+    lead_id = customer_page_states.advance_to_chat(db, access_id, _occurred_at(item["timestamp"]))
+    return customer_page_states.row_event(db, lead_id) if lead_id else None
+
+
 def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]:
     if record.get("eventName") not in {"INSERT", "MODIFY"}:
         return False, None
@@ -321,9 +349,9 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
         return _process_call_record(db, record, item, event_id)
     if str(item.get("record_type") or "message").lower() != "message":
         return False, None
-    # The website chat bot answers its own visitors: its conversations show in the inbox
-    # but never become unanswered messages or first-contact work.
-    if str(item.get("platform") or "").strip().lower() == "website_gorillah_bot":
+    # BoxBot's chats (the website bot and the customer page assistant) answer on their own:
+    # their conversations show in the inbox but never become unanswered messages or first-contact work.
+    if str(item.get("platform") or "").strip().lower() in BOT_PLATFORMS:
         return False, None
 
     message_id = str(item.get("message_id") or "").strip()
@@ -374,6 +402,10 @@ def _process_record(db, record: dict, event_id: str) -> tuple[bool, dict | None]
     # An outbound reply resolves the current unanswered inbound message. Outbound
     # messages are events, not durable state rows. Manually ended rows remain.
     if direction == "outbound":
+        if channel == "sms":
+            _clear_customer_page_by_phone(db, client_identifier)
+        elif lead_id:
+            customer_page_states.clear(db, CustomerPageState.lead_id == lead_id)
         clear_statement = delete(MessageState).where(
             *conversation_filter,
             MessageState.conversation_ended.is_(False),
@@ -473,6 +505,13 @@ def handler(event, context):
         for record in event.get("Records") or []:
             event_id = str(((record.get("dynamodb") or {}).get("SequenceNumber")) or "")
             try:
+                chat_event = _customer_page_chat(db, record)
+                if chat_event is not False:
+                    db.commit()
+                    processed += 1
+                    if chat_event:
+                        realtime_events.append(chat_event)
+                    continue
                 was_processed, realtime_event = _process_record(db, record, event_id)
                 item = _image(record)
                 # SMS task matching can use Aircall's number ID even when the
@@ -496,12 +535,16 @@ def handler(event, context):
                         realtime_events.append({"type": "followup_tasks_changed"})
                     if contact_removed:
                         realtime_events.append({"type": "first_contact_ignored"})
+                    customer_page_cleared = customer_page_states.cleared_event(db)
+                    if customer_page_cleared:
+                        realtime_events.append(customer_page_cleared)
                     processed += 1
                     if realtime_event:
                         realtime_events.append(realtime_event)
             except Exception:
                 db.rollback()
                 db.info.pop('followup_tasks_changed', None)
+                db.info.pop('customer_page_cleared', None)
                 logger.exception("Failed message stream record %s", event_id)
                 failures.append({"itemIdentifier": event_id})
         if realtime_events:

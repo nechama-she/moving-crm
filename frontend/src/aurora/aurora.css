@@ -114,6 +114,7 @@
 .aur-dot { display: inline-block; width: 8px; height: 8px; border-radius: 99px; margin-right: 6px; vertical-align: 1px; }
 .aur-pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
 .aur-pill.tone-good { background: var(--aur-green-bg); color: var(--aur-green-fg); }
+.aur-pill.tone-info { background: var(--aur-blue-bg); color: var(--aur-blue-fg); }
 .aur-pill.tone-warn { background: var(--aur-amber-bg); color: var(--aur-amber-fg); }
 .aur-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: 12px; background: var(--aur-red-bg); color: #8E1F23; font-size: 13px; }
 .aur-empty { padding: 40px 16px; text-align: center; color: var(--aur-muted); }
@@ -331,6 +332,7 @@
 .aur-thread-title { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; }
 .aur-thread-title a, .aur-thread-title strong { font-size: 16px; font-weight: 800; color: var(--aur-ink); }
 .aur-thread-title small { font-size: 12px; }
+.aur-thread-title .aur-pill { align-self: flex-start; margin: 2px 0; }
 .aur-thread-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
 .aur-thread .aur-alert { margin: 10px 20px 0; }
 .aur-thread-row { display: flex; flex-direction: column; gap: 10px; }

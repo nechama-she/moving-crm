@@ -28,7 +28,11 @@ CALLS_TIMESTAMP_INDEX = "record-type-timestamp-index"
 # BoxBot's gorillahaulers.com chat. The meta-webhook Lambda stores its messages in
 # conversations with this platform and the CRM lead_id once the chat made a lead.
 WEBSITE_PLATFORM = "website_gorillah_bot"
-META_PLATFORMS = {"messenger", "instagram", WEBSITE_PLATFORM}
+# BoxBot's assistant on the customer move page, stored the same way. page_id is the company name, user_id is
+# cp-<access_id> for the customer and cp-rep-<access_id> for the rep: two conversations on the same lead.
+CUSTOMER_PAGE_PLATFORM = "customer_page_bot"
+BOT_PLATFORMS = {WEBSITE_PLATFORM, CUSTOMER_PAGE_PLATFORM}
+META_PLATFORMS = {"messenger", "instagram", *BOT_PLATFORMS}
 
 
 def _user_company_ids(user: User, db: Session) -> list[str]:
@@ -345,22 +349,22 @@ def get_all_chats(
         logger.error("Could not load unified chats: %s", exc)
         raise HTTPException(status_code=502, detail="Could not fetch chats") from exc
 
-    # Facebook ids and Meta page links are for Messenger and Instagram; the website chat
-    # links to its lead by lead_id below.
+    # Facebook ids and Meta page links are for Messenger and Instagram; BoxBot's chats
+    # link to their lead by lead_id below.
     facebook_messages = [
         message for message in meta_messages
-        if str(message.get("platform") or "").strip().lower() != WEBSITE_PLATFORM
+        if str(message.get("platform") or "").strip().lower() not in BOT_PLATFORMS
     ]
     meta_user_ids = {
         str(message.get("user_id") or "")
         for message in facebook_messages
         if message.get("user_id")
     }
-    # A website chat carries the lead id on its messages from the moment the chat made the
-    # lead, so any of its messages in this batch links the whole conversation to that lead.
+    # A BoxBot chat carries the lead id on its messages from the moment it knows the lead,
+    # so any of its messages in this batch links the whole conversation to that lead.
     website_leads: dict[str, str] = {}
     for message in sorted(meta_messages, key=lambda item: _timestamp(item.get("timestamp"))):
-        if str(message.get("platform") or "").strip().lower() == WEBSITE_PLATFORM and message.get("lead_id"):
+        if str(message.get("platform") or "").strip().lower() in BOT_PLATFORMS and message.get("lead_id"):
             website_leads[str(message.get("user_id") or "").strip()] = str(message["lead_id"])
     sms_phones: set[str] = set()
     sms_number_ids: set[str] = set()
@@ -458,18 +462,22 @@ def get_all_chats(
 
     def add_message(lead: Lead, platform: str, message: dict, rep_name: str | None = None) -> None:
         timestamp = _timestamp(message.get("timestamp"))
-        key = (lead.id, platform)
+        conversation_id = f"lead:{lead.id}:{platform}"
+        if platform == CUSTOMER_PAGE_PLATFORM:
+            # The customer's and the rep's chats on one lead are separate conversations.
+            conversation_id += f":{str(message.get('user_id') or '').strip()}"
+        key = (conversation_id, platform)
         if key in latest and latest[key]["timestamp"] >= timestamp:
             return
         number_id = str(message.get("number_id") or "").strip()
         page_id = str(message.get("page_id") or "").strip()
         destination_company = number_company_names.get(number_id, "") if platform == "sms" else page_company_names.get(page_id, "")
-        if platform == WEBSITE_PLATFORM:
-            # The website chat's page_id is the site it runs on.
+        if platform in BOT_PLATFORMS:
+            # page_id is the site the website chat runs on, or the company of the customer page.
             destination_company = page_id
         destination_rep = number_rep_names.get(number_id, "") if platform == "sms" else ""
         latest[key] = {
-            "conversation_id": f"lead:{lead.id}:{platform}",
+            "conversation_id": conversation_id,
             "lead_id": lead.id,
             "client": lead.full_name or lead.phone or "Unknown client",
             "rep": rep_name if rep_name is not None else (lead.assignee.name if lead.assignee else ""),
@@ -496,7 +504,7 @@ def get_all_chats(
             continue
         user_id = str(message.get("user_id") or "").strip()
         page_id = str(message.get("page_id") or "").strip()
-        if platform == WEBSITE_PLATFORM:
+        if platform in BOT_PLATFORMS:
             lead = leads_by_id.get(website_leads.get(user_id, ""))
         else:
             associated_lead_id = association_by_key.get((platform, user_id, page_id))
@@ -509,14 +517,16 @@ def get_all_chats(
             timestamp = _timestamp(message.get("timestamp"))
             key = (f"unmatched:{platform}:{user_id}", platform)
             if key not in latest or latest[key]["timestamp"] < timestamp:
-                website = platform == WEBSITE_PLATFORM
-                destination = page_id if website else page_company_names.get(page_id, "")
+                bot = platform in BOT_PLATFORMS
+                destination = page_id if bot else page_company_names.get(page_id, "")
+                client = {WEBSITE_PLATFORM: "Website visitor", CUSTOMER_PAGE_PLATFORM: "Customer page visitor"}.get(platform, user_id)
                 latest[key] = {
                     "conversation_id": f"unmatched:{platform}:{user_id}",
                     "lead_id": "",
-                    "client": "Website visitor" if website else user_id,
+                    "client": client,
                     "rep": "",
-                    "company": "",
+                    # The customer page chat's page_id is its company's name.
+                    "company": page_id if platform == CUSTOMER_PAGE_PLATFORM else "",
                     "destination_name": destination,
                     "destination_type": "company" if destination else "",
                     "destination_phone": "",
@@ -600,11 +610,21 @@ def get_all_chats(
 @router.get(f"/{WEBSITE_PLATFORM}/{{user_id}}")
 def get_website_chat_messages(user_id: str, user: User = Depends(get_current_user)):
     """One website chat conversation, oldest first, in the Messenger route's shape."""
+    return _bot_chat_messages(WEBSITE_PLATFORM, user_id, user)
+
+
+@router.get(f"/{CUSTOMER_PAGE_PLATFORM}/{{user_id}}")
+def get_customer_page_chat_messages(user_id: str, user: User = Depends(get_current_user)):
+    """One customer page assistant conversation (cp-<access_id> or cp-rep-<access_id>), oldest first."""
+    return _bot_chat_messages(CUSTOMER_PAGE_PLATFORM, user_id, user)
+
+
+def _bot_chat_messages(platform: str, user_id: str, user: User) -> dict:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admins can view all chats")
     args = {
         "KeyConditionExpression": Key("user_id").eq(user_id),
-        "FilterExpression": Attr("platform").eq(WEBSITE_PLATFORM),
+        "FilterExpression": Attr("platform").eq(platform),
         "ScanIndexForward": True,
     }
     items: list[dict] = []
@@ -616,6 +636,6 @@ def get_website_chat_messages(user_id: str, user: User = Depends(get_current_use
                 break
             args["ExclusiveStartKey"] = response["LastEvaluatedKey"]
     except ClientError as exc:
-        logger.error("Could not load website chat %s: %s", user_id, exc)
+        logger.error("Could not load %s chat %s: %s", platform, user_id, exc)
         raise HTTPException(status_code=502, detail="Could not fetch conversations") from exc
     return {"messages": items}

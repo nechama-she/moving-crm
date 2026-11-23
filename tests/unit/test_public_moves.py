@@ -595,6 +595,30 @@ def test_public_details_never_returns_host_link_or_internal_notes(portal):
     assert result['estimate'] is None
 
 
+def test_public_details_returns_the_lead_id(portal):
+    # BoxBot links its customer page conversations in the inbox to this lead.
+    mod,db,lead,access=portal
+    mod._move_details=lambda access,db,**kwargs: {'name':'Jane Smith'}
+    assert mod.details(access,db)=={'name':'Jane Smith','lead_id':'lead-1'}
+
+
+def test_the_customer_page_card_counts_opening_and_a_returning_verified_customer(portal):
+    # Opening the page shows on the work queue's Customer page card; a customer back with their verified session
+    # counts as Verified, not as opening it unverified; the rep's own visits are not counted.
+    mod, db, lead, access = portal
+    rep_request = SimpleNamespace(headers={'x-public-link': mod.rep_link_token(access)})
+    mod.verify_options(access, db, rep_request)
+    assert db.get(models.CustomerPageState, lead.id) is None
+    mod.verify_options(access, db, SimpleNamespace(headers={}))
+    assert db.get(models.CustomerPageState, lead.id).state == mod.customer_page_states.OPENED
+    db.delete(db.get(models.CustomerPageState, lead.id))  # The rep texted the customer.
+    db.add(models.PublicMoveSession(token_hash=digest('session'), access_id=access.id, expires_at=datetime.utcnow() + timedelta(hours=1),
+                                    contact_hash=contact_fingerprint(lead)))
+    db.commit()
+    mod.verify_options(access, db, SimpleNamespace(headers={'x-public-session': 'session'}))
+    assert db.get(models.CustomerPageState, lead.id).state == mod.customer_page_states.VERIFIED
+
+
 def test_upload_magic_and_phone_normalization():
     assert file_type(b'<script>alert(1)</script>') == 'application/octet-stream'
     assert file_type(b'\xff\xd8\xffrest') == 'image/jpeg'

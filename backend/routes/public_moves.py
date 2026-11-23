@@ -1,4 +1,5 @@
 from catalog_names import resolve_catalog_names
+import customer_page_states
 from inventory_edits import InventoryEdits, load_inventory_editor, save_inventory_edits, report_inventory, lead_job_id
 """Verified, job-scoped public access. Staff credentials never enter the public page."""
 from manual_inventory import ManualInventoryInput
@@ -446,7 +447,7 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
     # Extras after the main ones; the code request names the extra by its id.
     options += [{'channel': 'sms' if row.kind == 'phone' else 'email', 'destination': masked(row.kind, row.value), 'contact_id': row.id}
                 for row in lead.contacts if row.kind == 'phone' or '@' in row.value]
-    return {
+    shown_to_customer = {
         'options': options,
         'customer_can_edit': CUSTOMER_CAN_EDIT,
         'link_sms': customer_link_sms_notice(access),
@@ -454,6 +455,16 @@ def verify_options(access: PublicMoveAccess = Depends(public_access), db: Sessio
         # The page's header before the customer is verified: the company's public details only.
         'company': {key: shown[key] for key in ('name', 'color', 'logo', 'phone', 'office_address')},
     }
+    # The customer opened the page (the rep's own visits are not counted): Verified when their verified session came
+    # with it, else Opened, for the work queue's Customer page card.
+    token = request.headers.get('x-public-session', '') if request else ''
+    session = db.get(PublicMoveSession, digest(token)) if token else None
+    returning = (session is not None and session.access_id == access.id and session.expires_at > NOW()
+                 and hmac.compare_digest(session.contact_hash, contact_fingerprint(lead)))
+    if customer_page_states.advance(db, access, customer_page_states.VERIFIED if returning else customer_page_states.OPENED):
+        db.commit()
+        customer_page_states.publish_row(db, access.lead_id)
+    return shown_to_customer
 
 
 class CodeRequest(BaseModel):
@@ -572,8 +583,13 @@ def verify_code(body: VerifyCode, access: PublicMoveAccess = Depends(public_acce
     token = secrets.token_urlsafe(32)
     expires_at = min(link_expires_at, NOW()+timedelta(hours=8))
     db.add(PublicMoveSession(token_hash=digest(token), access_id=access.id, expires_at=expires_at, contact_hash=fingerprint))
+    # The customer verified: their Customer page card row moves on to Verified (not the rep's own verification).
+    rep = is_rep_request(page_access, request)
+    verified = not rep and customer_page_states.advance(db, page_access, customer_page_states.VERIFIED)
     db.commit()
-    set_move_page_cookie(response, page_access, token, expires_at, is_rep_request(page_access, request))
+    if verified:
+        customer_page_states.publish_row(db, page_access.lead_id)
+    set_move_page_cookie(response, page_access, token, expires_at, rep)
     return {'session': token, 'expires_in': max(0, int((expires_at - NOW()).total_seconds())),
             'expires_at': expires_at.isoformat() + 'Z', 'move': move_section('move', page_access, db, request)}
 
@@ -691,7 +707,8 @@ def details(access: PublicMoveAccess = Depends(verified), db: Session = Depends(
     state = json.loads(conversation.details or '{}') if conversation else {}
     if lead and job and _has_inventory_list(state, job.id, db):
         refresh_expired_price(lead, job, db)
-    return _move_details(access, db, individual_charges=is_rep_request(access, request))
+    # lead_id (read only): BoxBot links its customer page conversations in the inbox to this lead.
+    return dict(_move_details(access, db, individual_charges=is_rep_request(access, request)), lead_id=access.lead_id)
 
 
 @router.get('/api/public-moves/{access_id}/summary')

@@ -18,7 +18,8 @@ const demoToken = () => [
 
 const leads: Lead[] = demoLeads.map(lead => ({ ...lead }));
 const conversations = more.buildConversations(leads);
-const websiteChats = more.buildWebsiteChats(leads);
+// BoxBot's chats: the website bot and the customer page assistant.
+const botChats = [...more.buildWebsiteChats(leads), ...more.buildCustomerPageChats(leads)];
 
 function listLeads(url: URL) {
   const q = url.searchParams;
@@ -97,8 +98,8 @@ const routes: Array<[string, RegExp, Handler]> = [
   ["POST", /^ai\/ask$/, ({ body }) => askCrm(body)],
   // The search box checks that the assistant exists before offering "Ask the CRM".
   ["GET", /^ai\/ask$/, () => ({ ready: true })],
-  ["GET", /^chats$/, ({ url }) => more.chatList(conversations, url.searchParams.get("source") || "sms", websiteChats)],
-  ["GET", /^chats\/website_gorillah_bot\/([^/]+)$/, ({ params }) => more.websiteHistory(websiteChats, params[0])],
+  ["GET", /^chats$/, ({ url }) => more.chatList(conversations, url.searchParams.get("source") || "sms", botChats)],
+  ["GET", /^chats\/(website_gorillah_bot|customer_page_bot)\/([^/]+)$/, ({ params }) => more.botHistory(botChats, params[0], params[1])],
   ["GET", /^chats\/calls$/, () => more.callList(conversations)],
   ["GET", /^chats\/calls\/history$/, ({ url }) => more.callHistory(conversations, url.searchParams.get("phone") || "")],
   ["GET", /^sms\/([^/]+)$/, ({ params }) => more.smsHistory(conversations, params[0])],

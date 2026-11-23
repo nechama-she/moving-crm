@@ -43,8 +43,9 @@ export function buildConversations(leads: Lead[]) {
 // Messages are in the conversations table's shape; lead_id appears once the chat sent the request.
 const WEBSITE_BOT = "website_gorillah_bot";
 type WebsiteMessage = { user_id: string; timestamp: number; message_id: string; text: string; platform: string; page_id: string; role: string; record_type: string; lead_id?: string };
+type BotChat = { lead: Lead | null; messages: WebsiteMessage[] };
 
-export function buildWebsiteChats(leads: Lead[]) {
+export function buildWebsiteChats(leads: Lead[]): BotChat[] {
   // A Gorilla Haulers 2-bedroom lead, so the chat matches the lead's details.
   const lead = leads.find(l => l.company_id === "c-gorilla" && l.move_size === "2 Bedrooms")
     || leads.find(l => l.move_size === "2 Bedrooms") || leads[20];
@@ -72,26 +73,56 @@ export function buildWebsiteChats(leads: Lead[]) {
   ];
 }
 
-// One row per website conversation, in the backend's Messenger row shape.
-function websiteRows(chats: ReturnType<typeof buildWebsiteChats>) {
+// BoxBot's assistant on the customer move page: the customer's chat and a rep's chat on the same lead.
+// page_id is the company's name; lead_id is on every message, since the page knows its lead from the start.
+const CUSTOMER_PAGE_BOT = "customer_page_bot";
+
+export function buildCustomerPageChats(leads: Lead[]): BotChat[] {
+  const lead = leads.find(l => l.company_id === "c-gorilla" && l.move_size !== "2 Bedrooms" && l["when_is_the_move?"]) || leads[12];
+  const company = String(lead.company_name || "Gorilla Haulers");
+  const chat = (userId: string, start: number, lines: Array<[string, string]>): WebsiteMessage[] =>
+    lines.map(([role, text], j) => ({
+      user_id: userId, timestamp: start + j * 75_000, message_id: `${userId}-${j}`, text, platform: CUSTOMER_PAGE_BOT,
+      page_id: company, role, record_type: "message", lead_id: lead.id,
+    }));
+  const base = Date.now();
+  return [
+    { lead, messages: chat("cp-demo-access-7k2m", base - 50 * 60_000, [
+      ["assistant", `Hi ${String(lead.full_name).split(" ")[0]}! I can help you finish your estimate. Your inventory is next.`],
+      ["user", "Can I add a treadmill to my list?"],
+      ["assistant", "Done. I added 1 treadmill to your inventory and updated your estimate."],
+      ["user", "Great, what's left before I can sign?"],
+      ["assistant", "Just the extra services: tell me about stairs and elevators at both addresses, then the estimate is ready to sign."],
+    ]) },
+    { lead, messages: chat("cp-rep-demo-access-7k2m", base - 3 * 3600_000, [
+      ["user", "Does the customer have any open questions?"],
+      ["assistant", "Two: stairs at the pickup address and whether they need packing materials."],
+    ]) },
+  ];
+}
+
+// One row per BoxBot conversation, in the backend's Messenger row shape.
+function botRows(chats: BotChat[]) {
   return chats.map(({ lead, messages }) => {
     const last = messages[messages.length - 1];
+    const platform = last.platform;
+    const customerPage = platform === CUSTOMER_PAGE_BOT;
     const leadId = messages.find(m => m.lead_id)?.lead_id || "";
     return {
-      conversation_id: leadId ? `lead:${leadId}:${WEBSITE_BOT}` : `unmatched:${WEBSITE_BOT}:${last.user_id}`,
-      platform: WEBSITE_BOT,
+      conversation_id: leadId ? `lead:${leadId}:${platform}${customerPage ? `:${last.user_id}` : ""}` : `unmatched:${platform}:${last.user_id}`,
+      platform,
       lead_id: leadId,
-      client: lead && leadId ? String(lead.full_name) : "Website visitor",
+      client: lead && leadId ? String(lead.full_name) : customerPage ? "Customer page visitor" : "Website visitor",
       rep: lead && leadId ? String(lead.assigned_to_name || "") : "",
-      company: lead && leadId ? String(lead.company_name) : "",
+      company: lead && leadId ? String(lead.company_name) : customerPage ? last.page_id : "",
       timestamp: last.timestamp,
       message: last.text,
       attachments: [],
       direction: last.role,
       message_partition_key: last.user_id,
-      company_identifier: "gorillahaulers.com",
+      company_identifier: last.page_id,
       company_phone_identifier: "",
-      destination_name: "gorillahaulers.com",
+      destination_name: last.page_id,
       destination_phone: "",
       destination_type: "company",
       sender_label: last.role === "assistant" ? "AI" : "",
@@ -99,11 +130,11 @@ function websiteRows(chats: ReturnType<typeof buildWebsiteChats>) {
   });
 }
 
-export function websiteHistory(chats: ReturnType<typeof buildWebsiteChats>, userId: string) {
-  return { messages: chats.find(c => c.messages[0].user_id === userId)?.messages || [] };
+export function botHistory(chats: BotChat[], platform: string, userId: string) {
+  return { messages: chats.find(c => c.messages[0].platform === platform && c.messages[0].user_id === userId)?.messages || [] };
 }
 
-export function chatList(conversations: ReturnType<typeof buildConversations>, source: string, website: ReturnType<typeof buildWebsiteChats> = []) {
+export function chatList(conversations: ReturnType<typeof buildConversations>, source: string, bots: BotChat[] = []) {
   const items: Record<string, unknown>[] = conversations
     .filter(c => (source === "meta" ? c.platform === "messenger" : c.platform === "sms"))
     .map(c => {
@@ -126,7 +157,7 @@ export function chatList(conversations: ReturnType<typeof buildConversations>, s
         sender_label: "",
       };
     });
-  if (source === "meta") items.push(...websiteRows(website));
+  if (source === "meta") items.push(...botRows(bots));
   return { items, next_cursor: "", has_more: false };
 }
 

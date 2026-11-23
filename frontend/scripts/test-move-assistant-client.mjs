@@ -67,6 +67,9 @@ error = await failure(504, {});
 assert.equal(error.kind, 'busy');
 error = await failure(500, {});
 assert.equal(error.kind, 'failed');
+// A path that doesn't reach BoxBot (the CRM's 404) never shows the server's text.
+error = await failure(404, {detail: 'Not Found'});
+assert.equal(error.kind, 'failed'); assert.equal(error.message, "I couldn't answer that just now. Please try again.");
 
 // A booked slot reads as its time, as written (the company's time zone); anything else is left as it is.
 assert.equal(displayText('Book 2026-11-24T10:00:00-05:00'), 'Book Tue, Nov 24 at 10 AM');
