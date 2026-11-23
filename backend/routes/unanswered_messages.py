@@ -22,7 +22,7 @@ from auth import require_admin
 from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 import customer_page_states
-from models import AppSetting, Company, CustomerPageState, Lead, MessageState, MissedCallState, User, FirstContactState
+from models import AppSetting, Company, CustomerPageState, Lead, MessageState, MissedCallState, User, FirstContactState, WorkQueueCardOrder
 from realtime import publish_realtime_event
 from ended_chat_retention import visible_message_states
 from work_queue_rules import _digits, _epoch, _smartmoving_created_at
@@ -30,6 +30,9 @@ from work_queue_rules import _digits, _epoch, _smartmoving_created_at
 router = APIRouter(prefix="/api/unanswered-messages", tags=["Unanswered Messages"])
 logger = logging.getLogger("moving-crm")
 IGNORED_CALL_NUMBERS_SETTING = "sales_work_queue.ignored_call_numbers"
+# The Sales Work Queue's cards (UnansweredMessagesPage.tsx QUEUE_CARDS), which a user can put in their own order.
+QUEUE_CARDS = {"messages", "calls", "customer-page", "customer-chat", "leads", "followups", "signatures",
+               "message-state", "missed-call-state", "first-contact-state"}
 COMMUNICATION_TIMESTAMP_INDEX = "record-type-timestamp-index"
 OPEN_SALES_STATUSES = ("new", "contacted", "quoted")
 MIRIT_COMPANY_NAME = "mirit great american"
@@ -95,8 +98,23 @@ class IgnoredNumberRequest(BaseModel):
     direction: str = "both"
 
 
+class CardOrderRequest(BaseModel):
+    cards: list[str]
+
+
+@router.put("/card-order")
+def save_card_order(body: CardOrderRequest, user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """The user's order of the work queue cards, replacing their last one."""
+    if len(set(body.cards)) != len(body.cards) or not set(body.cards) <= QUEUE_CARDS:
+        raise HTTPException(status_code=400, detail="Unknown or repeated work queue card")
+    db.query(WorkQueueCardOrder).filter(WorkQueueCardOrder.user_id == user.id).delete(synchronize_session=False)
+    db.add_all(WorkQueueCardOrder(user_id=user.id, card=card, position=index) for index, card in enumerate(body.cards))
+    db.commit()
+    return {"cards": body.cards}
+
+
 @router.get("/summary")
-def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+def queue_summary(user: User = Depends(require_admin), db: Session = Depends(get_db)):
     ignored = _ignored_call_numbers(db)
     ignored_from = [number for number, directions in ignored.items() if directions & {"from", "both"}]
     ignored_to = [number for number, directions in ignored.items() if directions & {"to", "both"}]
@@ -110,8 +128,10 @@ def queue_summary(_: User = Depends(require_admin), db: Session = Depends(get_db
         func.count().filter(FirstContactState.waiting_since > cutoff),
         func.count().filter(FirstContactState.waiting_since <= cutoff),
     ).one()
+    card_order = [card for (card,) in db.query(WorkQueueCardOrder.card).filter(WorkQueueCardOrder.user_id == user.id)
+                  .order_by(WorkQueueCardOrder.position)]
     # The Follow-ups card reads its count from the follow-up list response.
-    return {"enabled": False, "ready": False,
+    return {"enabled": False, "ready": False, "card_order": card_order,
             "messages": {"unanswered": message_counts.get(False, 0), "ended": message_counts.get(True, 0)},
             "missed_calls": calls, "first_contact": {"new": first_new, "overdue": first_overdue}}
 

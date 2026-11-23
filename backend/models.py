@@ -153,6 +153,15 @@ class CustomerPageState(Base):
     at = Column(DateTime(timezone=True), nullable=False)
 
 
+class WorkQueueCardOrder(Base):
+    """Each user's order of the Sales Work Queue cards: one row per card they placed. Cards without a row keep their
+    default place."""
+    __tablename__ = 'work_queue_card_order'
+    user_id = Column(String(36), ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    card = Column(String(40), primary_key=True)
+    position = Column(Integer, nullable=False)
+
+
 def _uuid() -> str:
     return str(uuid.uuid4())
 

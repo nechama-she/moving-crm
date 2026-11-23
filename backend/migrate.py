@@ -25,6 +25,10 @@ def migrate() -> None:
     with engine.begin() as connection:
         from models import CustomerPageState
         CustomerPageState.__table__.create(connection, checkfirst=True)
+    # Each user's order of the work queue cards (a new, empty table). Remove after a deploy ran it.
+    with engine.begin() as connection:
+        from models import WorkQueueCardOrder
+        WorkQueueCardOrder.__table__.create(connection, checkfirst=True)
 
 
 if __name__ == "__main__":
