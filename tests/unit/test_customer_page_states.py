@@ -115,3 +115,24 @@ def test_other_conversations_are_not_customer_page_chats(db):
     record = conversation({'user_id': 'cp-access', 'message_id': 'm-1', 'timestamp': 1795000000000, 'platform': 'messenger',
                            'page_id': 'p', 'role': 'user', 'record_type': 'message'})
     assert message_stream_handler._customer_page_chat(db, record) is False
+
+
+def test_asking_for_a_code_comes_between_opened_and_verified(db, access):
+    from customer_page_states import CHAT, OPENED, VERIFIED, advance, items, request_code
+    assert advance(db, access, OPENED) is True
+    assert request_code(db, access, 'sms') is True
+    row = items(db)[0]
+    assert (row['state'], row['code_channel']) == ('code_requested', 'sms')
+    # Opening the page again keeps it; asking again changes nothing.
+    assert advance(db, access, OPENED) is False and request_code(db, access, 'email') is False
+    assert items(db)[0]['state'] == 'code_requested'
+    assert advance(db, access, VERIFIED) is True
+    assert (items(db)[0]['state'], items(db)[0]['code_channel']) == ('verified', '')
+    assert request_code(db, access, 'email') is False  # Never back from a later step.
+    assert advance(db, access, CHAT) is True and items(db)[0]['state'] == 'chat'
+
+
+def test_asking_for_a_code_with_no_row_yet_adds_it(db, access):
+    from customer_page_states import items, request_code
+    assert request_code(db, access, 'email') is True
+    assert (items(db)[0]['state'], items(db)[0]['code_channel']) == ('code_requested', 'email')

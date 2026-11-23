@@ -512,7 +512,8 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     lead = db.get(Lead, access.lead_id)
     channel = body.channel
     fingerprint = verification_fingerprint(access, db, request)
-    if is_rep_request(access, request):
+    rep = is_rep_request(access, request)
+    if rep:
         contacts, _, company = rep_contacts(access, db)
         contact = contacts.get(channel)
         if not contact:
@@ -560,6 +561,10 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
         try: deliver_code(lead, channel, code, db)
         except HTTPException: raise
         except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
+    # The customer asked for a code: their Customer page card row moves on to Code requested (not the rep's code).
+    if not rep and customer_page_states.request_code(db, access, channel):
+        db.commit()
+        customer_page_states.publish_row(db, access.lead_id)
     return {'sent': True, 'expires_in': 600, 'resend_after': 60}
 
 
