@@ -1072,6 +1072,16 @@ export default function UnansweredMessagesPage() {
           <strong style={queueCardCount}>{globalMissedCallCount}</strong>
           <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
         </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-page")} style={{ ...queueCard, ...(queueTab === "customer-page" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Customer Page</span>
+          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified}</strong>
+          <span style={queueCardDescription}>Customers who opened their page</span>
+        </button>
+        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-chat")} style={{ ...queueCard, ...(queueTab === "customer-chat" ? activeQueueCard : {}) }}>
+          <span style={queueCardLabel}>Customer Chat</span>
+          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.chat}</strong>
+          <span style={queueCardDescription}>Customers who started the chat on their page</span>
+        </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Leads Awaiting First Contact</span>
           <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading..."}</strong>
@@ -1086,16 +1096,6 @@ export default function UnansweredMessagesPage() {
           <span style={queueCardLabel}>Customer Activity</span>
           <strong style={queueCardCount}>{loadingSignatures ? "Loading..." : signedToday}</strong>
           <span style={queueCardDescription}>Actions on customer pages today</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-page")} style={{ ...queueCard, ...(queueTab === "customer-page" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Customer Page</span>
-          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified}</strong>
-          <span style={queueCardDescription}>Customers who opened their page</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-chat")} style={{ ...queueCard, ...(queueTab === "customer-chat" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Customer Chat</span>
-          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.chat}</strong>
-          <span style={queueCardDescription}>Customers who started the chat on their page</span>
         </button>
         <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
           <span style={queueCardLabel}>Message State Table</span>
