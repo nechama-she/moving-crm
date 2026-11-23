@@ -151,7 +151,7 @@ export default function CommandPalette({ open, onClose, pages }: { open: boolean
               {searchingLeads && !leadsLoading && leadResults?.failed && <p className="aur-palette-status">Lead search failed. Try again.</p>}
               {searchingLeads && !leadsLoading && !leadResults?.failed && !leads.length && <p className="aur-palette-status">{`No leads match “${text}”.`}</p>}
               {leads.map((lead, i) => {
-                const details = [lead.quote_number ? `#${lead.quote_number}` : "", lead.phone_number ? displayPhone(lead.phone_number) : "", lead.email || "", lead.company_name || ""].filter(Boolean);
+                const details = [lead.quote_number ? `#${lead.quote_number}` : "", lead.phone_number ? displayPhone(lead.phone_number) : "", lead.email || "", lead.company_name || "", lead.assigned_to_name || ""].filter(Boolean);
                 return (
                   <a key={lead.id} href={options[i].to} className={`aur-palette-option is-lead${i === selected ? " is-selected" : ""}`} onMouseEnter={() => setSelected(i)}
                     onClick={e => follow(e, options[i].to)}>
