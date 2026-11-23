@@ -35,6 +35,19 @@ type FollowupLead = SmartMovingFields & { lead_id: string; client: string; clien
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
 type CustomerPageTab = "all" | "opened" | "verified";
+// The work queue's cards in their default order; each user can put them in their own (QUEUE_CARDS in unanswered_messages.py).
+const QUEUE_CARDS = ["customer-page", "customer-chat", "messages", "calls", "leads", "followups", "signatures", "message-state", "missed-call-state", "first-contact-state"] as const;
+type QueueCard = typeof QUEUE_CARDS[number];
+// The user's saved order, with any card it does not name in its default place: after the card before it by default.
+function arrangeCards(saved: string[]): QueueCard[] {
+  const order = [...new Set(saved)].filter((key): key is QueueCard => (QUEUE_CARDS as readonly string[]).includes(key));
+  QUEUE_CARDS.forEach((key, index) => {
+    if (order.includes(key)) return;
+    const before = QUEUE_CARDS.slice(0, index).reverse().find((card) => order.includes(card));
+    order.splice(before ? order.indexOf(before) + 1 : 0, 0, key);
+  });
+  return order;
+}
 // How many customer page rows are at each step.
 const countByState = (rows: CustomerPageRow[]) => {
   const counts = { opened: 0, verified: 0, chat: 0 };
@@ -331,6 +344,25 @@ export default function UnansweredMessagesPage() {
 
   const load = useCallback(() => Promise.all([loadMessages(), loadCalls()]), [loadMessages, loadCalls]);
 
+  const [cardOrder, setCardOrder] = useState<QueueCard[]>([...QUEUE_CARDS]);
+  const [draggedCard, setDraggedCard] = useState<QueueCard | null>(null);
+  const savedCardOrder = useRef<string | null>(null);
+  const moveCard = (card: QueueCard, onto: QueueCard) => {
+    if (card === onto) return;
+    setCardOrder((current) => {
+      const next = current.filter((key) => key !== card);
+      next.splice(current.indexOf(onto), 0, card);
+      return next;
+    });
+  };
+  const saveCardOrder = () => {
+    const cards = JSON.stringify(cardOrder);
+    if (cards === savedCardOrder.current) return;
+    savedCardOrder.current = cards;
+    void fetch(`${API_BASE}/api/unanswered-messages/card-order`, { method: "PUT", headers: { "Content-Type": "application/json", ...authHeaders(token) }, body: JSON.stringify({ cards: cardOrder }) })
+      .then((response) => { if (!response.ok) setError(`Could not save the card order (HTTP ${response.status})`); });
+  };
+
   const loadSummary = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE}/api/unanswered-messages/summary`, { headers: authHeaders(token) });
@@ -340,6 +372,12 @@ export default function UnansweredMessagesPage() {
       setGlobalCounts(data.messages);
       setGlobalMissedCallCount(data.missed_calls);
       if (data.first_contact) setGlobalFirstContactCounts(data.first_contact);
+      // The user's card order, taken once: later counts never undo a card being moved.
+      if (savedCardOrder.current === null) {
+        const order = arrangeCards(Array.isArray(data.card_order) ? data.card_order : []);
+        savedCardOrder.current = JSON.stringify(order);
+        setCardOrder(order);
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load queue counts");
     }
@@ -1029,6 +1067,19 @@ export default function UnansweredMessagesPage() {
     }
   };
 
+  const queueCards: Record<QueueCard, { label: string; count: React.ReactNode; description: string; active: boolean; open: () => void }> = {
+    "messages": { label: "Unanswered Messages", count: globalCounts.unanswered, description: "Client messages waiting for a response", active: queueTab === "messages", open: () => setQueueTab("messages") },
+    "calls": { label: "Missed Calls", count: globalMissedCallCount, description: "Missed calls without a later contact attempt", active: queueTab === "calls", open: () => setQueueTab("calls") },
+    "customer-page": { label: "Customer Page", count: loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified, description: "Customers who opened their page", active: queueTab === "customer-page", open: () => setQueueTab("customer-page") },
+    "customer-chat": { label: "Customer Chat", count: loadingCustomerPage ? "Loading..." : customerPageCounts.chat, description: "Customers who started the chat on their page", active: queueTab === "customer-chat", open: () => setQueueTab("customer-chat") },
+    "leads": { label: "Leads Awaiting First Contact", count: queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading...", description: "New leads with no call attempt", active: queueTab === "leads", open: () => setQueueTab("leads") },
+    "followups": { label: "Follow-ups", count: loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0, description: "Tasks scheduled across all priorities", active: queueTab === "followups", open: () => setQueueTab("followups") },
+    "signatures": { label: "Customer Activity", count: loadingSignatures ? "Loading..." : signedToday, description: "Actions on customer pages today", active: queueTab === "signatures", open: () => setQueueTab("signatures") },
+    "message-state": { label: "Message State Table", count: messageStates.length, description: "Raw CRM message state rows", active: queueTab === "message-state", open: () => setQueueTab("message-state") },
+    "missed-call-state": { label: "Missed Call State Table", count: missedCallStates.length, description: "Raw CRM missed-call state rows", active: queueTab === "missed-call-state", open: () => setQueueTab("missed-call-state") },
+    "first-contact-state": { label: "First Contact State", count: staleStates.length, description: "Stale leads and first contact history", active: queueTab === "stale-state" || queueTab === "contact-history", open: () => setQueueTab(queueTab === "contact-history" ? "contact-history" : "stale-state") },
+  };
+
   const validationButton = (
     <button className="slds-button"
       type="button"
@@ -1062,56 +1113,20 @@ export default function UnansweredMessagesPage() {
       {connectTarget ? <ConnectCommunicationLeadModal target={connectTarget} token={token} onClose={() => setConnectTarget(null)} onConnected={(lead) => { setItems((current) => current.map((row) => row.channel === connectTarget.channel && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setMissedCalls((current) => current.map((row) => ["calls", "call", "phone"].includes(connectTarget.channel) && row.client_identifier === connectTarget.clientIdentifier && row.company_identifier === connectTarget.companyIdentifier ? { ...row, lead_id: lead.id, client: lead.name, company: lead.company, rep: lead.rep || "Unassigned" } : row)); setConnectTarget(null); }} /> : null}
 
       <nav aria-label="Sales work queue categories" style={{ display: "flex", flexWrap: "nowrap", gap: 12, overflowX: "auto", paddingBottom: 12, marginBottom: 6 }}>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("messages")} style={{ ...queueCard, ...(queueTab === "messages" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Unanswered Messages</span>
-          <strong style={queueCardCount}>{globalCounts.unanswered}</strong>
-          <span style={queueCardDescription}>Client messages waiting for a response</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("calls")} style={{ ...queueCard, ...(queueTab === "calls" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Missed Calls</span>
-          <strong style={queueCardCount}>{globalMissedCallCount}</strong>
-          <span style={queueCardDescription}>Missed calls without a later contact attempt</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-page")} style={{ ...queueCard, ...(queueTab === "customer-page" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Customer Page</span>
-          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified}</strong>
-          <span style={queueCardDescription}>Customers who opened their page</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("customer-chat")} style={{ ...queueCard, ...(queueTab === "customer-chat" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Customer Chat</span>
-          <strong style={queueCardCount}>{loadingCustomerPage ? "Loading..." : customerPageCounts.chat}</strong>
-          <span style={queueCardDescription}>Customers who started the chat on their page</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("leads")} style={{ ...queueCard, ...(queueTab === "leads" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Leads Awaiting First Contact</span>
-          <strong style={queueCardCount}>{queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading..."}</strong>
-          <span style={queueCardDescription}>New leads with no call attempt</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("followups")} style={{ ...queueCard, ...(queueTab === "followups" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Follow-ups</span>
-          <strong style={queueCardCount}>{loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0}</strong>
-          <span style={queueCardDescription}>Tasks scheduled across all priorities</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("signatures")} style={{ ...queueCard, ...(queueTab === "signatures" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Customer Activity</span>
-          <strong style={queueCardCount}>{loadingSignatures ? "Loading..." : signedToday}</strong>
-          <span style={queueCardDescription}>Actions on customer pages today</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("message-state")} style={{ ...queueCard, ...(queueTab === "message-state" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Message State Table</span>
-          <strong style={queueCardCount}>{messageStates.length}</strong>
-          <span style={queueCardDescription}>Raw CRM message state rows</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab("missed-call-state")} style={{ ...queueCard, ...(queueTab === "missed-call-state" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>Missed Call State Table</span>
-          <strong style={queueCardCount}>{missedCallStates.length}</strong>
-          <span style={queueCardDescription}>Raw CRM missed-call state rows</span>
-        </button>
-        <button className="slds-button" type="button" onClick={() => setQueueTab(queueTab === "contact-history" ? "contact-history" : "stale-state")} style={{ ...queueCard, ...(queueTab === "stale-state" || queueTab === "contact-history" ? activeQueueCard : {}) }}>
-          <span style={queueCardLabel}>First Contact State</span>
-          <strong style={queueCardCount}>{staleStates.length}</strong>
-          <span style={queueCardDescription}>Stale leads and first contact history</span>
-        </button>
+        {cardOrder.map((key) => {
+          const card = queueCards[key];
+          return <button key={key} className="slds-button" type="button" draggable title="Drag to move this card"
+            onClick={card.open}
+            onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", key); setDraggedCard(key); }}
+            onDragOver={(event) => { if (!draggedCard) return; event.preventDefault(); moveCard(draggedCard, key); }}
+            onDrop={(event) => event.preventDefault()}
+            onDragEnd={() => { setDraggedCard(null); saveCardOrder(); }}
+            style={{ ...queueCard, ...(card.active ? activeQueueCard : {}), ...(draggedCard === key ? { opacity: 0.5 } : {}) }}>
+            <span style={queueCardLabel}>{card.label}</span>
+            <strong style={queueCardCount}>{card.count}</strong>
+            <span style={queueCardDescription}>{card.description}</span>
+          </button>;
+        })}
       </nav>
 
       {queueTab === "stale-state" || queueTab === "contact-history" ? <div style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
