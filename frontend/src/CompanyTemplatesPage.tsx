@@ -46,19 +46,23 @@ const SMS_FIELDS: Field[] = [
   },
 ];
 
+// The welcome email's placeholders: the lead's and the company's details.
+const EMAIL_PLACEHOLDERS = "{first_name}, {company_name}, {company_phone}, {company_email}, {company_address}, {company_website}, "
+  + "{company_dot_number}, {company_mc_number}, {company_valuation_per_lb}, {smartmoving_id}, {customer_link}";
+
 const EMAIL_FIELDS: Field[] = [
   {
     key: "welcome_email_subject",
     label: "Welcome email subject",
     description: "The subject of the welcome email.",
-    placeholders: "{first_name}, {company_name}, {company_phone}, {smartmoving_id}, {customer_link}",
+    placeholders: EMAIL_PLACEHOLDERS,
     rows: 1,
   },
   {
     key: "welcome_email_body",
     label: "Welcome email",
     description: "Sent automatically when a new lead is created.",
-    placeholders: "{first_name}, {company_name}, {company_phone}, {smartmoving_id}, {customer_link}",
+    placeholders: EMAIL_PLACEHOLDERS,
     html: true,
   },
 ];
