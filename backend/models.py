@@ -1206,6 +1206,9 @@ class CompanyMessageTemplate(Base):
     rep_assignment_sms = Column(Text, nullable=False, default="")
     day2_followup_sms = Column(Text, nullable=False, default="")
     day3_followup_sms = Column(Text, nullable=False, default="")
+    # The automated emails' templates, as the SMS ones.
+    welcome_email_subject = Column(Text, nullable=False, default="")
+    welcome_email_body = Column(Text, nullable=False, default="")
     updated_by = Column(String(36), ForeignKey("users.id"))
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 

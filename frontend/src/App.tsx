@@ -124,6 +124,7 @@ function ProtectedRoutes() {
           <Route path="/settings/inventory-catalog" element={user?.role === "admin" ? <InventoryCatalogPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/moving-terms" element={user?.role === "admin" ? <MovingTermsPage /> : <Navigate to="/settings" replace />} />
           <Route path="/settings/templates" element={<CompanyTemplatesPage />} />
+          <Route path="/settings/email-templates" element={<CompanyTemplatesPage kind="email" />} />
           <Route path="/settings/message-templates" element={<MessageTemplatesPage />} />
           <Route path="/pending-duplications" element={<PendingDuplicationsPage />} />
           <Route path="/settings/pending-duplications" element={<Navigate to="/pending-duplications" replace />} />

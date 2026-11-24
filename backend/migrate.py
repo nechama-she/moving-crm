@@ -21,6 +21,10 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
+    # The automated welcome email's template, per company (new, empty columns). Remove after a deploy ran it.
+    with engine.begin() as connection:
+        add_column(connection, 'company_message_templates', 'welcome_email_subject', "TEXT NOT NULL DEFAULT ''")
+        add_column(connection, 'company_message_templates', 'welcome_email_body', "TEXT NOT NULL DEFAULT ''")
     # The work queue's Customer page and Customer chat cards (a new, empty table). Remove after a deploy ran it.
     with engine.begin() as connection:
         from models import CustomerPageState

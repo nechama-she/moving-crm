@@ -1,4 +1,4 @@
-"""Per-company SMS message templates."""
+"""Per-company automated SMS and email message templates."""
 
 import logging
 import re
@@ -68,18 +68,24 @@ DEFAULTS = {
 
 TEMPLATE_KEYS = list(DEFAULTS.keys())
 SYSTEM_DEFAULT_PREFIX = "sms_system_default."
+# The automated emails: the same system default and company templates as the SMS ones, with no text of their own.
+EMAIL_TEMPLATE_KEYS = ["welcome_email_subject", "welcome_email_body"]
+EMAIL_SYSTEM_DEFAULT_PREFIX = "email_system_default."
+SMS = (TEMPLATE_KEYS, SYSTEM_DEFAULT_PREFIX, DEFAULTS)
+EMAIL = (EMAIL_TEMPLATE_KEYS, EMAIL_SYSTEM_DEFAULT_PREFIX, {})
 
 
-def _system_defaults(db: Session) -> dict[str, str]:
+def _system_defaults(db: Session, kind=SMS) -> dict[str, str]:
+    keys, prefix, defaults = kind
     rows = (
         db.query(AppSetting)
-        .filter(AppSetting.key.in_([f"{SYSTEM_DEFAULT_PREFIX}{key}" for key in TEMPLATE_KEYS]))
+        .filter(AppSetting.key.in_([f"{prefix}{key}" for key in keys]))
         .all()
     )
-    saved = {row.key.removeprefix(SYSTEM_DEFAULT_PREFIX): row.value for row in rows}
+    saved = {row.key.removeprefix(prefix): row.value for row in rows}
     return {
-        key: (saved.get(key) or "").strip() or DEFAULTS[key]
-        for key in TEMPLATE_KEYS
+        key: (saved.get(key) or "").strip() or defaults.get(key, "")
+        for key in keys
     }
 
 
@@ -125,17 +131,13 @@ def _resolved_templates(
     row: CompanyMessageTemplate | None,
     company_id: str,
     defaults: dict[str, str],
+    kind=SMS,
 ) -> dict:
-    out = {"company_id": company_id, "defaults": defaults}
-    if row:
-        body = row.to_dict()
-    else:
-        body = {k: "" for k in TEMPLATE_KEYS}
-        body["company_id"] = company_id
-        body["updated_by"] = ""
-        body["updated_at"] = ""
-    out.update(body)
-    return out
+    keys = kind[0]
+    return {"company_id": company_id, "defaults": defaults,
+            **{key: (getattr(row, key, "") or "") if row else "" for key in keys},
+            "updated_by": (row.updated_by or "") if row else "",
+            "updated_at": row.updated_at.isoformat() if row and row.updated_at else ""}
 
 
 def _can_access_company(user: User, company_id: str, db: Session) -> bool:
@@ -156,54 +158,33 @@ class TemplatesUpdate(BaseModel):
     day3_followup_sms: str | None = Field(default=None)
 
 
-@router.get("/templates/defaults", summary="Get system-default SMS templates")
-def get_system_default_templates(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    defaults = _system_defaults(db)
-    return {
-        "company_id": "",
-        **defaults,
-        "defaults": defaults,
-        "updated_by": "",
-        "updated_at": "",
-    }
+class EmailTemplatesUpdate(BaseModel):
+    welcome_email_subject: str | None = Field(default=None)
+    welcome_email_body: str | None = Field(default=None)
 
 
-@router.put("/templates/defaults", summary="Update system-default SMS templates (admin)")
-def update_system_default_templates(
-    body: TemplatesUpdate,
-    user: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    for key in TEMPLATE_KEYS:
+def _defaults_payload(db: Session, kind, updated_by=""):
+    defaults = _system_defaults(db, kind)
+    return {"company_id": "", **defaults, "defaults": defaults, "updated_by": updated_by, "updated_at": ""}
+
+
+def _save_defaults(body, user: User, db: Session, kind):
+    keys, prefix, defaults = kind
+    for key in keys:
         value = getattr(body, key)
         if value is None:
             continue
-        setting_key = f"{SYSTEM_DEFAULT_PREFIX}{key}"
+        setting_key = f"{prefix}{key}"
         row = db.query(AppSetting).filter(AppSetting.key == setting_key).first()
         if not row:
             row = AppSetting(key=setting_key)
             db.add(row)
-        row.value = value.strip() or DEFAULTS[key]
+        row.value = value.strip() or defaults.get(key, "")
     db.commit()
-    defaults = _system_defaults(db)
-    return {
-        "company_id": "",
-        **defaults,
-        "defaults": defaults,
-        "updated_by": user.id,
-        "updated_at": "",
-    }
+    return _defaults_payload(db, kind, user.id)
 
 
-@router.get("/{company_id}/templates", summary="Get per-company SMS templates")
-def get_templates(
-    company_id: str,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+def _company_templates(company_id: str, user: User, db: Session, kind):
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -214,16 +195,10 @@ def get_templates(
         .filter(CompanyMessageTemplate.company_id == company_id)
         .first()
     )
-    return _resolved_templates(row, company_id, _system_defaults(db))
+    return _resolved_templates(row, company_id, _system_defaults(db, kind), kind)
 
 
-@router.put("/{company_id}/templates", summary="Update per-company SMS templates (admin)")
-def update_templates(
-    company_id: str,
-    body: TemplatesUpdate,
-    user: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
+def _save_company_templates(company_id: str, body, user: User, db: Session, kind):
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -237,7 +212,7 @@ def update_templates(
         row = CompanyMessageTemplate(company_id=company_id)
         db.add(row)
 
-    for key in TEMPLATE_KEYS:
+    for key in kind[0]:
         val = getattr(body, key)
         if val is not None:
             setattr(row, key, val)
@@ -245,4 +220,76 @@ def update_templates(
     row.updated_by = user.id
     db.commit()
     db.refresh(row)
-    return _resolved_templates(row, company_id, _system_defaults(db))
+    return _resolved_templates(row, company_id, _system_defaults(db, kind), kind)
+
+
+@router.get("/templates/defaults", summary="Get system-default SMS templates")
+def get_system_default_templates(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _defaults_payload(db, SMS)
+
+
+@router.put("/templates/defaults", summary="Update system-default SMS templates (admin)")
+def update_system_default_templates(
+    body: TemplatesUpdate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return _save_defaults(body, user, db, SMS)
+
+
+@router.get("/email-templates/defaults", summary="Get system-default email templates")
+def get_system_default_email_templates(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _defaults_payload(db, EMAIL)
+
+
+@router.put("/email-templates/defaults", summary="Update system-default email templates (admin)")
+def update_system_default_email_templates(
+    body: EmailTemplatesUpdate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return _save_defaults(body, user, db, EMAIL)
+
+
+@router.get("/{company_id}/templates", summary="Get per-company SMS templates")
+def get_templates(
+    company_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _company_templates(company_id, user, db, SMS)
+
+
+@router.put("/{company_id}/templates", summary="Update per-company SMS templates (admin)")
+def update_templates(
+    company_id: str,
+    body: TemplatesUpdate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return _save_company_templates(company_id, body, user, db, SMS)
+
+
+@router.get("/{company_id}/email-templates", summary="Get per-company email templates")
+def get_email_templates(
+    company_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _company_templates(company_id, user, db, EMAIL)
+
+
+@router.put("/{company_id}/email-templates", summary="Update per-company email templates (admin)")
+def update_email_templates(
+    company_id: str,
+    body: EmailTemplatesUpdate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return _save_company_templates(company_id, body, user, db, EMAIL)
