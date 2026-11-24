@@ -27,3 +27,17 @@
 .company-field-picker > p { font-size: 13px; color: #64748b; margin: 10px; }
 @media (pointer: coarse) { .company-field-results button { min-height: 44px; } }
 @media (max-width: 700px) { .company-documents { padding: 16px; } .company-documents-layout { grid-template-columns: 1fr; } .company-documents nav { max-height: 180px; overflow-y: auto; } .company-documents-editor { padding: 12px; } }
+
+/* A Bill of Lading's first page, part by part. */
+.bol-form { margin-top: 28px; }
+.bol-form-area { margin: 14px 0; padding: 10px 14px; border: 1px solid #d8dde6; border-radius: 8px; }
+.bol-form-area legend { padding: 0 6px; font-weight: 700; }
+.bol-form-block { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 12px; padding: 8px 0; border-bottom: 1px solid #eef1f4; }
+.bol-form-block > strong { min-width: 110px; align-self: center; }
+.bol-form-block label { display: grid; gap: 3px; font-size: 12px; }
+.bol-form-block input { min-width: 200px; }
+.bol-form-text { flex: 1 1 100%; }
+.bol-form-text textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; }
+.bol-form-moves { display: flex; gap: 6px; margin-left: auto; }
+.bol-form-add { display: flex; gap: 8px; padding-top: 10px; }
+.bol-form-block .bol-form-number input { min-width: 0; width: 70px; }

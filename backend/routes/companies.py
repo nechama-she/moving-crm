@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -100,9 +100,13 @@ def company_documents(company_id: str, _: User = Depends(require_admin), db: Ses
     company = db.get(Company, company_id)
     if company is None:
         raise HTTPException(404, 'Company not found')
-    rows = db.query(CompanyDocument).filter_by(company_id=company_id).order_by(
+    from sqlalchemy.orm import joinedload
+    # The Bill of Lading documents' forms, joined in this same query.
+    rows = db.query(CompanyDocument).options(joinedload(CompanyDocument.blocks)).filter_by(company_id=company_id).order_by(
         case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title).all()
-    return {'items': [document_payload(row) for row in rows], 'fields': company_fields(company) + move_fields()}
+    from bill_of_lading_form import ADDRESS_FILLS
+    return {'items': [document_payload(row) for row in rows], 'fields': company_fields(company) + move_fields(),
+            'address_fields': [{'key': key, 'label': label} for key, label in ADDRESS_FILLS.items()]}
 
 
 @router.put('/{company_id}/documents/{document_key}')
@@ -131,8 +135,110 @@ def save_company_document(company_id: str, document_key: str, body: CompanyDocum
     row.title, row.body_html = body.title.strip(), html
     row.move_type, row.used_in, row.enabled = body.move_type, body.used_in, body.enabled
     row.revision, row.updated_at = body.revision + 1, datetime.utcnow()
+    if row.used_in == 'bill_of_lading' and not row.blocks:
+        # A Bill of Lading document starts with the form every company starts with.
+        from company_documents import default_form
+        row.blocks = default_form(company_id, document_key)
     db.commit()
     return document_payload(row)
+
+
+class FormBlockInput(BaseModel):
+    area: str = Field(max_length=12)
+    kind: str = Field(max_length=12)
+    title: str = Field(default='', max_length=300)
+    text: str = Field(default='', max_length=20000)
+    fill: str = Field(default='', max_length=40)
+    note: str = Field(default='', max_length=300)
+    align: str = Field(default='', pattern=r'^(|left|right)$')
+    size: float | None = Field(default=None, ge=4, le=20)
+    height: float | None = Field(default=None, ge=5, le=60)
+    width: float | None = Field(default=None, ge=20, le=540)
+    space: float = Field(default=0, ge=0, le=40)
+    spot: int | None = Field(default=None, ge=1, le=2)
+
+
+class FormInput(BaseModel):
+    revision: int = Field(ge=1)
+    blocks: list[FormBlockInput] = Field(max_length=300)
+
+
+@router.put('/{company_id}/documents/{document_key}/form')
+def save_bill_of_lading_form(company_id: str, document_key: str, body: FormInput, _: User = Depends(require_admin),
+                             db: Session = Depends(get_db)):
+    """The Bill of Lading's front page as the company sets it, replacing the earlier one: a new version of the document,
+    so Bills of Lading not yet signed show it."""
+    from datetime import datetime
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph
+    from bill_of_lading_form import ADDRESS_FILLS, KINDS
+    from company_documents import MOVE_FIELDS, document_payload
+    from models import BillOfLadingBlock, CompanyDocument
+    if db.query(Company).filter_by(id=company_id).with_for_update().first() is None:
+        raise HTTPException(404, 'Company not found')
+    row = db.query(CompanyDocument).filter_by(company_id=company_id, key=document_key).first()
+    if row is None or row.used_in != 'bill_of_lading':
+        raise HTTPException(404, 'Bill of Lading document not found')
+    if body.revision != row.revision:
+        raise HTTPException(409, 'This document changed. Reload it before saving again.')
+    for block in body.blocks:
+        if block.kind not in KINDS or block.area not in KINDS[block.kind]:
+            raise HTTPException(422, f'A {block.kind or "block"} cannot go in that part of the form.')
+        if block.fill and (block.kind not in ('field', 'total') or block.fill not in {*MOVE_FIELDS, *ADDRESS_FILLS}):
+            raise HTTPException(422, 'Choose a move detail for each box it fills.')
+        if block.spot and not (block.kind == 'signature' and block.area == 'left'):
+            raise HTTPException(422, "Only the left column's signature lines can be the customer's.")
+        if block.kind == 'paragraph':
+            try:
+                Paragraph(block.text, ParagraphStyle('Check'))
+            except ValueError as error:
+                raise HTTPException(422, "A paragraph's formatting can't be read. Use <b> and </b> for bold.") from error
+    spots = sorted(block.spot for block in body.blocks if block.spot)
+    if spots != [1, 2]:
+        raise HTTPException(422, "The form needs the customer's two signature lines: one for spot 1 and one for spot 2.")
+    from bill_of_lading_pdf import form_problems
+    company = db.get(Company, company_id)
+    problems = form_problems([block.model_dump() for block in body.blocks], company.name)
+    if problems:
+        raise HTTPException(422, ' '.join(problems))
+    db.query(BillOfLadingBlock).filter_by(company_id=company_id, document_key=document_key).delete(synchronize_session=False)
+    db.expire(row, ['blocks'])
+    db.add_all(BillOfLadingBlock(company_id=company_id, document_key=document_key, position=index, **block.model_dump())
+               for index, block in enumerate(body.blocks))
+    row.revision, row.updated_at = row.revision + 1, datetime.utcnow()
+    db.commit()
+    return document_payload(row)
+
+
+# A mover's Bill of Lading PDF read for its wording: at most this size (the API's Lambda takes requests up to 6 MB, a
+# third larger once encoded).
+PDF_LIMIT = 4 * 1024 * 1024
+
+
+@router.post('/{company_id}/documents/{document_key}/form/read')
+async def read_bill_of_lading_pdf(company_id: str, document_key: str, file: UploadFile = File(...),
+                                  _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Once, a mover's PDF: its wording for the form's paragraphs and its terms for the back, as a draft to review and
+    save. The PDF is not kept."""
+    from bill_of_lading_form import read_upload
+    from company_documents import form_payload
+    from models import CompanyDocument
+    company = db.get(Company, company_id)
+    row = db.query(CompanyDocument).filter_by(company_id=company_id, key=document_key).first()
+    if company is None or row is None or row.used_in != 'bill_of_lading':
+        raise HTTPException(404, 'Bill of Lading document not found')
+    data = await file.read(PDF_LIMIT + 1)
+    if len(data) > PDF_LIMIT:
+        raise HTTPException(413, 'The PDF is larger than 4 MB.')
+    if not data.startswith(b'%PDF-'):
+        raise HTTPException(422, 'Upload a PDF file.')
+    try:
+        blocks, terms, unmatched = read_upload(data, company.name, form_payload(row.blocks))
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    except Exception as error:
+        raise HTTPException(422, 'The PDF could not be read. Upload another copy.') from error
+    return {'blocks': blocks, 'body_html': terms, 'unmatched': unmatched}
 
 
 @router.post('/{company_id}/documents/preview')

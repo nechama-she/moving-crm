@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { API_BASE } from './apiConfig';
 import { authHeaders, useAuth } from './AuthContext';
+import BillOfLadingFormEditor, { type FormBlock } from './BillOfLadingFormEditor';
 import './CompanyDocumentsPage.css';
 
 type Company = { id: string; name: string };
 type CompanyField = { key: string; label: string; value: string; missing: boolean };
-type CompanyDocument = { key: string; title: string; body_html: string; move_type: string; used_in: string; enabled: boolean; revision: number };
+// blocks: a Bill of Lading document's first page (its form), part by part.
+type CompanyDocument = { key: string; title: string; body_html: string; move_type: string; used_in: string; enabled: boolean; revision: number; blocks: FormBlock[] };
 
 // The paperwork a document goes with, after the part filled from the move.
 const DOCUMENT_USES: Record<string, string> = { estimate: 'Estimate', work_order: 'Work order', bill_of_lading: 'Bill of Lading' };
@@ -24,6 +26,8 @@ export default function CompanyDocumentsPage() {
   const [linkUrl, setLinkUrl] = useState('');
   const [linkOpen, setLinkOpen] = useState(false);
   const [fields, setFields] = useState<CompanyField[]>([]);
+  // The address lines a form box can show, besides the move details in fields.
+  const [addressFields, setAddressFields] = useState<{ key: string; label: string }[]>([]);
   const [fieldOpen, setFieldOpen] = useState(false);
   const [fieldSearch, setFieldSearch] = useState('');
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -92,7 +96,7 @@ export default function CompanyDocumentsPage() {
     if (!companyId) return;
     const controller = new AbortController();
     setBusy(true); setDraft(undefined); setDocuments([]); setFields([]); setFieldOpen(false); setPreview(null); setLinkOpen(false); setMessage('');
-    api(base, 'GET', undefined, controller.signal).then(data => { setDocuments(data.items); setFields(data.fields); setDraft(data.items[0]); setDirty(false); })
+    api(base, 'GET', undefined, controller.signal).then(data => { setDocuments(data.items); setFields(data.fields); setAddressFields(data.address_fields || []); setDraft(data.items[0]); setDirty(false); })
       .catch(e => { if (!controller.signal.aborted) setMessage(e.message); })
       .finally(() => { if (!controller.signal.aborted) setBusy(false); });
     return () => controller.abort();
@@ -144,7 +148,7 @@ export default function CompanyDocumentsPage() {
     </select></label>
     <div className="company-documents-layout"><nav aria-label="Company documents">
       {documents.map(row => <button key={row.key} type="button" disabled={busy} aria-current={draft?.key === row.key ? 'page' : undefined} onClick={() => { if (maySwitch()) { setDraft(row); setDirty(false); setPreview(null); setLinkOpen(false); } }}>{row.title} ({DOCUMENT_USES[row.used_in] || 'Estimate'}){!row.enabled && ' (disabled)'}</button>)}
-      <button type="button" disabled={!companyId || busy} onClick={() => { if (maySwitch()) { setDraft({ key: crypto.randomUUID(), title: 'New document', body_html: '', move_type: 'Long Distance', used_in: 'estimate', enabled: true, revision: 0 }); setDirty(true); setPreview(null); setLinkOpen(false); } }}>Add document</button>
+      <button type="button" disabled={!companyId || busy} onClick={() => { if (maySwitch()) { setDraft({ key: crypto.randomUUID(), title: 'New document', body_html: '', move_type: 'Long Distance', used_in: 'estimate', enabled: true, revision: 0, blocks: [] }); setDirty(true); setPreview(null); setLinkOpen(false); } }}>Add document</button>
     </nav>
     {draft && <section>
       <label>Document name<input value={draft.title} maxLength={200} disabled={busy} onChange={e => update({ title: e.target.value })} /></label>
@@ -205,6 +209,30 @@ export default function CompanyDocumentsPage() {
         <button type="button" disabled={busy || !draft.title.trim()} onClick={async () => { setBusy(true); try { const result = await api(`${base}/preview`, 'POST', draft); setPreview(result.body_html); } catch (e) { setMessage((e as Error).message); } finally { setBusy(false); } }}>Preview</button>
         {dirty && <span>Unsaved changes</span>}</div>
       {preview !== null && <article className="company-documents-preview"><h2>Preview</h2><div dangerouslySetInnerHTML={{ __html: preview }} /></article>}
+      {draft.used_in === 'bill_of_lading' && draft.revision > 0 && <BillOfLadingFormEditor blocks={draft.blocks} busy={busy}
+        fields={[...fields.filter(field => !field.key.startsWith('company_')).map(field => ({ key: field.key, label: field.label.replace(/^Move: /, '') })), ...addressFields]}
+        onSave={async blocks => {
+          setBusy(true); setMessage('');
+          try {
+            const saved = await api(`${base}/${draft.key}/form`, 'PUT', { revision: draft.revision, blocks });
+            setDocuments(current => current.map(row => row.key === saved.key ? saved : row));
+            // The document's own unsaved changes stay, on the new version.
+            setDraft(current => current ? { ...current, revision: saved.revision, blocks: saved.blocks } : saved); setMessage('Form saved.');
+          } catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
+        }}
+        onRead={async file => {
+          setBusy(true); setMessage('');
+          try {
+            const form = new FormData(); form.append('file', file);
+            const response = await fetch(`${base}/${draft.key}/form/read`, { method: 'POST', headers: authHeaders(token), body: form });
+            const data = await response.json();
+            if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not read the PDF.');
+            // The terms go into the text above, as unsaved changes to check and save.
+            if (data.body_html) { if (editor.current) editor.current.innerHTML = data.body_html; update({ body_html: data.body_html }); }
+            setMessage('Read the PDF. Check the wording, then save the document and the form.');
+            return { blocks: data.blocks as FormBlock[], unmatched: data.unmatched as string[] };
+          } catch (e) { setMessage((e as Error).message); return null; } finally { setBusy(false); }
+        }} />}
     </section>}
     </div><p role="status">{message || (busy ? 'Loading...' : '')}</p>
   </main>;

@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime
 
-from sqlalchemy import Column, String, Text, DateTime, Date, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, exists, text
+from sqlalchemy import Column, String, Text, DateTime, Date, Float, ForeignKey, ForeignKeyConstraint, Integer, BigInteger, Boolean, UniqueConstraint, LargeBinary, Numeric, Index, exists, text
 from sqlalchemy.orm import column_property, declarative_base, relationship, validates
 
 from company_colors import resolve_company_color
@@ -55,6 +55,32 @@ class CompanyDocument(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     revision = Column(Integer, nullable=False, default=1)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # A Bill of Lading document's front page, as the company sets it (read with the document, in its query).
+    blocks = relationship('BillOfLadingBlock', order_by='BillOfLadingBlock.position', cascade='all, delete-orphan', lazy='select')
+
+
+class BillOfLadingBlock(Base):
+    """One part of a Bill of Lading's front page (bill_of_lading_form): a box, title, bar, paragraph, signature line,
+    total, option, or charges row, in its area of the page, in order. The CRM draws the page from them."""
+    __tablename__ = 'bill_of_lading_blocks'
+    __table_args__ = (ForeignKeyConstraint(['company_id', 'document_key'], ['company_documents.company_id', 'company_documents.key'],
+                                           ondelete='CASCADE'),)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    company_id = Column(String(36), nullable=False, index=True)
+    document_key = Column(String(80), nullable=False)
+    position = Column(Integer, nullable=False)
+    area = Column(String(12), nullable=False)
+    kind = Column(String(12), nullable=False)
+    title = Column(Text, nullable=False, default='')  # A box's label, a bar's or table row's words.
+    text = Column(Text, nullable=False, default='')  # A paragraph's wording (bold with <b>).
+    fill = Column(String(40), nullable=False, default='')  # The move detail a box shows; blank to fill by hand.
+    note = Column(String(300), nullable=False, default='')  # A signature's date label, a total's small print, a row's amount box.
+    align = Column(String(5), nullable=False, default='')  # A summary row's label: 'left' or 'right'.
+    size = Column(Float)  # Its text size, where it has its own.
+    height = Column(Float)
+    width = Column(Float)  # An agent-row box's width; the last one takes the rest of the row.
+    space = Column(Float, nullable=False, default=0)  # Space after it.
+    spot = Column(Integer)  # The customer's signature spot (1 or 2) a signature line is.
 
 
 class BillOfLadingSignature(Base):
