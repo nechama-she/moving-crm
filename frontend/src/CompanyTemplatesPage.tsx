@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
+import HtmlEmailEditor from "./HtmlEmailEditor";
 
 type Company = { id: string; name: string };
 
@@ -15,7 +16,8 @@ type TemplatesResponse = Record<TemplateKey, string> & {
 
 const SYSTEM_DEFAULT_ID = "__system_default__";
 
-type Field = { key: TemplateKey; label: string; description: string; placeholders: string; rows?: number };
+// html: edited as an email's HTML (HtmlEmailEditor) instead of plain text.
+type Field = { key: TemplateKey; label: string; description: string; placeholders: string; rows?: number; html?: boolean };
 
 const SMS_FIELDS: Field[] = [
   {
@@ -57,6 +59,7 @@ const EMAIL_FIELDS: Field[] = [
     label: "Welcome email",
     description: "Sent automatically when a new lead is created.",
     placeholders: "{first_name}, {company_name}, {company_phone}, {smartmoving_id}, {customer_link}",
+    html: true,
   },
 ];
 
@@ -218,14 +221,15 @@ export default function CompanyTemplatesPage({ kind = "sms" }: { kind?: keyof ty
                     )}
                   </div>
                 </div>
-                <textarea
+                {f.html ? <HtmlEmailEditor value={current} disabled={!isAdmin} placeholders={f.placeholders.split(", ")}
+                  onChange={(html) => setValues((prev) => ({ ...prev, [f.key]: html }))} /> : <textarea
                   value={current}
                   onChange={(e) => setValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
                   disabled={!isAdmin}
                   placeholder={usingDefault ? "Using system default — leave blank to keep using it" : ""}
                   rows={f.rows ?? 8}
                   style={textarea}
-                />
+                />}
                 {!editingSystemDefault && <details style={{ marginTop: 6 }}>
                   <summary style={{ fontSize: 12, color: "#0176d3", cursor: "pointer" }}>
                     {usingDefault ? "View system default (currently in use)" : "View system default"}
