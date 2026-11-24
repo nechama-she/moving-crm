@@ -115,3 +115,76 @@ def test_other_conversations_are_not_customer_page_chats(db):
     record = conversation({'user_id': 'cp-access', 'message_id': 'm-1', 'timestamp': 1795000000000, 'platform': 'messenger',
                            'page_id': 'p', 'role': 'user', 'record_type': 'message'})
     assert message_stream_handler._customer_page_chat(db, record) is False
+
+
+def test_asking_for_a_code_comes_between_opened_and_verified(db, access):
+    from customer_page_states import CHAT, OPENED, VERIFIED, advance, items, request_code
+    assert advance(db, access, OPENED) is True
+    assert request_code(db, access, 'sms') is True
+    row = items(db)[0]
+    assert (row['state'], row['code_channel']) == ('code_requested', 'sms')
+    # Opening the page again keeps it; asking again changes nothing.
+    assert advance(db, access, OPENED) is False and request_code(db, access, 'email') is False
+    assert items(db)[0]['state'] == 'code_requested'
+    assert advance(db, access, VERIFIED) is True
+    assert (items(db)[0]['state'], items(db)[0]['code_channel']) == ('verified', '')
+    assert request_code(db, access, 'email') is False  # Never back from a later step.
+    assert advance(db, access, CHAT) is True and items(db)[0]['state'] == 'chat'
+
+
+def test_asking_for_a_code_with_no_row_yet_adds_it(db, access):
+    from customer_page_states import items, request_code
+    assert request_code(db, access, 'email') is True
+    assert (items(db)[0]['state'], items(db)[0]['code_channel']) == ('code_requested', 'email')
+
+
+def two_leads_one_phone(db):
+    """A second lead with the same phone, each with a customer page row."""
+    from customer_page_states import OPENED, advance
+    from models import Lead, LeadJob, PublicMoveAccess
+    db.add(Lead(id='other', full_name='Same Phone', phone='(240) 555-0188', number='48213075527'))
+    db.flush()
+    db.add(LeadJob(id='other-job', lead_id='other', job_order=1))
+    db.flush()
+    db.add(PublicMoveAccess(id='other-access', lead_id='other', job_id='other-job', key_hash='k2', request_hash='r2',
+                            token_hash='t2', expires_at=datetime(2030, 1, 1)))
+    db.commit()
+    for access_id in ('access', 'other-access'):
+        advance(db, db.get(PublicMoveAccess, access_id), OPENED)
+    db.commit()
+
+
+def stream(arn, item):
+    return {'eventName': 'INSERT', 'eventSourceARN': f'arn:aws:dynamodb:us-east-1:1:table/{arn}/stream/2026',
+            'dynamodb': {'NewImage': {key: TypeSerializer().serialize(value) for key, value in item.items()}, 'SequenceNumber': '1'}}
+
+
+def text(body, lead_id='lead'):
+    return stream('sms_messages', {'message_id': 'sms-1', 'timestamp': 1795000000000, 'phone_number': '+12405550188',
+                                   'company_number': '+12405550100', 'direction': 'sent', 'text': body,
+                                   'record_type': 'message', 'lead_id': lead_id})
+
+
+def test_the_reps_text_clears_only_its_own_lead(db):
+    import message_stream_handler
+    two_leads_one_phone(db)
+    message_stream_handler._process_record(db, text('Hi Dana, calling you shortly'), '1')
+    assert states(db) == [('other', 'opened')]
+
+
+def test_the_reps_call_clears_only_its_own_lead(db):
+    import message_stream_handler
+    two_leads_one_phone(db)
+    call = stream('calls', {'message_id': 'call-1', 'timestamp': 1795000000000, 'phone_number': '+12405550188',
+                            'company_number': '+12405550100', 'direction': 'outbound', 'answered': True,
+                            'record_type': 'call', 'lead_id': 'other'})
+    message_stream_handler._process_record(db, call, '1')
+    assert states(db) == [('lead', 'opened')]
+
+
+def test_the_verification_code_text_clears_nothing(db):
+    import message_stream_handler
+    from customer_page_states import VERIFICATION_CODE_TEXT
+    two_leads_one_phone(db)
+    message_stream_handler._process_record(db, text(VERIFICATION_CODE_TEXT.format(code='482913')), '1')
+    assert sorted(states(db)) == [('lead', 'opened'), ('other', 'opened')]

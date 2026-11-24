@@ -1,6 +1,6 @@
 """The work queue's Customer page and Customer chat cards (customer_page_states): one row per lead, its customer's
-latest step on the customer page. Opening the page, verifying and chatting move the row forward, never back; a text
-or call from the rep, or Ignore, clears it."""
+latest step on the customer page. Opening the page, asking for a code, verifying and chatting move the row forward,
+never back; a text or call from the rep, or Ignore, clears it."""
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, literal, select
@@ -11,17 +11,26 @@ from models import Company, CustomerPageState as Row, Lead, LeadJob, PublicMoveA
 from realtime import publish_realtime_event
 
 OPENED, VERIFIED, CHAT = 1, 2, 3
+# The text that sends a customer their verification code (public_moves.deliver_code). It is the page's own text, not
+# the rep contacting the customer, so it clears no row.
+VERIFICATION_CODE_TEXT = 'Your moving estimate verification code is {code}. It expires in 10 minutes. Do not share this code.'
+
+
+def is_verification_code_text(text):
+    prefix, suffix = VERIFICATION_CODE_TEXT.split('{code}')
+    text = str(text or '').strip()
+    return text.startswith(prefix) and text.endswith(suffix) and text[len(prefix):len(text) - len(suffix)].isdigit()
 STATES = {OPENED: 'opened', VERIFIED: 'verified', CHAT: 'chat'}
 EVENT = 'customer_page_state_changed'
 
 
-def _upsert(db, statement):
-    """Runs the insert of one row (values or a select), moving an existing row only to a later step. Returns the
-    lead's id when the row changed, else None."""
+def _upsert(db, statement, where=None):
+    """Runs the insert of one row (values or a select), moving an existing row only to a later step (or where says).
+    Returns the lead's id when the row changed, else None."""
     statement = statement.on_conflict_do_update(
         index_elements=[Row.lead_id],
-        set_={'job_id': statement.excluded.job_id, 'state': statement.excluded.state, 'at': statement.excluded.at},
-        where=Row.state < statement.excluded.state,
+        set_={column: getattr(statement.excluded, column) for column in ('job_id', 'state', 'code_channel', 'at')},
+        where=Row.state < statement.excluded.state if where is None else where,
     ).returning(Row.lead_id)
     return db.execute(statement).scalar()
 
@@ -41,12 +50,20 @@ def advance(db, access, state):
                                           at=datetime.now(timezone.utc))) is not None
 
 
+def request_code(db, access, channel):
+    """The customer asked for a verification code ('sms' or 'email'): the lead's Opened row, or none yet, becomes
+    Code requested. Never back from a later step. Does not commit; returns whether it changed."""
+    statement = _insert(db).values(lead_id=access.lead_id, job_id=access.job_id, state=OPENED, code_channel=channel,
+                                   at=datetime.now(timezone.utc))
+    return _upsert(db, statement, where=(Row.state == OPENED) & Row.code_channel.is_(None)) is not None
+
+
 def advance_to_chat(db, access_id, at):
     """The customer's chat message on the page whose access is access_id: the lead's row moves to Chat, read from
     the access in the same statement. Does not commit; returns the lead's id when the row changed."""
-    source = (select(PublicMoveAccess.lead_id, PublicMoveAccess.job_id, literal(CHAT), literal(at))
+    source = (select(PublicMoveAccess.lead_id, PublicMoveAccess.job_id, literal(CHAT), literal(None), literal(at))
               .where(PublicMoveAccess.id == access_id))
-    return _upsert(db, _insert(db).from_select(['lead_id', 'job_id', 'state', 'at'], source))
+    return _upsert(db, _insert(db).from_select(['lead_id', 'job_id', 'state', 'code_channel', 'at'], source))
 
 
 def clear(db, condition):
@@ -74,7 +91,9 @@ def items(db, lead_id=None):
                       load_only(LeadJob.id, LeadJob.job_order)))
     if lead_id is not None:
         query = query.filter(Row.lead_id == lead_id)
-    return [{'lead_id': lead.id, 'job_id': job.id, 'state': STATES[row.state], 'at': row.at.isoformat(),
+    return [{'lead_id': lead.id, 'job_id': job.id, 'at': row.at.isoformat(),
+             'state': 'code_requested' if row.state == OPENED and row.code_channel else STATES[row.state],
+             'code_channel': row.code_channel or '',
              'client': lead.full_name or '', 'phone': lead.phone or '', 'job_number': job_number(lead, job),
              'company': company or '', 'rep': rep or 'Unassigned',
              'smartmoving_id': str(lead.smartmoving_id or '').strip(), 'quote_number': str(lead.quote_number or '').strip()}

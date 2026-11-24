@@ -34,7 +34,7 @@ type FollowupAttempt = { task_id?: string; notes?: string; task_type?: string; n
 type FollowupLead = SmartMovingFields & { lead_id: string; client: string; client_phone: string; rep: string; company: string; status: string; priority: number; created_at: string; next_due: string; smartmoving_created_time: string; created_time_source: "smartmoving" | "crm"; completed_count: number; completed_message_count: number; overdue_count: number; overdue_message_count: number; attempts: FollowupAttempt[]; message_attempts: FollowupAttempt[]; timeline: FollowupAttempt[] };
 type RawMessageState = SmartMovingFields & { channel: string; message_id: string; lead_id: string | null; client_identifier: string; company_identifier: string; direction: string; conversation_ended: boolean; occurred_at: string };
 type RawMissedCallState = SmartMovingFields & { client_identifier: string; company_identifier: string; call_id: string; lead_id: string | null; missed_count: number; first_missed_at: string; latest_missed_at: string };
-type CustomerPageTab = "all" | "opened" | "verified";
+type CustomerPageTab = "all" | "opened" | "code_requested" | "verified";
 // The work queue's cards in their default order; each user can put them in their own (QUEUE_CARDS in unanswered_messages.py).
 const QUEUE_CARDS = ["customer-page", "customer-chat", "messages", "calls", "leads", "followups", "signatures", "message-state", "missed-call-state", "first-contact-state"] as const;
 type QueueCard = typeof QUEUE_CARDS[number];
@@ -50,7 +50,7 @@ function arrangeCards(saved: string[]): QueueCard[] {
 }
 // How many customer page rows are at each step.
 const countByState = (rows: CustomerPageRow[]) => {
-  const counts = { opened: 0, verified: 0, chat: 0 };
+  const counts = { opened: 0, code_requested: 0, verified: 0, chat: 0 };
   rows.forEach((row) => { counts[row.state] += 1; });
   return counts;
 };
@@ -1070,7 +1070,7 @@ export default function UnansweredMessagesPage() {
   const queueCards: Record<QueueCard, { label: string; count: React.ReactNode; description: string; active: boolean; open: () => void }> = {
     "messages": { label: "Unanswered Messages", count: globalCounts.unanswered, description: "Client messages waiting for a response", active: queueTab === "messages", open: () => setQueueTab("messages") },
     "calls": { label: "Missed Calls", count: globalMissedCallCount, description: "Missed calls without a later contact attempt", active: queueTab === "calls", open: () => setQueueTab("calls") },
-    "customer-page": { label: "Customer Page", count: loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.verified, description: "Customers who opened their page", active: queueTab === "customer-page", open: () => setQueueTab("customer-page") },
+    "customer-page": { label: "Customer Page", count: loadingCustomerPage ? "Loading..." : customerPageCounts.opened + customerPageCounts.code_requested + customerPageCounts.verified, description: "Customers who opened their page", active: queueTab === "customer-page", open: () => setQueueTab("customer-page") },
     "customer-chat": { label: "Customer Chat", count: loadingCustomerPage ? "Loading..." : customerPageCounts.chat, description: "Customers who started the chat on their page", active: queueTab === "customer-chat", open: () => setQueueTab("customer-chat") },
     "leads": { label: "Leads Awaiting First Contact", count: queueStatus?.ready || queueStatus?.enabled === false ? globalFirstContactCounts.new + globalFirstContactCounts.overdue : "Loading...", description: "New leads with no call attempt", active: queueTab === "leads", open: () => setQueueTab("leads") },
     "followups": { label: "Follow-ups", count: loadingFollowups && !followupLeads.length ? "Loading..." : priorityCounts.all || 0, description: "Tasks scheduled across all priorities", active: queueTab === "followups", open: () => setQueueTab("followups") },
@@ -1203,12 +1203,12 @@ export default function UnansweredMessagesPage() {
         const columns = ["Client", "Phone", "Rep", "Company", "Job", ...(chat ? [] : ["State"]), chat ? "Chat Started" : "When", "Action"];
         return <section style={{ background: "#fff", border: "1px solid #d8dde6", borderRadius: 10, overflow: "hidden" }}>
           <div style={{ padding: "16px 18px" }}>
-            <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>{chat ? `Customer Chat (${filteredCustomerPageCounts.chat})` : `Customer Page (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.verified})`}</h2>
-            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{chat ? "Customers who started the chat on their customer page." : "Customers who opened their customer page, and whether they verified."} A text or call to the customer, or Ignore, clears the row.</p>
+            <h2 style={{ margin: 0, color: "#032d60", fontSize: 18 }}>{chat ? `Customer Chat (${filteredCustomerPageCounts.chat})` : `Customer Page (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.code_requested + filteredCustomerPageCounts.verified})`}</h2>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{chat ? "Customers who started the chat on their customer page." : "Customers who opened their customer page, asked for a code, or verified."} A text or call to the customer, or Ignore, clears the row.</p>
           </div>
           {!chat ? <nav aria-label="Customer page views" style={{ display: "flex", gap: 8, padding: "0 18px", borderBottom: "1px solid #d8dde6" }}>
-            {(["all", "opened", "verified"] as const).map((view) => <button key={view} type="button" className="slds-button" aria-current={customerPageTab === view ? "page" : undefined} onClick={() => setCustomerPageTab(view)} style={{ padding: "12px 14px", border: 0, borderBottom: customerPageTab === view ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0, background: "transparent", color: "#032d60", fontWeight: customerPageTab === view ? 700 : 400 }}>
-              {view === "all" ? `All (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.verified})` : view === "opened" ? `Opened, not verified (${filteredCustomerPageCounts.opened})` : `Verified (${filteredCustomerPageCounts.verified})`}
+            {(["all", "opened", "code_requested", "verified"] as const).map((view) => <button key={view} type="button" className="slds-button" aria-current={customerPageTab === view ? "page" : undefined} onClick={() => setCustomerPageTab(view)} style={{ padding: "12px 14px", border: 0, borderBottom: customerPageTab === view ? "3px solid #0176d3" : "3px solid transparent", borderRadius: 0, background: "transparent", color: "#032d60", fontWeight: customerPageTab === view ? 700 : 400 }}>
+              {view === "all" ? `All (${filteredCustomerPageCounts.opened + filteredCustomerPageCounts.code_requested + filteredCustomerPageCounts.verified})` : view === "opened" ? `Opened, not verified (${filteredCustomerPageCounts.opened})` : view === "code_requested" ? `Code requested (${filteredCustomerPageCounts.code_requested})` : `Verified (${filteredCustomerPageCounts.verified})`}
             </button>)}
           </nav> : null}
           <div style={{ overflowX: "auto" }}>

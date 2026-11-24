@@ -474,7 +474,7 @@ class CodeRequest(BaseModel):
 
 
 def deliver_code(lead, channel, code, db: Session):
-    message = f'Your moving estimate verification code is {code}. It expires in 10 minutes. Do not share this code.'
+    message = customer_page_states.VERIFICATION_CODE_TEXT.format(code=code)
     region = setting('AWS_REGION') or 'us-east-1'
     if channel == 'email':
         sender = setting('PUBLIC_MOVE_EMAIL_FROM')
@@ -512,7 +512,8 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
     lead = db.get(Lead, access.lead_id)
     channel = body.channel
     fingerprint = verification_fingerprint(access, db, request)
-    if is_rep_request(access, request):
+    rep = is_rep_request(access, request)
+    if rep:
         contacts, _, company = rep_contacts(access, db)
         contact = contacts.get(channel)
         if not contact:
@@ -560,6 +561,10 @@ def send_code(body: CodeRequest, access: PublicMoveAccess = Depends(public_acces
         try: deliver_code(lead, channel, code, db)
         except HTTPException: raise
         except Exception as exc: raise HTTPException(502, 'Unable to deliver a code. Please try later or contact your moving team.') from exc
+    # The customer asked for a code: their Customer page card row moves on to Code requested (not the rep's code).
+    if not rep and customer_page_states.request_code(db, access, channel):
+        db.commit()
+        customer_page_states.publish_row(db, access.lead_id)
     return {'sent': True, 'expires_in': 600, 'resend_after': 60}
 
 
@@ -2152,6 +2157,26 @@ def _save_packing_change(body, access, db):
         sync_long_carry_charges(lead, job, db, 'delivery')
         db.commit()
         return
+    if body.change and body.change.kind == 'mode':
+        from routes.pricing import infer_job_move_type
+        move_type, plan = infer_job_move_type(lead, job, db)
+        if (move_type or '').lower() == 'local':
+            # A local job's packing choice changes its hours (and travel rate), not one line: save it, price the job once.
+            from routes.local_pricing import load_settings
+            mode = body.change.mode
+            settings = load_settings(plan, db) if plan and mode == 'full' else None
+            if mode not in ('full', 'none') or (mode == 'full' and not (settings and settings.full_pack_hourly)):
+                raise HTTPException(409, 'That packing service is not priced. Refresh your estimate.')
+            selection = json.loads(job.customer_packing_package or '{}')
+            selection['mode'] = mode
+            if mode == 'full':
+                selection['item_ids'], selection['material_item_ids'] = [], []
+            job.customer_packing_package = json.dumps(selection)
+            from pricing_save import attempt_pricing
+            from routes.pricing import calculate_and_save_lead_job_price
+            attempt_pricing(lead, job, db, lambda: calculate_and_save_lead_job_price(lead, job, db))  # Also the lead's total.
+            db.commit()
+            return
     options = customer_packing_options(lead, job, db)
     change = body.change
     touched = None
@@ -2241,7 +2266,7 @@ def _save_packing_change(body, access, db):
         package = (customer_packing_package(lead, job, db, selection_override=body.package.model_dump(mode='json'))
                    if body.package.additional_items else customer_packing_package(lead, job, db))
         if package is None:
-            raise HTTPException(409, 'Long-distance packing is not available. Refresh your estimate.')
+            raise HTTPException(409, 'Packing is not available. Refresh your estimate.')
         selection = body.package.model_dump(mode='json')
         if selection['material_item_ids'] is None:
             selection['material_item_ids'] = list(selection['item_ids'])

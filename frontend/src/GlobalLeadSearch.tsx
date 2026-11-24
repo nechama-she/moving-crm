@@ -201,6 +201,7 @@ export default function GlobalLeadSearch() {
               lead.phone_number ? displayPhone(lead.phone_number) : "",
               lead.email || "",
               lead.company_name || "",
+              lead.assigned_to_name || "",
             ].filter(Boolean);
             return (
               <Link

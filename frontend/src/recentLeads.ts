@@ -7,6 +7,7 @@ export type RecentLead = {
   email?: string;
   company_name?: string;
   quote_number?: string;
+  assigned_to_name?: string;
 };
 
 const MAX_RECENT = 6;
@@ -32,6 +33,7 @@ export function rememberRecentLead(userId: string | undefined, lead: RecentLead)
     email: lead.email,
     company_name: lead.company_name,
     quote_number: lead.quote_number,
+    assigned_to_name: lead.assigned_to_name,
   };
   const next = [entry, ...readRecentLeads(userId).filter((item) => item.id !== lead.id)].slice(0, MAX_RECENT);
   try {

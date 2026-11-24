@@ -150,6 +150,8 @@ class CustomerPageState(Base):
     lead_id = Column(String(36), ForeignKey('leads.id', ondelete='CASCADE'), primary_key=True)
     job_id = Column(String(36), ForeignKey('lead_jobs.id', ondelete='CASCADE'), nullable=False)
     state = Column(Integer, nullable=False)
+    # An Opened row whose customer asked for a verification code: how it was sent, 'sms' or 'email'.
+    code_channel = Column(String(10))
     at = Column(DateTime(timezone=True), nullable=False)
 
 
