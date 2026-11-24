@@ -1855,8 +1855,7 @@ def calculate_and_save_lead_job_price(lead: Lead, job: LeadJob, db: Session) -> 
         job.price += add_stairs_charges(lead, job, db, matched_plan, move_type)
         job.price += add_long_carry_charges(lead, job, db, matched_plan, move_type)
         job.price += add_elevator_charges(lead, job, db, matched_plan, move_type)
-        from extra_stops import add_charges as add_extra_stop_charges
-        job.price += add_extra_stop_charges(lead,job,db,matched_plan)
+        # Local jobs have no additional stops.
         job.price += add_service_charges(lead, job, db, matched_plan)
         db.finish()
         from routes.leads import _refresh_lead_estimated_total
