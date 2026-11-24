@@ -187,36 +187,6 @@ def seed_documents(connection):
             enabled=False, revision=1, updated_at=datetime.utcnow()).on_conflict_do_nothing())
 
 
-def form_payload(blocks):
-    from bill_of_lading_form import FIELDS
-    return [{field: getattr(row, field) for field in FIELDS} for row in blocks]
-
-
-def default_form(company_id, document_key):
-    """The form every Bill of Lading starts with, as rows for the document."""
-    from bill_of_lading_form import DEFAULT_BLOCKS
-    from models import BillOfLadingBlock
-    return [BillOfLadingBlock(company_id=company_id, document_key=document_key, position=index, **row)
-            for index, row in enumerate(DEFAULT_BLOCKS)]
-
-
-def seed_bill_of_lading_forms(connection):
-    """Once: every Bill of Lading document without a form gets the form drawn until now. Returns how many."""
-    from sqlalchemy import exists
-    from sqlalchemy.orm import Session
-    from models import BillOfLadingBlock, CompanyDocument
-    BillOfLadingBlock.__table__.create(connection, checkfirst=True)
-    with Session(bind=connection) as db:
-        rows = db.query(CompanyDocument.company_id, CompanyDocument.key).filter(
-            CompanyDocument.used_in == 'bill_of_lading',
-            ~exists().where(BillOfLadingBlock.company_id == CompanyDocument.company_id,
-                            BillOfLadingBlock.document_key == CompanyDocument.key)).all()
-        for company_id, key in rows:
-            db.add_all(default_form(company_id, key))
-        db.flush()
-    return len(rows)
-
-
 def new_company_document(company_id):
     from models import CompanyDocument
     return CompanyDocument(company_id=company_id, key=DEFAULT_KEY, title=DEFAULT_TITLE,
@@ -224,8 +194,7 @@ def new_company_document(company_id):
 
 
 def document_payload(row):
-    payload = {key: getattr(row, key) for key in ('key', 'title', 'body_html', 'move_type', 'used_in', 'enabled', 'revision')}
-    return {**payload, 'blocks': form_payload(row.blocks) if row.used_in == 'bill_of_lading' else []}
+    return {key: getattr(row, key) for key in ('key', 'title', 'body_html', 'move_type', 'used_in', 'enabled', 'revision')}
 
 
 # The paperwork a document can go with; each has a part built from the move, followed by its documents.
@@ -249,30 +218,24 @@ def fill_move_fields(html, values):
 
 def documents_for(lead, job, db, used_in='estimate'):
     from sqlalchemy import case
-    from sqlalchemy.orm import joinedload
     from models import Company, CompanyDocument
     from move_types import normalize_move_type
     company = db.get(Company, job.company_id or lead.company_id) if (job.company_id or lead.company_id) else None
     if company is None:
         return []
     move_type = normalize_move_type(lead.move_type)
-    query = db.query(CompanyDocument).filter(CompanyDocument.company_id == company.id,
+    rows = db.query(CompanyDocument).filter(CompanyDocument.company_id == company.id,
         CompanyDocument.enabled.is_(True), CompanyDocument.used_in == used_in,
         CompanyDocument.move_type.in_([move_type, 'All'])).order_by(
-            case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title)
-    if used_in == 'bill_of_lading':
-        # The front page's blocks, joined in this same query.
-        query = query.options(joinedload(CompanyDocument.blocks))
+            case((CompanyDocument.key == DEFAULT_KEY, 0), else_=1), CompanyDocument.title).all()
     result = []
-    for row in query.all():
+    for row in rows:
         # Escape substituted values before parsing: names are text, never markup.
         body, _ = resolve_parameters(row.body_html, company, html=True)
         title, _ = resolve_parameters(row.title, company)
         body = clean_html(body)
-        document = {'key': row.key, 'revision': row.revision, 'title': title, 'body_html': body}
-        if used_in == 'bill_of_lading':
-            document['blocks'] = form_payload(row.blocks)
-        result.append(document)
+        result.append({'key': row.key, 'revision': row.revision,
+                       'title': title, 'body_html': body})
     return result
 
 

@@ -10,10 +10,62 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate
 
-from bill_of_lading_form import ADDRESS_FILLS, AREAS
-
 LEFT, MIDDLE, RIGHT, TOP, BOTTOM = 36, 303, 576, 776, 22
 BLACK = colors.black
+
+# The form's wording, as printed; {company} is the company's name.
+FORM_OF_PAYMENT = ('<b>A. FORM OF PAYMENT:</b> Upon booking, up to 50% deposit is required to be paid in the form of Visa, MasterCard, '
+    'Cashier&rsquo;s Check. Prior to pickup 50% of the balance is due in the form of Cash, Money Order, Certified Check. At delivery the '
+    'balance is due prior to unloading in the form of Post Office Money Order or Cash only. {company} reserves the right to collect up to '
+    '70% of balance due prior to the goods leaving the origin state. <b>Payment in FULL of all charges is required before delivery truck '
+    'is opened and before unloading.</b>')
+ESTIMATED_CHARGES = ('<b>B. TOTAL ESTIMATED CHARGES AND MINIMUM CHARGES:</b> By this reference bill of lading and order for service and '
+    'all their terms, conditions, and estimated charges are combined and incorporated by reference in accordance with 49 CFR '
+    '&sect;375.505(b)(17). The total estimated charges for service is not guarantee of the final total actual charges - which may increase '
+    'or decrease based upon actual services performed, quantity of item shipped, accessorial services, destination services, and/or weight '
+    'of shipment. Carrier may use agents/independent sub-contractors on all orders. Unless customer purchased an &ldquo;exclusive use of '
+    'the vehicle&rdquo; option, there is no guarantee that the property will not be temporarily stored or offloaded and reloaded onto a '
+    'different vehicle then performed pickup and consolidated with other shipments or transported by a subcontractor.')
+DISCLOSURES = ('<b>C. DISCLOSURES:</b> Packing materials/labor are not included and will be charged extra per items ordered on the packing '
+    'materials list. The space reservation option, if selected by shipper, will be used to determine line haul charges. Bill of Lading is '
+    'the controlling shipping contract. All charges including additional services will be charged based on the full tariff rates. See '
+    'reverse side for important information including arbitration information. Tariff is available for inspection upon reasonable request '
+    'by calling carrier.<br/><b>Agreed pickup/deliery periods:</b> Guaranteed pickup and delivery dates are an optional service available '
+    'for purhcase. Pickup and delivery dates are not guaranteed unless the optional Premium Guaranteed Service (P.G.S) is purchased. In '
+    'Compliance with 49 CFR Section &sect;375.505(b)(6) the non-guaranteed <b>Standard Service (S.S.) delivery &ldquo;period in time&rdquo; '
+    'is up to thirty (30) business weekdays, not including storage time, beginning on the first date indicated as available for delivery '
+    '(not the date of pickup).</b> The date above indicated as &ldquo;1st available for delivery&rdquo; is first date of the delivery period '
+    'of time and not the promised delivery date. Per diem delay rate is $30.00 (thirty dollars) per business weekday. Business days do not '
+    'include holidays or weekends. Unless P.G.S. is purchased, estimated delivery period is up to thirty business days from date indicated '
+    'as first available for delivery.<br/><b>Filing of claims:</b> {company} shall not be liable for the loss or damage of the goods unless '
+    'claim is made in writing supported by proof of ownership, value, and weight. All outstanding money due to {company} must be paid in '
+    'full before any claim can be made. Claims must be filed withing 9 months of delivery or demand thereof is refused ad must be '
+    'limited to the destination descriptions of damages for each item on the inventory logs. All damages and missing items must be noted on '
+    'the inventory logs. Damage indications must specify each item damaged at the time of delivery. Shipper or agent has full authority to '
+    'order services and enter into agreement.<br/><b>Special Services:</b> Shipper will be notified by {company} of fnial charges prior to '
+    'delivery and while in transit. On interstate moves and 18 wheelr may be used to deliver the property. If destination address does not '
+    'have access for an 18 wheeler the shipper will be required to pay for shuttle service. Full re-handling/delivery fees are applied when '
+    '{company} must take a second attempt to deliver the property if for any reason the shipper did not accept delivery on the first '
+    'attampt. For all estimates there may be additional charges for flights of stairs, elevators, extra drop-offs or pick-ups, re-delivery, '
+    'long carries, and shuttles for residences in restrictive areas.')
+ACKNOWLEDGE = ('<b>I acknowledge, have read, and agree to all the terms and conditions on both sides of this bill of lading contract and '
+    'order for service. I have received the arbitration information and the booklet: Your Rights and Responsibilities When you Move and '
+    'pamphlet Ready to Move. I agree to pay for the total charges for moving services. I approved the total estimated charges prior to the '
+    'moving services beginning.</b>')
+MAXIMUM_DUE = ('<b>Notice of Maximum amount due upon delivery:</b> Final charges will be based on actual weight or cubic feet of property '
+    'and services provided or time. Maximum amount to be paid to {company} and demanded at destination is the amountof the last issued '
+    'non-binding estimate plus 10%; or 100% of the binding estimate; plus post contract services; any remaining balances due will be billed '
+    'after 30 days of delivery. <b>Payment in full of all charges is due before unloading.</b> Fees for post contract services must be paid '
+    'in advance of delivery and prior to unloading. There may be a fuel surcharge on all orders. <b>Conversion formula:</b> Conversion from '
+    'weight to cubic feet, or vice versa, is a multiple of 7 to perform the calcualtions for the total charges.')
+DELIVERY = ('The shipper hereby acknowledges that the shipment was received in apparently good conditiond except as noted on the invntory '
+    'list/s. Furthermore, the shipper acknowledges that all the services that were ordered have been performed, have been fully satisfied, '
+    'and the truck was inspected and nothing has been left behind. Shipper and/or agent has full authority to accept the shipment and enter '
+    'into this agreement.')
+# Optional accessorial services, as on the form; left for circling by hand.
+SERVICES = [['STORAGE', 'SHUTTLE', 'STAIRS', 'MOTORCYCLE'], ['LONG CARRY', 'PIANO', 'FULL VALUATION', 'EXTRA INSURANCE'],
+            ['BULKY', 'OTHER:__________', 'P.G.S. pickup/delivery', '']]
+
 
 def _split_address(address):
     """The street on one line, and the city, state and ZIP on the next, as the form asks. Without a street (a house
@@ -51,7 +103,7 @@ class _Form:
     def paragraph(self, x, top, width, html, size=5.6, bold=False):
         style = ParagraphStyle('Form', fontName='Helvetica-Bold' if bold else 'Helvetica', fontSize=size,
                                leading=size * 1.16, alignment=TA_JUSTIFY)
-        flowable = Paragraph(html, style)
+        flowable = Paragraph(html.replace('{company}', escape(self.company)), style)
         _, height = flowable.wrapOn(self.c, width, 1000)
         flowable.drawOn(self.c, x, top - height)
         return top - height
@@ -102,166 +154,119 @@ def _signature_row(form, top, label, signatures, height=24, spot=None, date_labe
     return top - height
 
 
-def _value(values, fill):
-    """What a box shows: the move's detail, or one of its addresses' two lines."""
-    if fill in ADDRESS_FILLS:
-        street, city = _split_address(values.get(fill.split('_')[0] + '_address'))
-        return street if fill.endswith('street') else city
-    return values.get(fill) or '' if fill else ''
-
-
-def _front(canvas, company, values, signatures, logo, blocks):
-    """The front page, drawn from the company's form (blocks) area by area. Returns where its columns end."""
-    name = company.get('name') or ''
-    form = _Form(canvas, name)
-    street, city = _split_address(company.get('office_address'))
-    details = {'company_name': name, 'company_office_street': street, 'company_office_city': city,
-               'company_phone': company.get('phone') or '', 'company_dot_number': company.get('dot_number') or '',
-               'company_mc_number': values.get('mc_number') or ''}
-    # The company's details in a part's words; escaped in a paragraph, whose words are formatting.
-    fill = lambda value, html=False: re.sub(r'\{\{\s*(company_[a-z_]+)\s*\}\}', lambda match: (
-        escape(details.get(match.group(1), '')) if html else details.get(match.group(1), '')), value or '')
-    label = fill
+def _front(canvas, company, values, signatures, logo):
+    form = _Form(canvas, company.get('name') or '')
     if len(signatures) < SIGN_SPOTS:
         canvas.bookmarkPage(SIGN_HERE)
-    areas = {area: [row for row in blocks if row['area'] == area] for area in AREAS}
-    # Header: the company's lines, its logo, the order boxes and the title.
-    for index, row in enumerate(areas['company']):
-        form.text(LEFT, TOP - 4 - index * 10.5, label(row['title']), row['size'] or 8.5, bold=row['kind'] == 'heading')
+    # Header: the company, its logo, the order boxes and the title.
+    street, city = _split_address(company.get('office_address'))
+    lines = [company.get('name'), street, city, f"Phone Number: {company.get('phone') or ''}", '',
+             f"USDOT No.: {company.get('dot_number') or ''}", f"ICC/MC No.: {values.get('mc_number') or ''}"]
+    for index, line in enumerate(lines):
+        form.text(LEFT, TOP - 4 - index * 10.5, line, 8.5, bold=index == 0)
     if logo is not None:
         width, height = logo.wrapOn(canvas, 100, 80)
         logo.drawOn(canvas, 306 - width / 2, TOP - 4 - height)
     order_top = TOP + 6
-    for row in areas['order']:
+    for label, value in (('Order No.:', values.get('order_number')), ('Pick Up Date:', values.get('pickup_date')),
+                         ('1st date available for delivery:', ''), ('Vehicle ID:', '')):
         form.box(426, order_top, RIGHT - 426, 22)
-        form.text(428, order_top - 7, label(row['title']), 6)
-        form.text(430, order_top - 18, _value(values, row['fill']), 8)
+        form.text(428, order_top - 7, label, 6)
+        form.text(430, order_top - 18, value, 8)
         order_top -= 22
-    for index, row in enumerate(areas['header']):
-        canvas.setFont('Helvetica-Bold', row['size'] or 14)
-        canvas.drawCentredString(306, 680 - index * 16, label(row['title']))
-    # Origin and destination, side by side: a bar, then its boxes.
+    canvas.setFont('Helvetica-Bold', 14)
+    canvas.drawCentredString(306, 680, 'INTERSTATE BILL OF LADING CONTRACT')
+    # Origin, filled from the move; the destination is left empty.
     top = 674
-    tallest = 0
-    for x, area in ((LEFT, 'origin'), (MIDDLE + 6, 'destination')):
+    for x, title, filled in ((LEFT, 'ORIGIN', True), (MIDDLE + 6, 'DESTINATION', False)):
         width = MIDDLE - LEFT if x == LEFT else RIGHT - x
-        row_top = top
-        for row in areas[area]:
-            if row['kind'] == 'bar':
-                row_top = form.bar(x, row_top, width, 14, label(row['title']), row['size'] or 9)
-            else:
-                form.labeled(x, row_top, width, 15, label(row['title']), _value(values, row['fill']))
-                row_top -= 15
-        tallest = max(tallest, top - row_top)
-    top -= tallest + 4
-    # The agent row: its boxes across the page, the last one to the right edge.
-    x = LEFT
-    for index, row in enumerate(areas['agent']):
-        width = RIGHT - x if index == len(areas['agent']) - 1 or not row['width'] else row['width']
-        form.labeled(x, top, width, 12, label(row['title']), _value(values, row['fill']))
-        x += width
+        row = form.bar(x, top, width, 14, title, 9)
+        street, city = _split_address(values.get('pickup_address')) if filled else ('', '')
+        for label, value in (('NAME:', values.get('customer_name') if filled else ''), ('ADDRESS:', street), ('CITY/STATE/ZIP:', city),
+                             ('PHONE:', values.get('customer_phone') if filled else '')):
+            form.labeled(x, row, width, 15, label, value)
+            row -= 15
+    top -= 14 + 60 + 4
+    # Filled in by hand; the boxes split as on the printed form.
+    for x, width, label in ((LEFT, 177, 'Agent name:'), (LEFT + 177, 185, 'Address:'), (LEFT + 362, 118, 'Phone:'), (LEFT + 480, RIGHT - LEFT - 480, 'US DOT No.:')):
+        form.labeled(x, top, width, 12, label)
     column = top - 16
     # Left column: payment, estimated charges, services, disclosures and the shipper's acknowledgment.
     width = MIDDLE - LEFT
-    left = column
-    options = 0
-    for row in areas['left']:
-        if row['kind'] != 'option' and options:
-            left -= 9.5 if options % 4 else 0  # A last row with fewer than four.
-            options = 0
-        kind = row['kind']
-        if kind == 'paragraph':
-            left = form.paragraph(LEFT + 2, left, width - 4, fill(row['text'], html=True), row['size'] or 5.6)
-        elif kind == 'signature':
-            left = _signature_row(form, left, label(row['title']), signatures, row['height'] or 24,
-                                  spot=row['spot'] - 1 if row['spot'] else None, date_label=label(row['note']))
-        elif kind == 'total':
-            form.box(LEFT, left, 170, 20)
-            form.box(LEFT + 170, left, width - 170, 20)
-            canvas.setFont('Helvetica-Bold', 7.5)
-            canvas.drawCentredString(LEFT + 85, left - (11 if row['note'] else 13), label(row['title']))
-            if row['note']:
-                form.text(LEFT + 12, left - 17, label(row['note']), 4.6)
-            value = _value(values, row['fill'])
-            form.text(LEFT + 174, left - 13, value or label(row['text']), 8.5)
-            left -= 20
-        elif kind == 'heading':
-            form.text(LEFT, left - 7, label(row['title']), row['size'] or 6.2, bold=True)
-            left -= 10
-        elif kind == 'option':
-            # Four to a row, for circling by hand.
-            form.text(LEFT + (options % 4) * (width / 4) + 2, left - 7, label(row['title']), 6)
-            options += 1
-            if options % 4 == 0:
-                left -= 9.5
-            if row['space']:
-                left -= (9.5 if options % 4 else 0) + row['space']
-                options = 0
-            continue
-        elif kind == 'bar':
-            left = form.bar(LEFT, left, width, row['height'] or 13, label(row['title']), row['size'] or 7.5)
-        left -= row['space'] or 0
+    left = form.paragraph(LEFT + 2, column, width - 4, FORM_OF_PAYMENT, 6.1) - 4
+    left = _signature_row(form, left, "Customer's Signatrue", signatures, spot=0, date_label='Date') - 3
+    left = form.paragraph(LEFT + 2, left, width - 4, ESTIMATED_CHARGES, 5.9) - 4
+    for label, value, note in (('TOTAL ESTIMATED CHARGES:', values.get('total_estimate'), 'Estimates are not guaranteed per 49 CFR §375.403(6)'),
+                               ('MINIMUM Cu.Ft. / lbs.:', values.get('minimum_cuft'), ''),
+                               ('TOTAL MINIMUM CHARGE:', values.get('minimum_charge'), '')):
+        form.box(LEFT, left, 170, 20)
+        form.box(LEFT + 170, left, width - 170, 20)
+        canvas.setFont('Helvetica-Bold', 7.5)
+        canvas.drawCentredString(LEFT + 85, left - (11 if note else 13), label)
+        if note:
+            form.text(LEFT + 12, left - 17, note, 4.6)
+        form.text(LEFT + 174, left - 13, value if value else ('$' if 'CHARGE' in label else ''), 8.5)
+        left -= 20
+    left -= 2
+    form.text(LEFT, left - 7, 'C. OPTIONAL ACCESSORIAL SERVICES ORDERED(Round off applied services):', 6.2, bold=True)
+    left -= 10
+    for row in SERVICES:
+        for index, label in enumerate(row):
+            form.text(LEFT + index * (width / 4) + 2, left - 7, label, 6)
+        left -= 9.5
+    left = form.paragraph(LEFT + 2, left - 2, width - 4, DISCLOSURES, 5.65) - 5
+    left = form.bar(LEFT, left, width, 13, 'SIGN AT LEAST 3 DAYS BEFORE PICKUP DATE:', 7.5) - 2
+    left = form.paragraph(LEFT + 2, left, width - 4, ACKNOWLEDGE, 6.3) - 4
+    left = _signature_row(form, left, 'Shipper/Agent/Representative:', signatures, spot=1)
+    left = _signature_row(form, left, f"{company.get('name') or ''} representative:", signatures, 18)
     # Right column: the actual charges, filled in on moving day.
     x, width = MIDDLE + 6, RIGHT - MIDDLE - 6
-    right = column
-    for row in areas['right']:
-        kind = row['kind']
-        if kind == 'caption':
-            canvas.setFont('Helvetica-Bold', 7.5)
-            canvas.drawCentredString(x + width / 2, right - 7, label(row['title']))
-            right -= 10
-        elif kind == 'bar':
-            right = form.bar(x, right, width, row['height'] or 10.5, label(row['title']), row['size'] or 7.5)
-        elif kind == 'charge':
-            height, amount = row['height'] or 10.2, row['note']
+    canvas.setFont('Helvetica-Bold', 7.5)
+    canvas.drawCentredString(x + width / 2, column - 7, 'SUMMARY OF ACTUAL CHARGES')
+    right = column - 10
+    def rows(title, lines, height=10.2):
+        nonlocal right
+        right = form.bar(x, right, width, 10.5, title)
+        for line in lines:
+            # A line is its label, or (label, what the amount box says instead of $).
+            line, amount = line if isinstance(line, tuple) else (line, '$')
             form.box(x, right, width - 40, height)
             form.box(x + width - 40, right, 40, height)
-            form.text(x + 2, right - height + 3.2, label(row['title']), 6)
+            form.text(x + 2, right - height + 3.2, line, 6)
             form.text(x + width - 38, right - height + 3.2, amount, 6 if amount == '$' else 4.4, bold=amount != '$')
             right -= height
-        elif kind == 'paragraph':
-            right = form.paragraph(x + 2, right, width - 4, fill(row['text'], html=True), row['size'] or 5.5)
-        elif kind == 'summary':
-            form.box(x, right, width - 40, 9.6)
-            form.box(x + width - 40, right, 40, 9.6)
-            title = label(row['title'])
-            if title:
-                form.text(x + (2 if row['align'] == 'left' else width - 42 - canvas.stringWidth(title, 'Helvetica-Bold', 6)),
-                          right - 7.2, title, 6, bold=True)
-            form.text(x + width - 38, right - 7.2, '$', 6)
-            right -= 9.6
-        elif kind == 'signature':
-            height = row['height'] or 20
-            form.box(x, right, width - 60, height)
-            form.box(x + width - 60, right, 60, height)
-            form.text(x + 2, right - height + 3, label(row['title']), 6, bold=True)
-            form.text(x + width - 58, right - 7, label(row['note']), 6, bold=True)
-            right -= height
-        right -= row['space'] or 0
-    return left, right
-
-
-def form_problems(blocks, company_name):
-    """Why a form would not fit on the page as one sheet (empty when it fits): each area's room, and the columns drawn
-    with the company's name, as tall as they will print."""
-    from reportlab.pdfgen.canvas import Canvas
-    count = lambda area: sum(row['area'] == area for row in blocks)
-    problems = []
-    if count('company') > 8:
-        problems.append('The company header has room for 8 lines.')
-    if count('order') > 4:
-        problems.append('There is room for 4 order boxes.')
-    if count('header') > 1:
-        problems.append('The form has one title.')
-    agent = [row for row in blocks if row['area'] == 'agent']
-    if sum(row['width'] or 0 for row in agent[:-1]) > RIGHT - LEFT - 20:
-        problems.append("The agent row's boxes are wider than the page.")
-    left, right = _front(Canvas(BytesIO(), pagesize=letter), {'name': company_name}, {}, {}, None, blocks)
-    if left < BOTTOM:
-        problems.append('The left column runs past the bottom of the page. Shorten or remove parts of it.')
-    if right < BOTTOM:
-        problems.append('The right column runs past the bottom of the page. Shorten or remove parts of it.')
-    return problems
+    rows('WEIGHT CHARGES:', ['Base: _______________ lbs. @ $ _______________ per lbs.',
+                             'Additional: _______________ lbs. @ $ _______________ per lbs.',
+                             'Additional: _______________ lbs. @ $ _______________ per lbs.'])
+    rows('CUBIC FEET CHARGES', ['Base: ______________ cu.ft. @ $______________ per cu.ft.',
+                                'Additional: ______________ cu.ft. @ $______________ per cu.ft.',
+                                'Additional: ______________ cu.ft. @ $______________ per cu.ft.'])
+    rows('HOURLY CHARGES:', [('Part One: ___________ Start Time ___________ End Time ___________ Hours', ''),
+                             ('Part Two: ___________ Start Time ___________ End Time ___________ Hours', ''),
+                             '___________ hrs. ___________ men ___________ Trucks @ $ ___________ /hr',
+                             '___________ hrs. ___________ men ___________ Trucks @ $ ___________ /hr'])
+    rows('PACKING MAERIALS AND LABOR:', ['Total Material and Packing (See attached materials price list):', 'Full Packing Service:', 'Other:'])
+    rows('OTHER SERVICES', ['Fuel surcharge:', 'Stairs: $ _________ origin $ _________ destination',
+                            'Long Carry: $ _________ origin $ _________ destination', 'Shuttle: $ _________ origin $ _________ destination', 'Misc. Bulky Item:', 'Split pickup/delivery or extra stop-off',
+                            'P.G.S. pickup/delivery service:', ('Valuation at $0.60 per pound per item:', 'INCLUDED FREE'), 'Other:'])
+    rows('STORAGE CHARGES', ['______ Days @ cu.ft. ______ @ $ ______ per cu.ft. per month', 'Other:'])
+    right = form.paragraph(x + 2, right - 3, width - 4, MAXIMUM_DUE, 5.5) - 3
+    right = form.bar(x, right, width, 10.5, 'SUMMARY OF CHARGES:')
+    for label in ('GRAND TOTAL:', 'PARTIAL PAYMENT:', 'PARTIAL PAYMENT:', '', '', 'BALANCE DUE:', '', '', 'PRICE ADJUSTMENT:', 'NEW BALANCE DUE IN 30 DAYS:'):
+        form.box(x, right, width - 40, 9.6)
+        form.box(x + width - 40, right, 40, 9.6)
+        if label:
+            form.text(x + (2 if label.startswith('P') and 'ADJUST' not in label else width - 42 - canvas.stringWidth(label, 'Helvetica-Bold', 6)),
+                      right - 7.2, label, 6, bold=True)
+        form.text(x + width - 38, right - 7.2, '$', 6)
+        right -= 9.6
+    right = form.bar(x, right - 3, width, 10.5, 'DELIVERY ACKNOWLEDGEMENT:')
+    right = form.paragraph(x + 2, right - 2, width - 4, DELIVERY, 5.5, bold=True) - 3
+    form.box(x, right, width - 60, 20)
+    form.box(x + width - 60, right, 60, 20)
+    form.text(x + 2, right - 17, 'Shipper/Agent/Representative:', 6, bold=True)
+    form.text(x + width - 58, right - 7, 'Date:', 6, bold=True)
+    return left, right - 20
 
 
 def build_bill_of_lading_pdf(company, values, documents, signatures=None):
@@ -284,7 +289,5 @@ def build_bill_of_lading_pdf(company, values, documents, signatures=None):
     output = BytesIO()
     doc = SimpleDocTemplate(output, pagesize=letter, leftMargin=LEFT, rightMargin=612 - RIGHT, topMargin=24, bottomMargin=BOTTOM,
                             title='Interstate Bill of Lading Contract', author=company.get('name') or '')
-    # The front page: the company's form, from its Bill of Lading document's blocks.
-    blocks = next(document['blocks'] for document in documents if document.get('blocks'))
-    doc.build(story, onFirstPage=lambda canvas, _: _front(canvas, company, values, signatures, logo, blocks))
+    doc.build(story, onFirstPage=lambda canvas, _: _front(canvas, company, values, signatures, logo))
     return output.getvalue()

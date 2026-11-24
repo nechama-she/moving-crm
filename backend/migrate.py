@@ -27,11 +27,6 @@ def migrate() -> None:
         CustomerPageState.__table__.create(connection, checkfirst=True)
         # Where the table was made before it had the code stage.
         add_column(connection, 'customer_page_states', 'code_channel', 'VARCHAR(10)')
-    # The Bill of Lading's front page as blocks each company can set, starting as the form drawn until now. Remove after
-    # a deploy ran it.
-    with engine.begin() as connection:
-        from company_documents import seed_bill_of_lading_forms
-        seed_bill_of_lading_forms(connection)
     # Each user's order of the work queue cards (a new, empty table). Remove after a deploy ran it.
     with engine.begin() as connection:
         from models import WorkQueueCardOrder

@@ -22,9 +22,7 @@ def terms():
     company = Company(name='Gorilla Haulers LLC', phone='(301) 747-5811')
     body, missing = resolve_parameters(bill_of_lading_body(), company, html=True)
     assert missing == []
-    from bill_of_lading_form import DEFAULT_BLOCKS
-    # The document as documents_for gives it: its terms, and its first page's form.
-    return [{'title': 'Interstate Bill of Lading Contract', 'body_html': clean_html(body), 'blocks': DEFAULT_BLOCKS}]
+    return [{'title': 'Interstate Bill of Lading Contract', 'body_html': clean_html(body)}]
 
 
 def pages(pdf):

@@ -1389,12 +1389,8 @@ def _bill_of_lading(access, db):
     }
     company = data.get('company_details') or {}
     filled = [dict(document, body_html=fill_move_fields(document['body_html'], values)) for document in documents]
-    # A form changed from the one every company started with is part of the version; the starting form is not, so a
-    # Bill of Lading signed before forms could change keeps its version.
-    from bill_of_lading_form import DEFAULT_DIGEST, form_digest
-    forms = [form_digest(d['blocks']) for d in filled]
-    fingerprint = hashlib.sha256(json.dumps([company, values, [[d['title'], d['body_html']] for d in filled]]
-                                            + [form for form in forms if form != DEFAULT_DIGEST], sort_keys=True, default=str).encode()).hexdigest()
+    fingerprint = hashlib.sha256(json.dumps([company, values, [[d['title'], d['body_html']] for d in filled]], sort_keys=True,
+                                            default=str).encode()).hexdigest()
     return signed, company, values, filled, fingerprint
 
 
