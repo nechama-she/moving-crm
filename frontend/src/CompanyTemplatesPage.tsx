@@ -67,6 +67,11 @@ const EMAIL_FIELDS: Field[] = [
   },
 ];
 
+// An HTML field is saved as base64 of its UTF-8 (key_base64), as the server reads it back.
+const HTML_KEYS = new Set(EMAIL_FIELDS.filter((f) => f.html).map((f) => f.key));
+const encoded = (values: Record<string, string>) => Object.fromEntries(Object.entries(values).map(([key, value]) =>
+  HTML_KEYS.has(key) ? [`${key}_base64`, btoa(Array.from(new TextEncoder().encode(value), (byte) => String.fromCharCode(byte)).join(""))] : [key, value]));
+
 // The automated messages a page edits: its title, its templates, and their endpoints (/api/companies/...).
 const KINDS = {
   sms: { title: "Automated SMS Templates", fields: SMS_FIELDS, path: "templates" },
@@ -140,7 +145,7 @@ export default function CompanyTemplatesPage({ kind = "sms" }: { kind?: keyof ty
       const res = await fetch(endpoint, {
         method: "PUT",
         headers: { ...authHeaders(token), "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(encoded(values)),
       });
       if (!res.ok) {
         const text = await res.text();
