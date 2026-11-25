@@ -25,6 +25,7 @@ const TITLES: Record<string, string> = {
   '/settings/inventory-catalog': 'Inventory catalog',
   '/settings/moving-terms': 'Moving terms',
   '/settings/templates': 'Automated SMS templates',
+  '/settings/email-templates': 'Automated email templates',
   '/settings/message-templates': 'Message templates',
   '/pending-duplications': 'Pending duplications',
   '/settings/duplication-rules': 'Duplication rules',

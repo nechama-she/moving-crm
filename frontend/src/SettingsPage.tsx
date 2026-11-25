@@ -43,6 +43,7 @@ export default function SettingsPage() {
     ] : [] },
     { title: "Communication", items: admin ? [
       entry("Automated SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages."),
+      entry("Automated email templates", "/settings/email-templates", "The welcome email."),
       entry("Message templates", "/settings/message-templates", "Messages to pick from when texting a lead, per company."),
       entry("Ignored numbers", "/settings/ignored-call-numbers", "Exclude numbers from the sales work queue."),
     ] : [] },

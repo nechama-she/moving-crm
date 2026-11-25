@@ -55,6 +55,7 @@ export default function AuroraSettings() {
     ] : [] },
     { title: "Communication & integrations", tone: "green", items: admin ? [
       entry("Automated SMS templates", "/settings/templates", "Welcome, assignment and follow-up messages.", "template"),
+      entry("Automated email templates", "/settings/email-templates", "The welcome email.", "template"),
       entry("Message templates", "/settings/message-templates", "Messages to pick from when texting a lead, per company.", "template"),
       entry("Ignored numbers", "/settings/ignored-call-numbers", "Exclude numbers from the sales work queue.", "block"),
       { label: "LiveSwitch", description: "Virtual estimates over video.", icon: "video" },

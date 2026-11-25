@@ -1617,6 +1617,9 @@ Resources:
           AUTO_ASSIGN_DRY_RUN_ONLY: !If [IsProd, "false", "true"]
           NEW_LEAD_SMS_DRY_RUN: !If [IsProd, "false", "true"]
           REP_ASSIGNMENT_SMS_DRY_RUN: !If [IsProd, "false", "true"]
+          # The welcome email: on dev, sent only to the test address; on prod, not sent until this is turned on.
+          WELCOME_EMAIL_DRY_RUN: !If [IsProd, "true", "false"]
+          WELCOME_EMAIL_REDIRECT_TO: !If [IsProd, "", "nechamashemesh@gmail.com"]
           PUBLIC_MOVE_COGNITO_POOL_ID: !Ref CustomerPortalUserPool
           PUBLIC_MOVE_ORIGIN: !If
             - IsProd

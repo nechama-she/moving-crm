@@ -64,3 +64,17 @@ def test_recalculation_uses_updated_zero_allowance_and_keeps_saved_stop(monkeypa
         assert '0 miles free' in original.description
         assert json.loads(job.customer_packing_package)['extra_stops']['delivery'] == saved['extra_stops']['delivery']
     engine.dispose()
+
+
+@pytest.mark.parametrize('move_type,shown', [('Local', False), ('Long Distance', True)])
+def test_local_jobs_have_no_additional_stops(monkeypatch, move_type, shown):
+    from types import SimpleNamespace
+    import extra_stops
+    import routes.pricing as pricing
+    card = ExtraStopsCard(enabled=True, pickup=StopRate(free_miles=10, stop_fee=50, per_mile=5),
+                          delivery=StopRate(free_miles=0, stop_fee=50, per_mile=5))
+    monkeypatch.setattr(pricing, 'infer_job_move_type', lambda lead, job, db: (move_type, 'plan'))
+    monkeypatch.setattr(extra_stops, 'plan_stops_card', lambda plan: card)
+    monkeypatch.setattr(extra_stops, 'stops_state', lambda job, db: {'pickup': {'answer': None, 'stops': []}, 'delivery': {'answer': None, 'stops': []}})
+    job = SimpleNamespace(pickup_zip='A', delivery_zip='B')
+    assert (extra_stops.option(None, job, None) is not None) is shown

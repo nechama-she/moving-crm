@@ -48,8 +48,9 @@ def _code_email(code, company_name):
     return subject, text, body
 
 
-def send_company_email(email, subject, text, company):
-    """A plain email from the company's own address, the same SES sender the codes use."""
+def send_company_email(email, subject, text, company, html_body=None):
+    """An email from the company's own address, the same SES sender the codes use: its text, and its HTML when
+    given (email apps show the HTML, the text is for those that cannot)."""
     sender = ((getattr(company, 'sender_email', None) or '') if company else '').strip()
     if not sender:
         raise HTTPException(503, "This company has no sender email set up, so the email can't be sent.")
@@ -59,7 +60,8 @@ def send_company_email(email, subject, text, company):
             FromEmailAddress=formataddr((company_name, sender)), ReplyToAddresses=[sender],
             Destination={'ToAddresses': [email.strip()]},
             Content={'Simple': {'Subject': {'Data': subject, 'Charset': 'UTF-8'},
-                                'Body': {'Text': {'Data': text, 'Charset': 'UTF-8'}}}})
+                                'Body': {'Text': {'Data': text, 'Charset': 'UTF-8'},
+                                         **({'Html': {'Data': html_body, 'Charset': 'UTF-8'}} if html_body else {})}}})
     except ClientError as exc:
         error = exc.response.get('Error', {})
         logger.error(json.dumps({'event': 'company_email_send', 'sender': sender, 'error_code': error.get('Code'),

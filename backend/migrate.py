@@ -21,16 +21,10 @@ def add_column(connection, table, column, kind):
 
 
 def migrate() -> None:
-    # The work queue's Customer page and Customer chat cards (a new, empty table). Remove after a deploy ran it.
+    # The automated welcome email's template, per company (new, empty columns). Remove after a deploy ran it.
     with engine.begin() as connection:
-        from models import CustomerPageState
-        CustomerPageState.__table__.create(connection, checkfirst=True)
-        # Where the table was made before it had the code stage.
-        add_column(connection, 'customer_page_states', 'code_channel', 'VARCHAR(10)')
-    # Each user's order of the work queue cards (a new, empty table). Remove after a deploy ran it.
-    with engine.begin() as connection:
-        from models import WorkQueueCardOrder
-        WorkQueueCardOrder.__table__.create(connection, checkfirst=True)
+        add_column(connection, 'company_message_templates', 'welcome_email_subject', "TEXT NOT NULL DEFAULT ''")
+        add_column(connection, 'company_message_templates', 'welcome_email_body', "TEXT NOT NULL DEFAULT ''")
 
 
 if __name__ == "__main__":

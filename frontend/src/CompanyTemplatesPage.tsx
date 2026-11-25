@@ -1,21 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "./apiConfig";
 import { authHeaders, useAuth } from "./AuthContext";
+import HtmlEmailEditor from "./HtmlEmailEditor";
 
 type Company = { id: string; name: string };
 
-type TemplateKey =
-  | "welcome_sms"
-  | "rep_assignment_sms"
-  | "day2_followup_sms"
-  | "day3_followup_sms";
+type TemplateKey = string;
 
-type TemplatesResponse = {
+type TemplatesResponse = Record<TemplateKey, string> & {
   company_id: string;
-  welcome_sms: string;
-  rep_assignment_sms: string;
-  day2_followup_sms: string;
-  day3_followup_sms: string;
   updated_by: string;
   updated_at: string;
   defaults: Record<TemplateKey, string>;
@@ -23,7 +16,10 @@ type TemplatesResponse = {
 
 const SYSTEM_DEFAULT_ID = "__system_default__";
 
-const FIELDS: { key: TemplateKey; label: string; description: string; placeholders: string }[] = [
+// html: edited as an email's HTML (HtmlEmailEditor) instead of plain text.
+type Field = { key: TemplateKey; label: string; description: string; placeholders: string; rows?: number; html?: boolean };
+
+const SMS_FIELDS: Field[] = [
   {
     key: "welcome_sms",
     label: "Welcome SMS",
@@ -50,19 +46,42 @@ const FIELDS: { key: TemplateKey; label: string; description: string; placeholde
   },
 ];
 
-export default function CompanyTemplatesPage() {
+// The welcome email's placeholders: the lead's and the company's details.
+const EMAIL_PLACEHOLDERS = "{first_name}, {company_name}, {company_phone}, {company_email}, {company_address}, {company_website}, "
+  + "{company_dot_number}, {company_mc_number}, {company_valuation_per_lb}, {smartmoving_id}, {customer_link}";
+
+const EMAIL_FIELDS: Field[] = [
+  {
+    key: "welcome_email_subject",
+    label: "Welcome email subject",
+    description: "The subject of the welcome email.",
+    placeholders: EMAIL_PLACEHOLDERS,
+    rows: 1,
+  },
+  {
+    key: "welcome_email_body",
+    label: "Welcome email",
+    description: "Sent automatically when a new lead is created.",
+    placeholders: EMAIL_PLACEHOLDERS,
+    html: true,
+  },
+];
+
+// The automated messages a page edits: its title, its templates, and their endpoints (/api/companies/...).
+const KINDS = {
+  sms: { title: "Automated SMS Templates", fields: SMS_FIELDS, path: "templates" },
+  email: { title: "Automated Email Templates", fields: EMAIL_FIELDS, path: "email-templates" },
+};
+
+export default function CompanyTemplatesPage({ kind = "sms" }: { kind?: keyof typeof KINDS }) {
   const { token, user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const { title, fields: FIELDS, path } = KINDS[kind];
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<string>(SYSTEM_DEFAULT_ID);
   const [data, setData] = useState<TemplatesResponse | null>(null);
-  const [values, setValues] = useState<Record<TemplateKey, string>>({
-    welcome_sms: "",
-    rep_assignment_sms: "",
-    day2_followup_sms: "",
-    day3_followup_sms: "",
-  });
+  const [values, setValues] = useState<Record<TemplateKey, string>>(() => Object.fromEntries(FIELDS.map((f) => [f.key, ""])));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -87,7 +106,7 @@ export default function CompanyTemplatesPage() {
     if (!companyId) return;
     void loadTemplates(companyId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId]);
+  }, [companyId, kind]);
 
   async function loadTemplates(cid: string) {
     setLoading(true);
@@ -95,18 +114,13 @@ export default function CompanyTemplatesPage() {
     setInfo("");
     try {
       const endpoint = cid === SYSTEM_DEFAULT_ID
-        ? `${API_BASE}/api/companies/templates/defaults`
-        : `${API_BASE}/api/companies/${cid}/templates`;
+        ? `${API_BASE}/api/companies/${path}/defaults`
+        : `${API_BASE}/api/companies/${cid}/${path}`;
       const res = await fetch(endpoint, { headers: authHeaders(token) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const payload = (await res.json()) as TemplatesResponse;
       setData(payload);
-      setValues({
-        welcome_sms: payload.welcome_sms,
-        rep_assignment_sms: payload.rep_assignment_sms,
-        day2_followup_sms: payload.day2_followup_sms,
-        day3_followup_sms: payload.day3_followup_sms,
-      });
+      setValues(Object.fromEntries(FIELDS.map((f) => [f.key, payload[f.key]])));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load templates");
     } finally {
@@ -121,8 +135,8 @@ export default function CompanyTemplatesPage() {
     setInfo("");
     try {
       const endpoint = companyId === SYSTEM_DEFAULT_ID
-        ? `${API_BASE}/api/companies/templates/defaults`
-        : `${API_BASE}/api/companies/${companyId}/templates`;
+        ? `${API_BASE}/api/companies/${path}/defaults`
+        : `${API_BASE}/api/companies/${companyId}/${path}`;
       const res = await fetch(endpoint, {
         method: "PUT",
         headers: { ...authHeaders(token), "Content-Type": "application/json" },
@@ -158,7 +172,7 @@ export default function CompanyTemplatesPage() {
 
   return (
     <div style={{ padding: "20px 24px", overflow: "auto", height: "calc(100vh - 52px)", boxSizing: "border-box" }}>
-      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>Automated SMS Templates</h1>
+      <h1 style={{ fontSize: 20, color: "#032d60", fontWeight: 700, marginBottom: 4 }}>{title}</h1>
       <p style={{ marginTop: 4, marginBottom: 16, color: "#706e6b", fontSize: 13 }}>
         Edit the global system defaults or override them for an individual company.
       </p>
@@ -211,14 +225,15 @@ export default function CompanyTemplatesPage() {
                     )}
                   </div>
                 </div>
-                <textarea
+                {f.html ? <HtmlEmailEditor value={current} disabled={!isAdmin} placeholders={f.placeholders.split(", ")}
+                  onChange={(html) => setValues((prev) => ({ ...prev, [f.key]: html }))} /> : <textarea
                   value={current}
                   onChange={(e) => setValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
                   disabled={!isAdmin}
                   placeholder={usingDefault ? "Using system default — leave blank to keep using it" : ""}
-                  rows={8}
+                  rows={f.rows ?? 8}
                   style={textarea}
-                />
+                />}
                 {!editingSystemDefault && <details style={{ marginTop: 6 }}>
                   <summary style={{ fontSize: 12, color: "#0176d3", cursor: "pointer" }}>
                     {usingDefault ? "View system default (currently in use)" : "View system default"}

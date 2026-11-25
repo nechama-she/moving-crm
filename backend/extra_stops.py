@@ -116,7 +116,9 @@ def stops_state(job, db):
 def option(lead,job,db,plan=None,refresh=False):
     if plan is None:
         from routes.pricing import infer_job_move_type
-        _,plan=infer_job_move_type(lead,job,db)
+        move_type,plan=infer_job_move_type(lead,job,db)
+        # Local jobs have no additional stops (the local price adds no stop charges either).
+        if (move_type or '').lower()=='local':return None
     card=plan_stops_card(plan) if plan else None
     if not card or not card.enabled:return None
     state=stops_state(job,db)
