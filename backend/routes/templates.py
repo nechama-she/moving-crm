@@ -4,7 +4,7 @@ import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin
@@ -172,6 +172,19 @@ class TemplatesUpdate(BaseModel):
 class EmailTemplatesUpdate(BaseModel):
     welcome_email_subject: str | None = Field(default=None)
     welcome_email_body: str | None = Field(default=None)
+    # The body's HTML as the settings page sends it: base64 of its UTF-8.
+    welcome_email_body_base64: str | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def decoded_body(self):
+        if self.welcome_email_body_base64 is not None:
+            import base64
+            import binascii
+            try:
+                self.welcome_email_body = base64.b64decode(self.welcome_email_body_base64, validate=True).decode("utf-8")
+            except (binascii.Error, UnicodeDecodeError) as error:
+                raise ValueError("The email body could not be read. Reload the page and save again.") from error
+        return self
 
 
 def _defaults_payload(db: Session, kind, updated_by=""):

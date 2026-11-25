@@ -53,3 +53,14 @@ def test_the_sms_templates_are_unchanged(db):
     assert set(sms) == {'company_id', 'defaults', 'welcome_sms', 'rep_assignment_sms', 'day2_followup_sms', 'day3_followup_sms',
                         'updated_by', 'updated_at'}
     assert sms['defaults'] == DEFAULTS and sms['welcome_sms'] == ''
+
+
+def test_the_html_body_sent_as_base64_is_saved_as_written(db):
+    import base64
+    from routes.templates import EmailTemplatesUpdate, get_email_templates, update_email_templates
+    html = '<div style="color:#c92e2e">Hi {first_name} — We’re here ✓</div>'
+    body = EmailTemplatesUpdate(welcome_email_body_base64=base64.b64encode(html.encode('utf-8')).decode())
+    update_email_templates('c', body, ADMIN, db)
+    assert get_email_templates('c', ADMIN, db)['welcome_email_body'] == html
+    with pytest.raises(ValueError):
+        EmailTemplatesUpdate(welcome_email_body_base64='not base64!')
