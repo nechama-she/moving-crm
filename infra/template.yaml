@@ -99,7 +99,7 @@ Conditions:
   IsDevEnvironment: !Equals [!Ref Environment, "dev"]
   IsDev: !Not [!Equals [!Ref Environment, "prod"]]
   # The customer page chat path to BoxBot. Dev only until BoxBot has a production service.
-  HasCustomerChat: !Equals [!Ref Environment, "dev"]
+  HasCustomerChat: !Or [!Equals [!Ref Environment, "dev"], !Equals [!Ref Environment, "prod"]]
   HasDomain: !Not [!Equals [!Ref DomainName, ""]]
   HasSmartMovingKey: !Not [!Equals [!Ref SmartMovingApiKey, ""]]
   HasCert: !Not [!Equals [!Ref AcmCertificateArn, ""]]
