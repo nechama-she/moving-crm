@@ -5122,6 +5122,55 @@ def _customer_link_value(template: str, lead: Lead, db: Session) -> dict:
     return {"customer_link": link}
 
 
+def _html_to_text(html_body: str) -> str:
+    """An HTML email's plain-text copy: its lines and paragraphs as lines, its tags removed."""
+    import html as html_module
+    text = re.sub(r"(?is)<(script|style|head)\b.*?</\1>", "", html_body)
+    text = re.sub(r"(?i)<br\s*/?>|</(p|div|li|h[1-6]|tr)>", "\n", text)
+    text = html_module.unescape(re.sub(r"<[^>]+>", "", text))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(line.strip() for line in text.splitlines())).strip()
+
+
+def _send_welcome_email(lead: Lead, company: Company, db: Session) -> None:
+    """The welcome email to a new lead (sent where the welcome SMS is): the company's template, else the system
+    default; none when either is empty or a placeholder has no value. WELCOME_EMAIL_DRY_RUN sends nothing;
+    WELCOME_EMAIL_REDIRECT_TO sends every one to that address instead of the customer (dev)."""
+    import html as html_module
+    from customer_email_auth import send_company_email
+    from routes.templates import EMAIL, company_templates
+    templates = company_templates(db, company.id, EMAIL)
+    subject_template, body_template = templates["welcome_email_subject"], templates["welcome_email_body"]
+    if not subject_template or not body_template:
+        logger.info("Welcome email not sent for lead %s: no welcome email template", lead.id)
+        return
+    values = {
+        "first_name": lead.full_name.split()[0] if lead.full_name.strip() else "",
+        "company_name": company.name, "company_phone": company.phone or "", "company_email": company.sender_email or "",
+        "company_address": company.office_address or "", "company_website": company.website or "",
+        "company_dot_number": company.dot_number or "", "company_mc_number": company.mc_number or "",
+        "company_valuation_per_lb": f"{company.valuation_per_lb:.2f}" if company.valuation_per_lb is not None else "",
+        "smartmoving_id": lead.smartmoving_id or "",
+        **_customer_link_value(subject_template + body_template, lead, db),
+    }
+    subject, missing = complete_message(subject_template, **values)
+    # The body is HTML: the values go in as text.
+    body, missing_body = complete_message(body_template, **{key: html_module.escape(str(value)) for key, value in values.items()})
+    if subject is None or body is None:
+        logger.info("Welcome email not sent for lead %s: no value for %s", lead.id, ", ".join(sorted(set(missing + missing_body))))
+        return
+    redirect = os.getenv("WELCOME_EMAIL_REDIRECT_TO", "").strip()
+    to = redirect or lead.email.strip()
+    if os.getenv("WELCOME_EMAIL_DRY_RUN", "true").strip().lower() == "true":
+        logger.info("Welcome email dry run for lead %s: would send to %s", lead.id, to)
+        return
+    try:
+        send_company_email(to, subject, _html_to_text(body), company, html_body=body)
+        logger.info("Welcome email for lead %s sent to %s%s", lead.id, to, " (redirected)" if redirect else "")
+    except Exception:
+        # A new lead is saved whatever happens to its email.
+        logger.exception("Welcome email for lead %s could not be sent", lead.id)
+
+
 def _send_rep_assignment_sms(lead: Lead, db: Session) -> None:
     logger.info(
         "ENTER _send_rep_assignment_sms: lead_id=%s assigned_to=%s REP_ASSIGNMENT_SMS_DRY_RUN=%r",
@@ -5653,6 +5702,10 @@ def _create_lead(body, x_api_secret, db, *, created_in_smartmoving_here=False):
 
             sms_result = send_sms(to=lead.phone, text=message, number_id=nid)
             logger.info("Welcome SMS for lead %s: %s", lead.id, sms_result)
+
+    # The welcome email, to every new lead the welcome SMS goes to that has an email address.
+    if not suppress_new_lead_automation and (lead.email or "").strip():
+        _send_welcome_email(lead, company, db)
 
     # Build assignment note with SmartMoving sync details
     if assignment_reason == "matching_assigned_lead_same_company":

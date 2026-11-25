@@ -105,6 +105,17 @@ def get_company_template(db: Session, company_id: str, key: str) -> str:
     return _system_defaults(db)[key]
 
 
+def company_templates(db: Session, company_id: str, kind) -> dict[str, str]:
+    """A company's templates of a kind (SMS or EMAIL): each its own, else the system default (empty when neither)."""
+    row = (
+        db.query(CompanyMessageTemplate)
+        .filter(CompanyMessageTemplate.company_id == company_id)
+        .first()
+    )
+    defaults = _system_defaults(db, kind)
+    return {key: ((getattr(row, key, "") or "").strip() if row else "") or defaults[key] for key in kind[0]}
+
+
 _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
