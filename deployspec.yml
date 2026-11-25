@@ -66,8 +66,21 @@ phases:
       - echo "Frontend calls the API same-origin via CloudFront (/api/*), so no absolute URL is injected"
       - REALTIME_URL=$(aws cloudformation describe-stacks --stack-name moving-crm-${ENVIRONMENT:-dev} --query "Stacks[0].Outputs[?OutputKey=='RealtimeURL'].OutputValue" --output text)
       - echo "window.__API_URL__ = ''; window.__WS_URL__ = '${REALTIME_URL}';" > /tmp/api-config.js
-      # The customer page chat (BoxBot) is on. (A branch without this line turns it off again.)
-      - echo "window.__MOVE_ASSISTANT__ = { url: '/api/customer-chat' };" >> /tmp/api-config.js
+      # The customer page chat (BoxBot) shows only where /moving-crm/<env>/MOVE_ASSISTANT is "on". Created once, as the
+      # first deploy finds it missing: on in dev, off elsewhere; after that it is set in Parameter Store, never here.
+      - |
+        CHAT_KEY="/moving-crm/${ENVIRONMENT:-dev}/MOVE_ASSISTANT"
+        if ! aws ssm get-parameter --name "$CHAT_KEY" > /dev/null 2>&1; then
+          if [ "${ENVIRONMENT:-dev}" = "dev" ]; then CHAT_DEFAULT=on; else CHAT_DEFAULT=off; fi
+          aws ssm put-parameter --name "$CHAT_KEY" --value "$CHAT_DEFAULT" --type String
+          echo "Customer page chat setting created: $CHAT_DEFAULT"
+        fi
+        if [ "$(aws ssm get-parameter --name "$CHAT_KEY" --query Parameter.Value --output text 2>/dev/null)" = "on" ]; then
+          echo "window.__MOVE_ASSISTANT__ = { url: '/api/customer-chat' };" >> /tmp/api-config.js
+          echo "Customer page chat: on"
+        else
+          echo "Customer page chat: off"
+        fi
       - aws s3 cp /tmp/api-config.js s3://${FRONTEND_BUCKET}/api-config.js --cache-control "no-cache,max-age=0,must-revalidate"
       - aws s3 cp $CODEBUILD_SRC_DIR/frontend/dist/index.html s3://${FRONTEND_BUCKET}/index.html --cache-control "no-cache,max-age=0,must-revalidate"
 
