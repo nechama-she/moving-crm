@@ -359,6 +359,7 @@ export default function AuroraLeads() {
           <div className="aur-table-foot aur-muted">{`${leads.length.toLocaleString()} of ${total.toLocaleString()} records · overview follows filters`}</div>
         </section>
 
+        {selected && <button type="button" className="aur-panel-scrim" aria-label="Close lead panel" onClick={() => setSelected(null)} />}
         {selected && <LeadPanel lead={selected} onClose={() => setSelected(null)} />}
       </div>
       {addingLead && <NewLeadSheet token={token} companies={companies} reps={reps} onClose={() => setAddingLead(false)} onCreated={leadId => navigate(`/leads/${encodeURIComponent(leadId)}`)} />}

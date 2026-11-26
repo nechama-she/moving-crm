@@ -20,6 +20,8 @@ const COLLAPSE_KEY = "crm-aurora-collapsed";
 const NARROW = "(min-width: 901px) and (max-width: 1440px)";
 // Pages whose tables become one card per row on phones (aurora.css), instead of scrolling sideways.
 const CARD_TABLE_PAGES = new Set(["sales-work-queue"]);
+// Pages that fill the screen and scroll inside it on phones (the inbox's list and thread); every other page scrolls itself.
+const FIXED_PAGES = new Set(["chats"]);
 
 export default function AuroraShell({ children, banner }: { children: ReactNode; banner?: ReactNode }) {
   const { user, logout, isImpersonating } = useAuth();
@@ -66,6 +68,8 @@ export default function AuroraShell({ children, banner }: { children: ReactNode;
   const page = pathname.split("/")[1] || "leads";
   // Each page builds itself in when it opens (motion.ts).
   useLayoutEffect(() => (mainRef.current ? revealPage(mainRef.current) : undefined), [pathname]);
+  // On phones the page itself scrolls (aurora.css): a newly opened page starts at its top.
+  useLayoutEffect(() => window.scrollTo(0, 0), [pathname]);
   // Card rows show each value beside its column name, so copy the header text onto every cell.
   useEffect(() => {
     const main = mainRef.current;
@@ -102,7 +106,7 @@ export default function AuroraShell({ children, banner }: { children: ReactNode;
   const current = pages.find(p => isActive(pathname, p.to));
 
   return (
-    <div className={`aurora aur-shell${collapsed ? " is-collapsed" : ""}${mobileOpen ? " is-menu-open" : ""}`}>
+    <div className={`aurora aur-shell${collapsed ? " is-collapsed" : ""}${mobileOpen ? " is-menu-open" : ""}${FIXED_PAGES.has(page) ? " is-fixed-page" : ""}`}>
       <header className="aur-mobilebar">
         <button type="button" className="aur-icon-btn" aria-label="Open menu" aria-expanded={mobileOpen} onClick={() => setMobileOpen(true)}><Icon name="menu" /></button>
         <span className="aur-mobilebar-title">{current?.label || "Moving CRM"}</span>

@@ -97,6 +97,8 @@ export default function AuroraInbox() {
   const { token } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selected, setSelected] = useState("");
+  // Phones show the list or one conversation (aurora.css): a tapped conversation opens, the back button returns to the list.
+  const [reading, setReading] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -225,7 +227,7 @@ export default function AuroraInbox() {
   function callbackAfter(i: number) { const it = timeline[i]; if (it.kind !== "call" || it.direction !== "inbound" || it.answered) return undefined; return timeline.slice(i + 1).find(n => n.kind === "call" && n.direction === "outbound"); }
 
   return (
-    <div className="aur-inbox">
+    <div className={`aur-inbox${reading ? " is-reading" : ""}`}>
       <section className="aur-inbox-list" aria-label="Conversations">
         <div className="aur-inbox-list-head">
           <div className="aur-inbox-title"><h1>Inbox</h1>{waitingCount > 0 && <span className="aur-pill tone-danger">{waitingCount} waiting</span>}</div>
@@ -251,7 +253,7 @@ export default function AuroraInbox() {
             const waiting = inboundLatest(item);
             return (
               <li key={item.key}>
-                <button type="button" className={`aur-convo${item.key === selected ? " is-selected" : ""}`} onClick={() => setSelected(item.key)}
+                <button type="button" className={`aur-convo${item.key === selected ? " is-selected" : ""}`} onClick={() => { setSelected(item.key); setReading(true); }}
                   onContextMenu={!item.lead_id ? e => { const t = associationTarget(item); if (t) { e.preventDefault(); setConnectTarget(t); } } : undefined}
                   title={!item.lead_id && associationTarget(item) ? "Right-click to connect this conversation to a lead" : undefined}>
                   <span className="aur-convo-avatar">
@@ -273,6 +275,7 @@ export default function AuroraInbox() {
 
       <section className="aur-thread" aria-label={contact ? `Conversation with ${contact.client}` : "Conversation"}>
         <header className="aur-thread-head">
+          <button type="button" className="aur-icon-btn aur-thread-back" aria-label="Back to conversations" onClick={() => setReading(false)}><span className="aur-flip"><Icon name="chevron" size={18} /></span></button>
           {contact ? <>
             <span className="aur-avatar is-square" style={{ background: tint(contact.client)[0], color: tint(contact.client)[1] }}>{initials(contact.client)}</span>
             <div className="aur-thread-title">

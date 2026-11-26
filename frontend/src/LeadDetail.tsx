@@ -3679,7 +3679,7 @@ export default function LeadDetail() {
           <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 10, display: "grid", gap: 8 }}>
             <strong style={{ fontSize: 12, color: "#334155" }}>Add Job</strong>
             <div style={{ display: "grid", gap: 10 }}>
-              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "minmax(220px, 1fr) 170px 170px" }}>
+              <div className="lead-new-job-grid" style={{ display: "grid", gap: 8, gridTemplateColumns: "minmax(220px, 1fr) 170px 170px" }}>
               <label style={{ display: "grid", gap: 4, fontSize: 11, color: "#475569" }}>
                 Company
                 <select value={newJobDraft.company_id} onChange={(e) => setNewJobDraft((prev) => ({ ...prev, company_id: e.target.value }))} style={{ border: "1px solid #cbd5e1", borderRadius: 4, padding: "6px 8px", fontSize: 12, background: "#fff" }}>

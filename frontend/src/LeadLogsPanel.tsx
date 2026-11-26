@@ -252,7 +252,7 @@ const successStatus: React.CSSProperties = { ...badge, color: "#2e844a", backgro
 const failedStatus: React.CSSProperties = { ...badge, color: "#ba0517", background: "#fef1ee" };
 const metaGrid: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "minmax(260px, 2fr) minmax(160px, 1fr)",
+  gridTemplateColumns: "minmax(min(260px, 100%), 2fr) minmax(min(160px, 100%), 1fr)",
   gap: 12,
   marginBottom: 10,
   fontSize: 12,
@@ -275,7 +275,7 @@ const nestedHeader: React.CSSProperties = {
 };
 const nestedColumns: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(280px, 100%), 1fr))",
   gap: 8,
   marginTop: 8,
 };

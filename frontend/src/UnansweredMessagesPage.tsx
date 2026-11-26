@@ -1439,7 +1439,7 @@ export default function UnansweredMessagesPage() {
                   </tr>
                   {expanded ? <tr>
                     <td colSpan={9} style={{ padding: "0 16px 16px", background: "#f4f8fc", borderBottom: "1px solid #d8dde6" }}>
-                      {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+                      {row.priority !== 0 ? <div style={{ padding: 16, background: '#fff', border: '1px solid #d8dde6', borderRadius: 8 }}><CollapsibleHeight><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 20 }}>
                         {[false, true].map(completed => {
                           // Pending tasks show the soonest due first; completed tasks show the most recent first.
                           const tasks = row.timeline.filter(task => (task.status === 'completed') === completed).sort(completed
@@ -1451,7 +1451,7 @@ export default function UnansweredMessagesPage() {
                             {!tasks.length && <p style={{ color: '#64748b', fontSize: 12 }}>{completed ? 'No completed tasks.' : 'No pending tasks.'}</p>}
                           </div>;
                         })}
-                      </div></CollapsibleHeight></div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
+                      </div></CollapsibleHeight></div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20, padding: 16, background: "#fff", border: "1px solid #d8dde6", borderRadius: 8 }}>
                         <div>
                           <h3 style={{ margin: "0 0 10px", color: "#032d60", fontSize: 14 }}>Call Follow-ups</h3>
                           <div style={{ display: "grid", gap: 7 }}>{row.timeline.filter((attempt) => attempt.kind === "call").map((attempt, activityIndex) => <FollowupStatus key={`call-${attempt.number || attempt.label}-${activityIndex}`} attempt={attempt} leadId={row.lead_id} />)}</div>

@@ -46,7 +46,7 @@
 .aurora :focus-visible { outline: 2px solid var(--aur-accent); outline-offset: 2px; }
 
 /* Shell */
-.aur-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100vh; overflow: hidden; }
+.aur-shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
 .aur-shell.is-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
 .aur-sidebar { background: var(--aur-surface); border-right: 1px solid var(--aur-line); display: flex; flex-direction: column; gap: 14px; padding: 18px 12px; min-height: 0; overflow-y: auto; }
 .aur-main { min-width: 0; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
@@ -255,8 +255,20 @@
   .aur-shell.is-collapsed :is(.aur-brand-text, .aur-search span, .aur-search kbd, .aur-nav-link span, .aur-nav-heading, .aur-look-switch span, .aur-user-text, .aur-text-btn span) { display: revert; }
   .aur-page { padding: 16px; }
   .aur-leads-body.has-panel { grid-template-columns: minmax(0, 1fr); }
-  .aur-panel { position: static; }
   .aur-table-wrap { max-height: none; }
+  /* The page itself scrolls, not a box inside a frame of the screen's height: the browser bars can hide,
+     and nothing is cut off at the bottom. The inbox (is-fixed-page) keeps the frame: its list and thread scroll in it. */
+  .aur-shell:not(.is-fixed-page) { display: block; height: auto; min-height: 100vh; min-height: 100dvh; overflow: visible; }
+  .aur-shell:not(.is-fixed-page) .aur-main { overflow: visible; }
+  .aur-mobilebar { position: sticky; top: 0; z-index: 1300; }
+  /* The selected lead opens as a sheet over the list, instead of under the whole list */
+  .aur-panel { position: fixed; z-index: 1450; inset: auto 0 0 0; max-height: 85vh; max-height: 85dvh; overflow-y: auto; overscroll-behavior: contain; border-radius: 20px 20px 0 0; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .aur-panel-scrim { display: block; position: fixed; inset: 0; z-index: 1440; border: 0; background: rgba(14, 21, 48, 0.4); }
+}
+.aur-panel-scrim { display: none; }
+/* Phones and tablets: text fields at 16px, so the browser doesn't zoom the page in when one is tapped */
+@media (max-width: 900px) and (pointer: coarse) {
+  .aurora :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea) { font-size: 16px !important; }
 }
 @media (prefers-reduced-motion: reduce) { .aur-sidebar { transition: none; } }
 
@@ -359,7 +371,19 @@
 .aur-context-head { display: flex; align-items: center; justify-content: space-between; }
 .aur-context-empty { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 @media (max-width: 1200px) { .aur-inbox { grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); } .aur-context { display: none; } }
-@media (max-width: 900px) { .aur-inbox { grid-template-columns: minmax(0, 1fr); height: auto; } .aur-inbox-list { max-height: 50vh; border-right: 0; border-bottom: 1px solid var(--aur-line); } .aur-thread-body { max-height: 70vh; } }
+.aur-thread-back { display: none; }
+/* Phones: the list fills the screen; a tapped conversation replaces it, with a back button */
+@media (max-width: 900px) {
+  .aur-inbox { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .aur-inbox-list { border-right: 0; }
+  .aur-inbox.is-reading .aur-inbox-list, .aur-inbox:not(.is-reading) .aur-thread { display: none; }
+  .aur-inbox-list-head .aur-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .aur-inbox-list-head .aur-chip { flex: none; }
+  .aur-thread-back { display: inline-grid; }
+  .aur-thread-head { padding: 10px 14px; gap: 10px; }
+  .aur-thread-body { padding: 14px; }
+  .aur-thread-foot { padding: 8px 14px max(10px, env(safe-area-inset-bottom)); }
+}
 
 /* Fixes from the first visual check */
 .aur-inbox-list-head .aur-searchbox { flex: none; }
@@ -482,7 +506,11 @@
   .aur-lead-layout > .lead-detail-main > :is(.lead-header, :has(.lead-header)) { order: -1; }
   .aur-lead-layout > .aur-lead-rail .aur-rail-tools { order: -1; }
 }
-@media (max-width: 700px) { .aur-rail-tools { height: 75vh; } }
+/* Phones: chat, tasks and log take their own height and the page scrolls, instead of a box that holds the finger */
+@media (max-width: 900px) {
+  .aur-rail-tools { height: auto; overflow: visible; }
+  .aur-rail-panel { overflow: visible; overscroll-behavior: auto; }
+}
 @media (max-width: 1180px) {
   .aurora .aur-lead-layout { gap: 0; }
   .aur-lead-layout > .lead-detail-main { display: contents; }
@@ -814,3 +842,28 @@ html.aur-dark .aur-funnel-fill { background: linear-gradient(180deg, #6C95FF, #2
 .aur-leads .aur-page-head > div:first-child { flex: 1 1 480px; min-width: 0; }
 .aur-leads .aur-page-head { align-items: flex-start; }
 .aur-leads .aur-page-head .aur-month { margin-top: 18px; }
+
+/* Leads list on phones: one card per lead (name and stage, route and quote, move date, created and owner)
+   instead of a table that scrolls sideways */
+@media (max-width: 700px) {
+  .aur-leads .aur-table { min-width: 0; }
+  .aur-leads .aur-table thead { display: none; }
+  .aur-leads .aur-table, .aur-leads .aur-table tbody { display: block; }
+  .aur-leads .aur-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "who who stage" "route route quote" "move created owner"; align-items: center; gap: 8px 10px; padding: 12px 14px; border-bottom: 1px solid var(--aur-line-soft); }
+  .aur-leads .aur-table tbody tr.is-selected { background: var(--aur-accent-wash); box-shadow: inset 3px 0 0 var(--aur-accent); }
+  .aur-leads .aur-table td { display: block; min-width: 0; padding: 0; border: 0; background: transparent !important; box-shadow: none !important; }
+  .aur-leads .aur-table td:nth-child(1) { grid-area: who; }
+  .aur-leads .aur-table td:nth-child(2) { grid-area: stage; justify-self: end; }
+  .aur-leads .aur-table td:nth-child(3) { grid-area: route; }
+  .aur-leads .aur-table td:nth-child(4) { grid-area: move; }
+  .aur-leads .aur-table td:nth-child(4) > * { display: inline; margin-right: 6px; }
+  .aur-leads .aur-table td:nth-child(5) { grid-area: quote; justify-self: end; }
+  .aur-leads .aur-table td:nth-child(6) { grid-area: owner; justify-self: end; }
+  .aur-leads .aur-table td:nth-child(7) { grid-area: created; justify-self: end; font-size: 12px; }
+  .aur-leads .aur-person { min-width: 0; }
+  .aur-leads .aur-route { white-space: normal; flex-wrap: wrap; }
+  .aur-leads .aur-filters .aur-searchbox { flex: 1 1 100%; }
+  .aur-leads .aur-filters .aur-select { flex: 1 1 140px; max-width: none; }
+  /* Work queue: less side padding, so the cards get the width */
+  .aurora .aur-main[data-page="sales-work-queue"] > main { padding: 16px 12px !important; }
+}

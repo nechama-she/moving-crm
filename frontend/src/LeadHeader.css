@@ -551,3 +551,13 @@
   color: #16325c;
   font-size: 13px;
 }
+
+/* New look on phones: the payment form two fields per row, the new job's fields one per row, and the chat's messages
+   at most part of the screen, so the page can still be scrolled around them */
+@media (max-width: 640px) {
+  .aurora .lead-payment-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .aurora .lead-new-job-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
+@media (max-width: 900px) {
+  .aurora .chat-message-list { max-height: 55vh !important; max-height: 55dvh !important; }
+}

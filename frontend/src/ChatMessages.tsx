@@ -520,6 +520,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       {/* Messages */}
       <div
         ref={messageListRef}
+        className="chat-message-list"
         style={{
           maxHeight: 500,
           overflowY: "auto",
