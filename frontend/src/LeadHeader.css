@@ -557,6 +557,15 @@
 @media (max-width: 640px) {
   .aurora .lead-payment-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .aurora .lead-new-job-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .aurora .lead-payout-fields { grid-template-columns: minmax(0, 1fr) !important; }
+  .aurora .lead-payout-fields input { width: 100%; box-sizing: border-box; }
+  .aurora .job-material-row { grid-template-columns: minmax(0, 1fr) 42px 62px 70px; }
+}
+/* New look on phones: no box on the lead page is wider than the screen. Boxes and fields shrink to the width
+   there is (text wraps) instead of growing to their content's natural width and being cut off at the right. */
+@media (max-width: 900px) {
+  .aurora .lead-detail-page :is(div, section, aside, header, footer, form, fieldset, label, article, nav, ul, ol, li) { min-width: 0; }
+  .aurora .lead-detail-page :is(input, select, textarea) { min-width: 0; max-width: 100%; }
 }
 @media (max-width: 900px) {
   .aurora .chat-message-list { max-height: 55vh !important; max-height: 55dvh !important; }

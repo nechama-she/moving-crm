@@ -269,7 +269,7 @@ function ThirdPartyPayoutEditor({
           </span>
         ) : null}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(120px, .45fr)", gap: 8 }}>
+      <div className="lead-payout-fields" style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(120px, .45fr)", gap: 8 }}>
         <label style={{ display: "grid", gap: 4, color: "#3e3e3c", fontSize: 12, fontWeight: 600 }}>
           Recipient
           <input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="Person or company" style={{ border: "1px solid #c9c7c5", borderRadius: 4, padding: "8px 12px", background: "#fff", color: "#181818", boxShadow: "inset 0 1px 2px rgba(0,0,0,.05)" }} />
