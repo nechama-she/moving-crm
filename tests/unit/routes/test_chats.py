@@ -444,3 +444,42 @@ def test_customer_page_chat_thread_is_for_admins(role):
         chats.get_customer_page_chat_messages("cp-access-1", user=SimpleNamespace(id="user-1", role=role))
 
     assert exc.value.status_code == 403
+
+
+class _AccessDb:
+    def __init__(self, access_id):
+        self.access_id = access_id
+
+    def query(self, *args):
+        query = MagicMock()
+        query.filter.return_value.scalar.return_value = self.access_id
+        return query
+
+
+def test_lead_customer_page_chats_reads_the_customer_and_rep_conversations(monkeypatch):
+    table = MagicMock()
+    table.query.side_effect = lambda **kwargs: {"Items": [_customer_page_message(f"in {kwargs['KeyConditionExpression'].get_expression()['values'][1]}", 1)]}
+    monkeypatch.setattr(chats, "conversations_table", table)
+
+    result = chats.get_lead_customer_page_chats("lead-7", user=SimpleNamespace(id="admin-1", role="admin"), db=_AccessDb("access-1"))
+
+    assert [m["text"] for m in result["customer"]] == ["in cp-access-1"]
+    assert [m["text"] for m in result["rep"]] == ["in cp-rep-access-1"]
+
+
+def test_lead_without_customer_page_has_no_customer_page_chats(monkeypatch):
+    table = MagicMock()
+    monkeypatch.setattr(chats, "conversations_table", table)
+
+    result = chats.get_lead_customer_page_chats("lead-7", user=SimpleNamespace(id="admin-1", role="admin"), db=_AccessDb(None))
+
+    assert result == {"customer": [], "rep": []}
+    table.query.assert_not_called()
+
+
+@pytest.mark.parametrize("role", ["sales_rep", "dispatch", "foreman"])
+def test_lead_customer_page_chats_are_for_admins(role):
+    with pytest.raises(HTTPException) as exc:
+        chats.get_lead_customer_page_chats("lead-7", user=SimpleNamespace(id="user-1", role=role), db=_AccessDb("access-1"))
+
+    assert exc.value.status_code == 403

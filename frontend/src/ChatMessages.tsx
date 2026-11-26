@@ -42,6 +42,8 @@ const TABS = [
   { key: "email", label: "Email" },
   { key: "messages", label: "Messages" },
   { key: "calls", label: "Calls" },
+  // The customer's and the rep's chats with the assistant on the customer page (admins, read-only).
+  { key: "customer_page_bot", label: "Customer page bot" },
 ] as const;
 
 export default function ChatMessages({ leadId, userId, userName, phoneNumber, inboxUrl, aircallNumberId, repAircallNumberId, companyPhone, repPhone, companyName }: Props) {
@@ -58,6 +60,10 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
   const [companyCalls, setCompanyCalls] = useState<Message[]>([]);
   const [repCalls, setRepCalls] = useState<Message[]>([]);
   const [callNumberTab, setCallNumberTab] = useState<"company" | "rep">("company");
+  const [pageBotCustomer, setPageBotCustomer] = useState<Message[]>([]);
+  const [pageBotRep, setPageBotRep] = useState<Message[]>([]);
+  const [pageBotTab, setPageBotTab] = useState<"customer" | "rep">("customer");
+  const [pageBotError, setPageBotError] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<string>("messenger");
@@ -192,6 +198,22 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     return () => controller.abort();
   }, [leadId, token, user?.role]);
 
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    const controller = new AbortController();
+    fetch(`${API_BASE}/api/chats/lead/${encodeURIComponent(leadId)}/customer-page-bot`, { headers: authHeaders(token), signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Customer page bot HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        setPageBotCustomer(data.customer || []);
+        setPageBotRep(data.rep || []);
+      })
+      .catch((reason) => { if (!controller.signal.aborted) setPageBotError(reason instanceof Error ? reason.message : "Could not load the customer page bot chat"); });
+    return () => controller.abort();
+  }, [leadId, token, user?.role]);
+
   // Combine conversation messages + SMS (tagged with platform)
   const allMessages: Message[] = [
     ...messages,
@@ -207,6 +229,8 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
     })),
     ...companyCalls,
     ...repCalls,
+    ...pageBotCustomer,
+    ...pageBotRep,
   ];
 
   // Auto-select first tab with data (only once)
@@ -221,7 +245,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, companySmsMessages, repSmsMessages, companyCalls, repCalls]);
+  }, [messages, companySmsMessages, repSmsMessages, companyCalls, repCalls, pageBotCustomer, pageBotRep]);
 
   const selectedSmsMessages = smsNumberTab === "company" ? companySmsMessages : repSmsMessages;
   const filtered = activeTab === "messages"
@@ -232,6 +256,8 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       }))
     : activeTab === "calls"
       ? (callNumberTab === "company" ? companyCalls : repCalls)
+    : activeTab === "customer_page_bot"
+      ? (pageBotTab === "customer" ? pageBotCustomer : pageBotRep)
     : allMessages.filter((m) => (m.platform?.toLowerCase() || "") === activeTab);
 
   useEffect(() => {
@@ -240,7 +266,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       if (list) list.scrollTop = list.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [activeTab, smsNumberTab, callNumberTab, filtered.length, loading]);
+  }, [activeTab, smsNumberTab, callNumberTab, pageBotTab, filtered.length, loading]);
 
   if (loading)
     return <p style={{ padding: 16, color: "#888" }}>Loading messages…</p>;
@@ -420,7 +446,7 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
       {connectionError && <p role="alert">{connectionError}</p>}
       {/* Tabs */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 0, borderBottom: "2px solid #e0e0e0", marginBottom: 0 }}>
-        {TABS.map((tab) => {
+        {TABS.filter((tab) => tab.key !== "customer_page_bot" || user?.role === "admin").map((tab) => {
           const count = counts[tab.key] || 0;
           const isActive = activeTab === tab.key;
           return (
@@ -499,6 +525,15 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
         </div>
       )}
 
+      {activeTab === "customer_page_bot" && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 12px", border: "1px solid #e0e0e0", borderTop: "none", background: "#fff" }}>
+          <button className="slds-button" type="button" onClick={() => setPageBotTab("customer")} style={{ padding: "7px 14px", borderRadius: 6, border: pageBotTab === "customer" ? "1px solid #1976d2" : "1px solid #ccc", background: pageBotTab === "customer" ? "#e3f2fd" : "#fff", color: pageBotTab === "customer" ? "#1976d2" : "#555", fontWeight: pageBotTab === "customer" ? 600 : 400, cursor: "pointer" }}>Customer ({pageBotCustomer.length})</button>
+          <button className="slds-button" type="button" onClick={() => setPageBotTab("rep")} style={{ padding: "7px 14px", borderRadius: 6, border: pageBotTab === "rep" ? "1px solid #1976d2" : "1px solid #ccc", background: pageBotTab === "rep" ? "#e3f2fd" : "#fff", color: pageBotTab === "rep" ? "#1976d2" : "#555", fontWeight: pageBotTab === "rep" ? 600 : 400, cursor: "pointer" }}>Rep ({pageBotRep.length})</button>
+          <span style={{ fontSize: 12, color: "#64748b" }}>Chat with the assistant on the customer page. Read-only.</span>
+          {pageBotError && <span role="alert" style={{ fontSize: 12, color: "#ba0517" }}>{pageBotError}</span>}
+        </div>
+      )}
+
       {/* External link bar — sticky above messages */}
       {activeTab === "messenger" && messengerInboxLinks.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16, padding: "8px 12px", background: "#e3f2fd", border: "1px solid #e0e0e0", borderTop: "none", fontSize: 13 }}>
@@ -538,8 +573,9 @@ export default function ChatMessages({ leadId, userId, userName, phoneNumber, in
         ) : (
           filtered.map((msg, i) => {
             const isClient = msg.role === "user" || msg.direction === "received";
+            // In the rep's chat with the assistant, the person writing is the rep.
             const senderName = isClient
-              ? userName
+              ? (activeTab === "customer_page_bot" && pageBotTab === "rep" ? "Rep" : userName)
               : msg.sales_name || (msg.role ? msg.role.charAt(0).toUpperCase() + msg.role.slice(1) : "Agent");
             // If timestamp < 1e12, it's in seconds — convert to ms
             const tsMs = msg.timestamp < 1e12 ? msg.timestamp * 1000 : msg.timestamp;

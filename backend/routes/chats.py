@@ -17,7 +17,7 @@ from database import get_db
 from db import calls_table, conversations_table, sms_messages_table
 from libs.common.phone import normalize_digits
 from libs.common.phone import phone_variants
-from models import CommunicationAssociation, Company, Lead, LeadContact, User, UserCompany
+from models import CommunicationAssociation, Company, Lead, LeadContact, PublicMoveAccess, User, UserCompany
 
 logger = logging.getLogger("moving-crm")
 router = APIRouter(prefix="/api/chats", tags=["Chats"])
@@ -617,6 +617,21 @@ def get_website_chat_messages(user_id: str, user: User = Depends(get_current_use
 def get_customer_page_chat_messages(user_id: str, user: User = Depends(get_current_user)):
     """One customer page assistant conversation (cp-<access_id> or cp-rep-<access_id>), oldest first."""
     return _bot_chat_messages(CUSTOMER_PAGE_PLATFORM, user_id, user)
+
+
+@router.get("/lead/{lead_id}/customer-page-bot")
+def get_lead_customer_page_chats(lead_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The lead's two customer page assistant conversations, oldest first: the customer's (cp-<access_id>) and the
+    rep's (cp-rep-<access_id>). Both empty while the lead has no customer page."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can view all chats")
+    access_id = db.query(PublicMoveAccess.id).filter(PublicMoveAccess.lead_id == lead_id).scalar()
+    if not access_id:
+        return {"customer": [], "rep": []}
+    return {
+        "customer": _bot_chat_messages(CUSTOMER_PAGE_PLATFORM, f"cp-{access_id}", user)["messages"],
+        "rep": _bot_chat_messages(CUSTOMER_PAGE_PLATFORM, f"cp-rep-{access_id}", user)["messages"],
+    }
 
 
 def _bot_chat_messages(platform: str, user_id: str, user: User) -> dict:
