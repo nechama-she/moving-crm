@@ -68,8 +68,6 @@ export default function AuroraShell({ children, banner }: { children: ReactNode;
   const page = pathname.split("/")[1] || "leads";
   // Each page builds itself in when it opens (motion.ts).
   useLayoutEffect(() => (mainRef.current ? revealPage(mainRef.current) : undefined), [pathname]);
-  // On phones the page itself scrolls (aurora.css): a newly opened page starts at its top.
-  useLayoutEffect(() => window.scrollTo(0, 0), [pathname]);
   // Card rows show each value beside its column name, so copy the header text onto every cell.
   useEffect(() => {
     const main = mainRef.current;
